@@ -22,11 +22,13 @@ pub struct Initial {
     pub guides: bool,
     /// 起動時に読み込む PSD。
     pub psd: Option<PathBuf>,
+    /// 箱の型。0 は差し込み箱、3 以上は正多角柱の角の数。
+    pub sides: usize,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 1.5, guides: true, psd: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 1.5, guides: true, psd: None, sides: 0 }
     }
 }
 
@@ -40,11 +42,22 @@ pub fn run(initial: Initial) -> eframe::Result {
 
 #[derive(Clone, Copy, PartialEq)]
 struct Dims {
+    /// 0 は差し込み箱、3 以上は正多角柱の角の数。
+    sides: usize,
+    /// 差し込み箱では幅、角柱では一辺の長さ。
     w: f32,
     d: f32,
     h: f32,
     t: f32,
 }
+
+impl Dims {
+    fn template(&self) -> Template {
+        if self.sides >= 3 { Template::prism(self.sides, self.w, self.h, self.t) } else { Template::tuck_box(self.w, self.d, self.h, self.t) }
+    }
+}
+
+const SHAPES: [(usize, &str); 5] = [(0, "差し込み箱"), (3, "三角柱"), (5, "五角柱"), (6, "六角柱"), (8, "八角柱")];
 
 struct App {
     dims: Dims,
@@ -72,8 +85,9 @@ struct App {
 
 impl App {
     fn new(initial: &Initial) -> Self {
-        let dims = Dims { w: 120.0, d: 60.0, h: 160.0, t: initial.thickness };
-        let template = Template::tuck_box(dims.w, dims.d, dims.h, dims.t);
+        let sides = if initial.sides >= 3 { initial.sides } else { 0 };
+        let dims = Dims { sides, w: if sides >= 3 { 70.0 } else { 120.0 }, d: 60.0, h: 160.0, t: initial.thickness };
+        let template = dims.template();
         let sheet = make_sheet_art(&template);
         let mut app = App {
             dims,
@@ -108,7 +122,7 @@ impl App {
         if self.built_dims == Some(self.dims) {
             return;
         }
-        self.template = Template::tuck_box(self.dims.w, self.dims.d, self.dims.h, self.dims.t);
+        self.template = self.dims.template();
         self.sheet = make_sheet_art(&self.template);
         self.built_dims = Some(self.dims);
         if let Some(bytes) = self.custom_bytes.clone() {
@@ -169,13 +183,23 @@ impl App {
         });
         ui.add_space(10.0);
 
-        ui.strong("2. 寸法（内寸、mm）");
-        ui.add(egui::Slider::new(&mut self.dims.w, 40.0..=300.0).text("幅"));
-        ui.add(egui::Slider::new(&mut self.dims.d, 20.0..=200.0).text("奥行き"));
+        ui.strong("2. 型と寸法（内寸、mm）");
+        ui.horizontal_wrapped(|ui| {
+            for (sides, label) in SHAPES {
+                ui.radio_value(&mut self.dims.sides, sides, label);
+            }
+        });
+        let prism = self.dims.sides >= 3;
+        ui.add(egui::Slider::new(&mut self.dims.w, 40.0..=300.0).text(if prism { "一辺" } else { "幅" }));
+        if !prism {
+            ui.add(egui::Slider::new(&mut self.dims.d, 20.0..=200.0).text("奥行き"));
+        }
         ui.add(egui::Slider::new(&mut self.dims.h, 40.0..=300.0).text("高さ"));
         ui.add(egui::Slider::new(&mut self.dims.t, 0.3..=6.0).step_by(0.1).text("紙の厚み"));
         let d = self.dims;
-        ui.weak(format!("外寸: {:.1} x {:.1} x {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
+        if !prism {
+            ui.weak(format!("外寸: {:.1} x {:.1} x {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
+        }
         ui.weak(format!("展開図: {:.0} x {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
         ui.add_space(10.0);
 
@@ -216,7 +240,9 @@ impl App {
         ui.add_space(10.0);
 
         ui.weak(format!("パネル {} 枚、三角形 {} 個", self.template.panels.len(), self.triangles));
-        ui.weak(self.template.panels.iter().map(|p| p.name).collect::<Vec<_>>().join("、"));
+        let mut names: Vec<&str> = self.template.panels.iter().map(|p| p.name).collect();
+        names.dedup();
+        ui.weak(names.join("、"));
         ui.weak(format!("描画: {}", self.backend));
         ui.weak("箱の上をドラッグで回転、ホイールで拡大縮小。");
     }

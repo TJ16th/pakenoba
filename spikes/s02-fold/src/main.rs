@@ -24,6 +24,7 @@ fn main() -> ExitCode {
             ("--fold", Some(v)) => initial.fold = v,
             ("--yaw", Some(v)) => initial.yaw = v,
             ("--pitch", Some(v)) => initial.pitch = v,
+            ("--sides", Some(v)) => initial.sides = v as usize,
             ("--thickness", Some(v)) => initial.thickness = v.clamp(0.3, 6.0),
             ("--psd", _) if i + 1 < args.len() => initial.psd = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--no-guides", _) => {
@@ -32,7 +33,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("使い方: pakenova-spike-s02 [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--no-guides] [--psd ファイル]");
+                println!("使い方: pakenova-spike-s02 [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--sides 角の数] [--no-guides] [--psd ファイル]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

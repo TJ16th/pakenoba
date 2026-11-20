@@ -81,6 +81,16 @@ fn centroid(points: &[P2]) -> P2 {
     [points.iter().map(|p| p[0]).sum::<f32>() / n, points.iter().map(|p| p[1]).sum::<f32>() / n]
 }
 
+fn bounds(panels: &[Panel]) -> (P2, P2) {
+    let mut min = [f32::INFINITY; 2];
+    let mut max = [f32::NEG_INFINITY; 2];
+    for p in panels.iter().flat_map(|p| p.outline.iter()) {
+        min = [min[0].min(p[0]), min[1].min(p[1])];
+        max = [max[0].max(p[0]), max[1].max(p[1])];
+    }
+    (min, max)
+}
+
 fn rect(u0: f32, v0: f32, u1: f32, v1: f32) -> Vec<P2> {
     ccw(vec![[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
 }
@@ -163,15 +173,87 @@ impl Template {
             });
         }
 
-        let mut min = [f32::INFINITY; 2];
-        let mut max = [f32::NEG_INFINITY; 2];
-        for p in panels.iter().flat_map(|p| p.outline.iter()) {
-            min = [min[0].min(p[0]), min[1].min(p[1])];
-            max = [max[0].max(p[0]), max[1].max(p[1])];
-        }
+        let (min, max) = bounds(&panels);
         let r = w.min(d).min(h) * 0.34;
         let marks = vec![([u_r, h * 0.55], r), ([u_b + w * 0.5, h + t], r * 0.8)];
         Template { panels, thickness: t, min, max, root_center: [u_f + w * 0.5, h * 0.5], depth: d, marks }
+    }
+
+
+    /// 正多角柱（三角柱、五角柱など）。`side` は内側の一辺の長さ、`h` は内寸の高さ（mm）。
+    ///
+    /// 差し込み箱と同じ仕組みで折れることを確かめるための型。違いは折り角と、厚みのずらし量だけ。
+    /// - 側面は外角（360 度 / n）ずつ折る。
+    /// - のりしろは最初の側面の内側に入る。そのぶん最後の側面を短く、最初の側面を長くする。
+    ///   ずらす量は「厚み / sin(外角)」で、直角のときは厚みと同じになる。
+    /// - フタは多角形で、ほかの側面のフラップの上に乗る。そのぶんフタのつく側面を上下に 1 枚ぶん高くする。
+    pub fn prism(n: usize, side: f32, h: f32, t: f32) -> Template {
+        let n = n.clamp(3, 12);
+        let exterior = std::f32::consts::TAU / n as f32;
+        let interior = std::f32::consts::PI - exterior;
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let shift = t / exterior.sin();
+        let glue = (0.3 * side).clamp(4.0, 12.0);
+        let flap = 0.2 * side * (interior * 0.5).tan();
+        let inset = 0.2 * side;
+
+        let u0 = shift;
+        let wall_start = |k: usize| u0 + k as f32 * side;
+        let last_end = wall_start(n) - shift;
+        const WALLS: (f32, f32) = (0.0, 0.50);
+
+        let mut panels = vec![Panel { name: "側面 1", outline: rect(u0 - shift, -t, u0 + side, h + t), hinge: None, hidden_when_closed: false }];
+        const NAMES: [&str; 12] = ["側面 1", "側面 2", "側面 3", "側面 4", "側面 5", "側面 6", "側面 7", "側面 8", "側面 9", "側面 10", "側面 11", "側面 12"];
+        for k in 1..n {
+            let end = if k == n - 1 { last_end } else { wall_start(k + 1) };
+            panels.push(Panel {
+                name: NAMES[k],
+                outline: rect(wall_start(k), 0.0, end, h),
+                hinge: Some(Hinge { parent: k - 1, a: [wall_start(k), 0.0], b: [wall_start(k), h], angle: exterior, window: WALLS }),
+                hidden_when_closed: false,
+            });
+        }
+        let c = 2.0f32.min(h * 0.1);
+        let k = glue * 0.35;
+        panels.push(Panel {
+            name: "のりしろ",
+            outline: ccw(vec![[last_end, c], [last_end + glue, c + k], [last_end + glue, h - c - k], [last_end, h - c]]),
+            hinge: Some(Hinge { parent: n - 1, a: [last_end, c], b: [last_end, h - c], angle: exterior, window: WALLS }),
+            hidden_when_closed: true,
+        });
+
+        for (sign, flap_name, lid_name, flap_window, lid_window) in [(-1.0f32, "底のフラップ", "底のフタ", (0.50, 0.62), (0.60, 0.74)), (1.0f32, "上のフラップ", "上のフタ", (0.74, 0.86), (0.86, 1.0))] {
+            let side_edge = if sign > 0.0 { h } else { 0.0 };
+            let lid_edge = if sign > 0.0 { h + t } else { -t };
+            for wall in 1..n {
+                let a = wall_start(wall) + 0.5;
+                let b = (if wall == n - 1 { last_end } else { wall_start(wall + 1) }) - 0.5;
+                panels.push(Panel {
+                    name: flap_name,
+                    outline: ccw(vec![[a, side_edge], [b, side_edge], [b - inset, side_edge + sign * flap], [a + inset, side_edge + sign * flap]]),
+                    hinge: Some(Hinge { parent: wall, a: [a, side_edge], b: [b, side_edge], angle: quarter, window: flap_window }),
+                    hidden_when_closed: true,
+                });
+            }
+            // フタは、最初の側面の端を一辺とする正多角形。
+            let mut lid = vec![[u0, lid_edge], [u0 + side, lid_edge]];
+            for i in 1..n - 1 {
+                let prev = lid[lid.len() - 1];
+                let angle = exterior * i as f32;
+                lid.push([prev[0] + side * angle.cos(), prev[1] + sign * side * angle.sin()]);
+            }
+            panels.push(Panel {
+                name: lid_name,
+                outline: ccw(lid),
+                hinge: Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window }),
+                hidden_when_closed: false,
+            });
+        }
+
+        let (min, max) = bounds(&panels);
+        let r = side.min(h) * 0.3;
+        let marks = vec![([u0 + side, h * 0.55], r), ([u0 + side * 0.5, h + t], r * 0.8)];
+        Template { panels, thickness: t, min, max, root_center: [u0 + side * 0.5, h * 0.5], depth: side / (std::f32::consts::PI / n as f32).tan(), marks }
     }
 
     /// 折り線の軸の向き。正の角度で子パネルが内側（+n）へ動く向きを選ぶ。
@@ -372,6 +454,39 @@ mod tests {
         // 底も同じ。
         let bottom = m[index(&tpl, "底の差し込み")].point([u_b + 30.0, -D - 6.0, 0.0]);
         close(bottom, [u_r - 30.0, -T + 6.0, T]);
+    }
+
+
+    #[test]
+    fn prisms_close_for_several_side_counts() {
+        let (side, h, t) = (70.0f32, 120.0f32, 2.0f32);
+        for n in [3usize, 5, 6, 8] {
+            let tpl = Template::prism(n, side, h, t);
+            for p in &tpl.panels {
+                assert!(signed_area(&p.outline) > 0.0, "{n} 角柱の {} が時計回り", p.name);
+            }
+            let m = tpl.transforms(1.0);
+            let shift = t / (std::f32::consts::TAU / n as f32).sin();
+            let u0 = shift;
+
+            // のりしろの外側は、最初の側面の内側（n = 厚み）にぴったり付く。
+            let glue = index(&tpl, "のりしろ");
+            let last_end = u0 + n as f32 * side - shift;
+            let on_wall = m[glue].point([last_end + 3.0, h * 0.5, 0.0]);
+            assert!((on_wall[2] - t).abs() < 1e-2, "{n} 角柱: のりしろが側面から {} 離れている", on_wall[2] - t);
+            // 最後の側面の内側の端は、最初の側面の内側の線より厚みぶん内側に来る（のりしろの厚みぶん）。
+            let last_tip = m[n - 1].point([last_end, h * 0.5, t]);
+            assert!((last_tip[2] - 2.0 * t).abs() < 1e-2, "{n} 角柱: 最後の側面の端 {last_tip:?}");
+
+            // フタの頂点は、側面 2 の内側の上の角の真上（紙 1 枚ぶん上）に来る。
+            let lid = index(&tpl, "上のフタ");
+            let exterior = std::f32::consts::TAU / n as f32;
+            let corner = [u0 + side + side * exterior.cos(), h + t + side * exterior.sin()];
+            assert!(tpl.panels[lid].outline.iter().any(|p| (p[0] - corner[0]).abs() < 1e-3 && (p[1] - corner[1]).abs() < 1e-3));
+            let lid_point = m[lid].point([corner[0], corner[1], t]);
+            let wall_point = m[1].point([u0 + 2.0 * side, h, t]);
+            close(lid_point, [wall_point[0], wall_point[1] + t, wall_point[2]]);
+        }
     }
 
     #[test]
