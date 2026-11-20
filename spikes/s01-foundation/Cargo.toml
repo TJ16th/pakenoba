@@ -1,0 +1,24 @@
+[package]
+name = "pakenova-spike-s01"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+description = "新パケノバ 試作 S01: 土台の確認（箱の表示、PSD、日本語入力、動画書き出し）"
+
+[dependencies]
+# egui と eframe は本家（crates.io）の版。PhotoCraft と VectorCraft は改変版を使っている。
+# 改変版で試すときは、末尾の [patch.crates-io] の説明を参照。
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "system_fonts", "clipboard", "x11", "wayland"] }
+png = "0.18"
+
+# craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
+craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", default-features = false, features = ["isobmff"] }
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", default-features = false, features = ["h264-encode", "threads"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3

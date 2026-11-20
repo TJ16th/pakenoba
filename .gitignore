@@ -1,6 +1,11 @@
 # Rust
-/target/
+target/
 **/*.rs.bk
+
+# 試作の出力
+/spikes/*/out/
+pakenova-s01-*.mp4
+pakenova-s01-*.psd
 
 # エディタと OS
 .vscode/
