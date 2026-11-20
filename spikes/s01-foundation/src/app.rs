@@ -177,14 +177,18 @@ impl App {
 
         ui.strong("3. PSD");
         ui.label("PSD ファイルをウィンドウにドロップするか、パスを入力してください。");
-        ui.horizontal(|ui| {
-            let button_width = 70.0;
-            ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text("PSD のパス").desired_width(ui.available_width() - button_width));
-            if ui.button("読み込む").clicked() {
-                let path = PathBuf::from(self.psd_path.trim().trim_matches('"'));
-                self.open_psd_path(&path);
-            }
+        // ボタンを先に右端へ置き、残りの幅を入力欄に渡す。
+        // 入力欄の幅を先に見積もると、フォントによってはボタンがはみ出し、パネルが毎フレーム広がる。
+        let mut load_clicked = false;
+        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+        ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            load_clicked = ui.button("読み込む").clicked();
+            ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text("PSD のパス").desired_width(f32::INFINITY));
         });
+        if load_clicked {
+            let path = PathBuf::from(self.psd_path.trim().trim_matches('"'));
+            self.open_psd_path(&path);
+        }
         ui.label(&self.psd_info);
         if ui.button("サンプル PSD を保存").clicked() {
             self.sample_note = match make_sample_psd(self.dims).and_then(|b| std::fs::write(SAMPLE_PSD_NAME, b).map_err(|e| e.to_string())) {
@@ -271,8 +275,9 @@ impl eframe::App for App {
             self.open_psd_path(path);
         }
 
-        egui::Panel::left("controls").default_size(360.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| self.controls(ui));
+        // 幅は固定する。中身がはみ出してもパネルが広がらないようにするため。
+        egui::Panel::left("controls").resizable(false).exact_size(360.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.controls(ui));
         });
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport(ui));
     }
