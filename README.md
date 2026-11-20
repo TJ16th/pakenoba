@@ -13,6 +13,7 @@
 
 - [S01 土台の確認](spikes/s01-foundation/README.md): 箱の表示、PSD の貼り付け、日本語入力、動画書き出し
 - [S02 型紙から厚みのある箱を折る](spikes/s02-fold/README.md): 型紙のデータ、厚みつきの折り、開き具合、wgpu 描画
+- [S03 曲面を含む型（手提げ型）](spikes/s03-curved/README.md): パネルの丸め、山折り、抜き穴
 
 ## 注意
 
