@@ -1,0 +1,14 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# エディタと OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ローカル専用
+/tmp/
+*.local.*
+.env
