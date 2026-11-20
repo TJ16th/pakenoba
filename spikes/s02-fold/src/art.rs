@@ -2,7 +2,7 @@
 //!
 //! 絵柄は展開図まるごと 1 枚の画像として持つ（左上が展開図の左上）。
 
-use craft_psd::{LayerSpec, PixelData, PsdBuilder, PsdFile};
+use craft_psd::{BlendMode, LayerSpec, PixelData, PsdBuilder, PsdFile};
 
 use crate::template::{P2, Template};
 
@@ -144,9 +144,23 @@ pub fn save_psd(sheet: &SheetArt) -> Result<Vec<u8>, String> {
     alpha_over(&mut composite, &sheet.guides);
     let mut builder = PsdBuilder::new(w, h);
     builder.push_layer(LayerSpec::new("絵柄", 0, 0, w, h, PixelData::Rgba8(sheet.art.clone())));
-    builder.push_layer(LayerSpec::new("ガイド（切り線と折り線）", 0, 0, w, h, PixelData::Rgba8(sheet.guides.clone())));
+    builder.push_layer(LayerSpec::new(&format!("{GUIDE_LAYER_PREFIX}（切り線と折り線）"), 0, 0, w, h, PixelData::Rgba8(sheet.guides.clone())));
     builder.composite(PixelData::Rgba8(composite));
     builder.to_bytes().map_err(|e| format!("PSD を書けませんでした: {e}"))
+}
+
+/// ガイドのレイヤーの名前は、この文字で始まる。読み込むときに、この名前で見分けて除く。
+pub const GUIDE_LAYER_PREFIX: &str = "ガイド";
+
+/// 読み込んだ PSD に入っていたガイドの扱い。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GuideHandling {
+    /// ガイドのレイヤーはなかった。
+    NotPresent,
+    /// ガイドのレイヤーを除いて、残りのレイヤーを重ねた。
+    Removed,
+    /// ガイドのレイヤーはあったが、除けなかった（統合画像をそのまま使った）。
+    Baked,
 }
 
 /// 読み込んだ PSD。画像は展開図の大きさに合わせてある。
@@ -155,9 +169,61 @@ pub struct LoadedPsd {
     pub source_size: [usize; 2],
     pub layer_names: Vec<String>,
     pub has_real_merged: Option<bool>,
+    pub guides: GuideHandling,
 }
 
-/// PSD の統合画像を読み、展開図の大きさ（`w` x `h`）に合わせる。
+/// ガイド以外のレイヤーを下から順に重ねる。
+///
+/// 扱えるのは、通常の重ね方（不透明度つき）の画素レイヤーだけ。グループ、マスク、クリッピング、
+/// 通常以外の合成モードがあれば None を返す（本番では PhotoCraft のエンジンに任せる部分）。
+fn composite_without_guides(file: &PsdFile, w: usize, h: usize) -> Option<Vec<u8>> {
+    let mut canvas: Vec<u8> = [PAPER[0], PAPER[1], PAPER[2], 0].repeat(w * h);
+    for layer in file.iter_layers() {
+        let record = layer.record;
+        if layer.name().starts_with(GUIDE_LAYER_PREFIX) || !record.is_visible() {
+            continue;
+        }
+        if record.blend_mode != BlendMode::Normal || record.clipping != 0 || record.section_divider().is_some() || layer.user_mask().is_some() {
+            return None;
+        }
+        let image = layer.rgba8().ok()?;
+        let (lw, lh) = (image.width as usize, image.height as usize);
+        if image.data.len() != lw * lh * 4 {
+            return None;
+        }
+        let opacity = record.opacity as f32 / 255.0 * record.fill_opacity() as f32 / 255.0;
+        for ly in 0..lh {
+            let y = image.top as i64 + ly as i64;
+            if y < 0 || y >= h as i64 {
+                continue;
+            }
+            for lx in 0..lw {
+                let x = image.left as i64 + lx as i64;
+                if x < 0 || x >= w as i64 {
+                    continue;
+                }
+                let src = &image.data[(ly * lw + lx) * 4..(ly * lw + lx) * 4 + 4];
+                let a = src[3] as f32 / 255.0 * opacity;
+                if a <= 0.0 {
+                    continue;
+                }
+                let o = (y as usize * w + x as usize) * 4;
+                let below = canvas[o + 3] as f32 / 255.0;
+                let out_a = a + below * (1.0 - a);
+                for i in 0..3 {
+                    canvas[o + i] = ((src[i] as f32 * a + canvas[o + i] as f32 * below * (1.0 - a)) / out_a).round() as u8;
+                }
+                canvas[o + 3] = (out_a * 255.0).round() as u8;
+            }
+        }
+    }
+    Some(canvas)
+}
+
+/// PSD を読み、展開図の大きさ（`w` x `h`）に合わせる。
+///
+/// ガイドのレイヤーが入っていれば、それを除いた絵にする。外部アプリでそのまま書き出すと、
+/// 統合画像にはガイドの線が焼き込まれているため。
 pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
     let file = PsdFile::from_bytes(bytes).map_err(|e| format!("PSD を読めませんでした: {e}"))?;
     let image = file.composite_rgba8().map_err(|e| format!("統合画像を取り出せませんでした: {e}"))?;
@@ -165,16 +231,23 @@ pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
     if sw == 0 || sh == 0 || image.data.len() != sw * sh * 4 {
         return Err(format!("統合画像の大きさが合いません（{sw}x{sh}）"));
     }
+    let layer_names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
+    let has_guides = layer_names.iter().any(|n| n.starts_with(GUIDE_LAYER_PREFIX));
+    let (source, guides) = match (has_guides, has_guides.then(|| composite_without_guides(&file, sw, sh)).flatten()) {
+        (false, _) => (image.data, GuideHandling::NotPresent),
+        (true, Some(clean)) => (clean, GuideHandling::Removed),
+        (true, None) => (image.data, GuideHandling::Baked),
+    };
     // 近い画素を拾うだけの単純な拡大縮小。
     let mut rgba = vec![0u8; w * h * 4];
     for y in 0..h {
         let sy = (y * sh / h).min(sh - 1);
         for x in 0..w {
             let sx = (x * sw / w).min(sw - 1);
-            rgba[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&image.data[(sy * sw + sx) * 4..(sy * sw + sx) * 4 + 4]);
+            rgba[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&source[(sy * sw + sx) * 4..(sy * sw + sx) * 4 + 4]);
         }
     }
-    Ok(LoadedPsd { rgba, source_size: [sw, sh], layer_names: file.iter_layers().map(|l| l.name()).collect(), has_real_merged: file.has_real_merged_data() })
+    Ok(LoadedPsd { rgba, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
 }
 
 #[cfg(test)]
@@ -198,5 +271,22 @@ mod tests {
         assert_eq!(loaded.rgba.len(), sheet.w * sheet.h * 4);
         // 貼る画像は、絵柄とガイドを重ねたものと同じ大きさになる。
         assert_eq!(compose(&sheet, Some(&loaded.rgba), true).len(), sheet.art.len());
+    }
+
+    #[test]
+    fn guides_are_removed_on_load() {
+        let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
+        let sheet = make_sheet_art(&tpl);
+        let loaded = load_psd(&save_psd(&sheet).unwrap(), sheet.w, sheet.h).unwrap();
+        assert_eq!(loaded.guides, GuideHandling::Removed);
+        // ガイドの線があった画素でも、読み込んだ絵は元の絵柄と同じになる（線が焼き込まれていない）。
+        let mut on_guides = 0;
+        for i in 0..sheet.w * sheet.h {
+            if sheet.guides[i * 4 + 3] == 255 && sheet.art[i * 4 + 3] == 255 {
+                assert_eq!(&loaded.rgba[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
+                on_guides += 1;
+            }
+        }
+        assert!(on_guides > 1000);
     }
 }

@@ -4,8 +4,8 @@ target/
 
 # 試作の出力
 /spikes/*/out/
-pakenova-s01-*.mp4
-pakenova-s01-*.psd
+pakenova-s0*-*.mp4
+pakenova-s0*-*.psd
 
 # エディタと OS
 .vscode/

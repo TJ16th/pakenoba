@@ -25,13 +25,14 @@ fn main() -> ExitCode {
             ("--yaw", Some(v)) => initial.yaw = v,
             ("--pitch", Some(v)) => initial.pitch = v,
             ("--thickness", Some(v)) => initial.thickness = v.clamp(0.3, 6.0),
+            ("--psd", _) if i + 1 < args.len() => initial.psd = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--no-guides", _) => {
                 initial.guides = false;
                 i += 1;
                 continue;
             }
             _ => {
-                println!("使い方: pakenova-spike-s02 [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--no-guides]");
+                println!("使い方: pakenova-spike-s02 [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--no-guides] [--psd ファイル]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

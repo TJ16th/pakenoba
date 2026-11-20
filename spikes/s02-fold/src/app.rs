@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use eframe::egui_wgpu;
 
-use crate::art::{SheetArt, compose, load_psd, make_sheet_art, save_psd};
+use crate::art::{GuideHandling, SheetArt, compose, load_psd, make_sheet_art, save_psd};
 use crate::gpu::BoxRenderer;
 use crate::math::{look_at, mat4_mul, normalize, perspective};
 use crate::template::{Template, bounding_sphere};
@@ -13,18 +13,20 @@ use crate::template::{Template, bounding_sphere};
 const PSD_NAME: &str = "pakenova-s02-dieline.psd";
 
 /// 起動時の状態。画面を撮って確かめるときに、コマンドラインから指定できる。
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Initial {
     pub fold: f32,
     pub yaw: f32,
     pub pitch: f32,
     pub thickness: f32,
     pub guides: bool,
+    /// 起動時に読み込む PSD。
+    pub psd: Option<PathBuf>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 1.5, guides: true }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 1.5, guides: true, psd: None }
     }
 }
 
@@ -33,7 +35,7 @@ pub fn run(initial: Initial) -> eframe::Result {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]).with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
-    eframe::run_native("新パケノバ 試作 S02", options, Box::new(move |_cc| Ok(Box::new(App::new(initial)))))
+    eframe::run_native("新パケノバ 試作 S02", options, Box::new(move |_cc| Ok(Box::new(App::new(&initial)))))
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -69,11 +71,11 @@ struct App {
 }
 
 impl App {
-    fn new(initial: Initial) -> Self {
+    fn new(initial: &Initial) -> Self {
         let dims = Dims { w: 120.0, d: 60.0, h: 160.0, t: initial.thickness };
         let template = Template::tuck_box(dims.w, dims.d, dims.h, dims.t);
         let sheet = make_sheet_art(&template);
-        App {
+        let mut app = App {
             dims,
             built_dims: Some(dims),
             template,
@@ -93,7 +95,12 @@ impl App {
             note: String::new(),
             triangles: 0,
             backend: String::new(),
+        };
+        if let Some(path) = &initial.psd {
+            app.psd_path = path.display().to_string();
+            app.open_psd(path);
         }
+        app
     }
 
     /// 寸法が変わっていたら、型紙と絵柄を作り直す。
@@ -117,8 +124,13 @@ impl App {
                 let ratio_src = loaded.source_size[0] as f32 / loaded.source_size[1] as f32;
                 let ratio_sheet = self.sheet.w as f32 / self.sheet.h as f32;
                 let stretch = if (ratio_src / ratio_sheet - 1.0).abs() > 0.01 { "\n注意: 縦横比が今の展開図と違うので、引き伸ばして貼っています。" } else { "" };
+                let guides = match loaded.guides {
+                    GuideHandling::NotPresent => "",
+                    GuideHandling::Removed => "\nガイドのレイヤーは除いて読み込みました。",
+                    GuideHandling::Baked => "\n注意: ガイドのレイヤーを除けませんでした（グループ、マスク、通常以外の合成モードがあります）。ガイドを非表示にしてから書き出してください。",
+                };
                 self.psd_info = format!(
-                    "{source}\n大きさ: {} x {} px\nレイヤー: {}{merged}{stretch}",
+                    "{source}\n大きさ: {} x {} px\nレイヤー: {}{merged}{stretch}{guides}",
                     loaded.source_size[0],
                     loaded.source_size[1],
                     if loaded.layer_names.is_empty() { "なし".to_owned() } else { loaded.layer_names.join("、") }
