@@ -1,0 +1,21 @@
+[package]
+name = "pakenova-spike-s05"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+description = "新パケノバ 試作 S05: 曲線の折り線（持ち手つきピロー型）"
+
+[dependencies]
+# egui と eframe は本家（crates.io）の版。試作 S01 の結果による。
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "system_fonts", "clipboard", "x11", "wayland"] }
+bytemuck = { version = "1", features = ["derive"] }
+
+# craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
+craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
