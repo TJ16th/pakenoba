@@ -290,6 +290,12 @@ impl Surface {
             next += 1;
             let to_decal = from.place.inverse();
             for link in &self.links[from.panel] {
+                // 合わせ目は、続けて 2 回はまたがない。合わせ目の先の面から、さらに別の合わせ目へ進むと、
+                // 箱の縁にかかった長い帯が、フタを伝って側面や底へ回り込み、同じ面に何本も出てしまう。
+                // （3 つの面が集まる角で、どの面のつながりを優先するかを選べるようにするまでの決まり。）
+                if link.seam && from.seams >= 1 {
+                    continue;
+                }
                 if !link.gate.iter().any(|g| segment_hits_box(to_decal.point(g[0]), to_decal.point(g[1]), half)) {
                     continue;
                 }
@@ -690,5 +696,30 @@ mod tests {
         assert!((at[0] - middle[0]).abs() < 0.5 && (at[1] - middle[1]).abs() < 0.5, "{at:?} と {middle:?}");
         // 表だけを返す当たり判定は、裏では当たらない。
         assert!(pick(&tpl, &mesh, from(-500.0), [0.0, 0.0, 1.0]).is_none());
+    }
+
+    /// 箱の上の縁にかかった帯が、フタを伝って回り込まない。
+    #[test]
+    fn 縁にかかった帯は_フタを伝って回り込まない() {
+        for (w, d, h) in [(200.0, 160.0, 85.0), (120.0, 60.0, 160.0)] {
+            let tpl = Template::tuck_box(w, d, h, 0.5);
+            let surface = Surface::new(&tpl, &Template::tuck_box(w, d, h, 0.02));
+            let front = tpl.panels.iter().position(|p| p.name == "正面").unwrap();
+            // 正面の上の縁をまたぐ高さに、箱を一周する帯を置く。
+            let mut band = Decal { panel: front, at: [0.5, 0.5], size: [2.0 * (w + d), 14.0], angle: 0.0 };
+            let top = tpl.panels[front].outline.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+            let middle = band.center(&tpl);
+            band.set_center(&tpl, [middle[0], top - 4.0]);
+            let pieces = surface.layout(&tpl, &band);
+            let names: Vec<&str> = pieces.iter().map(|p| tpl.panels[p.panel].name).collect();
+            assert_eq!(names.iter().filter(|n| **n == "正面").count(), 1, "正面に帯が 2 本出る: {names:?}");
+            assert!(names.contains(&"上のフタ"), "縁をまたいだぶんは、フタに続く: {names:?}");
+            assert!(!names.contains(&"底のフタ"), "底までは回り込まない: {names:?}");
+            assert!(pieces.iter().all(|p| p.seams <= 1), "合わせ目を続けてまたいでいる: {names:?}");
+            // 側面を 1 周はする。
+            for side in ["左側面", "右側面", "背面"] {
+                assert!(names.contains(&side), "{side} に帯がない: {names:?}");
+            }
+        }
     }
 }
