@@ -70,7 +70,7 @@ impl App {
                             self.tool = Tool::Select;
                         }
                         ui.separator();
-                        ui.weak("画像（PNG）は、ウィンドウにドロップして置きます");
+                        ui.weak("画像（PNG）は、ウィンドウにドロップして置きます。置いた画像は、素材の欄から何度でも置けます");
                     }
                     Tool::Hand => {
                         ui.weak("ドラッグで、箱を回す、展開図をずらす");
@@ -105,6 +105,11 @@ impl App {
                 if icons::tool_button(ui, tool, self.tool == tool).clicked() {
                     self.tool = tool;
                 }
+            }
+            ui.add_space(6.0);
+            ui.separator();
+            if icons::assets_button(ui, self.assets_open).clicked() {
+                self.assets_open = !self.assets_open;
             }
         });
     }

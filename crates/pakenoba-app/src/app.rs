@@ -4,6 +4,7 @@
 //! 左に「選ぶもの・道具」、右に「選んだものの設定」、下に「動き」を置く。
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
+mod assets;
 mod icons;
 mod panels;
 mod views;
@@ -53,11 +54,13 @@ pub struct Initial {
     pub views: Option<[bool; 3]>,
     /// 起動時に、紙の裏へ移しておく柄の番号。
     pub back: Vec<usize>,
+    /// 起動時に素材の欄を開いておく。真なら道具の帯の箱側、偽なら道具の帯の外側。
+    pub assets: Option<bool>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new() }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None }
     }
 }
 
@@ -302,6 +305,14 @@ struct App {
     flat: [FlatCam; 2],
     /// 出力の工程で選んでいる出力の種類。
     output_kind: usize,
+    /// 素材（付属の見本と、この案件に取り込んだ画像）。
+    assets: Vec<assets::Asset>,
+    /// 素材の欄を開いているか。
+    assets_open: bool,
+    /// 素材の欄の位置。真なら「道具、素材、箱」の並び、偽なら「素材、道具、箱」の並び。
+    assets_inside: bool,
+    /// 素材の欄から箱へ運んでいる途中の素材。
+    carry: Option<usize>,
     /// 立体の上で置いた柄。後ろのものほど上に重なる。
     decals: Vec<Placed>,
     selected: Option<usize>,
@@ -384,6 +395,10 @@ impl App {
             shown: initial.views.map(|[solid, front, back]| Shown { solid, front, back }).filter(|s| s.count() > 0).unwrap_or(Shown::SOLID_ONLY),
             flat: [FlatCam::default(); 2],
             output_kind: 0,
+            assets: assets::bundled(),
+            assets_open: initial.assets.is_some(),
+            assets_inside: initial.assets.unwrap_or(true),
+            carry: None,
             decals,
             selected: None,
             grab: None,
@@ -497,7 +512,9 @@ impl App {
             Ok(picture) => {
                 let Picture::Image { w, h, .. } = &picture else { return };
                 let size = [50.0, 50.0 * *h as f32 / *w as f32];
-                self.say(format!("{} を柄として置きました。", path.display()));
+                self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
+                let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
+                self.assets.push(assets::Asset { name, picture: picture.clone(), size, thumb: None, bundled: false });
                 self.add_decal(picture, size);
             }
             Err(e) => self.say(e),
@@ -704,7 +721,14 @@ impl eframe::App for App {
             }
             Workspace::Design => {
                 self.options_bar(ui);
-                self.tool_strip(ui);
+                // 素材の欄は、道具の帯の箱側（ア）か、外側（イ）。どちらがよいかは、触って決める。
+                if self.assets_inside {
+                    self.tool_strip(ui);
+                    self.assets_panel(ui);
+                } else {
+                    self.assets_panel(ui);
+                    self.tool_strip(ui);
+                }
                 self.design_side(ui);
             }
             Workspace::Output => {

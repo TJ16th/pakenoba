@@ -6,7 +6,20 @@ use super::Tool;
 
 /// 道具の帯のボタン。アイコンだけなので、必ずツールチップを付ける。
 pub(super) fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool) -> egui::Response {
-    let ready = tool.ready();
+    strip_button(ui, tool.ready(), selected, tool.tip(), |painter, center, stroke| draw(painter, center, tool, stroke))
+}
+
+/// 道具の帯の下の、素材の欄を開け閉めするボタン。
+pub(super) fn assets_button(ui: &mut egui::Ui, open: bool) -> egui::Response {
+    strip_button(ui, true, open, "素材の欄を開く、閉じる", |painter, center, stroke| {
+        // 重ねた 2 枚の紙。
+        let p = |x: f32, y: f32| pos2(center.x + x - 10.0, center.y + y - 10.0);
+        painter.add(Shape::line(vec![p(6.0, 6.0), p(6.0, 3.5), p(16.5, 3.5), p(16.5, 13.0), p(14.0, 13.0)], stroke));
+        painter.rect_stroke(Rect::from_min_max(p(3.5, 6.5), p(14.0, 16.5)), 1.0, stroke, StrokeKind::Middle);
+    })
+}
+
+fn strip_button(ui: &mut egui::Ui, ready: bool, selected: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Pos2, Stroke)) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(34.0, 34.0), if ready { Sense::click() } else { Sense::hover() });
     let visuals = ui.visuals();
     let (fill, color) = if selected {
@@ -20,8 +33,8 @@ pub(super) fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool) -> egui
     };
     let painter = ui.painter();
     painter.rect_filled(rect.shrink(1.0), 4.0, fill);
-    draw(painter, rect.center(), tool, Stroke::new(1.4, color));
-    response.on_hover_text(tool.tip())
+    icon(painter, rect.center(), Stroke::new(1.4, color));
+    response.on_hover_text(tip)
 }
 
 /// 20 × 20 の枠の中に描く。座標は、枠の左上から。

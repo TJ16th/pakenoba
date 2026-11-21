@@ -91,22 +91,29 @@ impl App {
         self.hover = None;
         let [solid, front, back] = layout(rect, shown);
         let several = shown.count() > 1;
+        // 素材の欄から運んできた素材を、ここで放したか。放した場所を、各表示へ伝える。
+        let released = ui.input(|i| i.pointer.any_released());
+        let drop = ui.input(|i| i.pointer.interact_pos()).filter(|_| released && self.carry.is_some());
         if let Some(rect) = solid {
-            self.solid_view(ui, rect, rs.as_ref());
+            self.solid_view(ui, rect, rs.as_ref(), drop.filter(|p| rect.contains(*p)));
             if several {
                 tag(ui, rect.min + vec2(8.0, 6.0), "立体");
             }
         }
         if let Some(rect) = front {
-            self.flat_view(ui, rect, false);
+            self.flat_view(ui, rect, false, drop.filter(|p| rect.contains(*p)));
         }
         if let Some(rect) = back {
-            self.flat_view(ui, rect, true);
+            self.flat_view(ui, rect, true, drop.filter(|p| rect.contains(*p)));
+        }
+        self.carry_ghost(ui);
+        if released {
+            self.carry = None;
         }
     }
 
     /// 立体。
-    fn solid_view(&mut self, ui: &mut egui::Ui, rect: Rect, rs: Option<&egui_wgpu::RenderState>) {
+    fn solid_view(&mut self, ui: &mut egui::Ui, rect: Rect, rs: Option<&egui_wgpu::RenderState>, drop: Option<Pos2>) {
         let response = ui.interact(rect, ui.scope_id().with("solid-view"), Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(rect);
         if response.hovered() {
@@ -203,6 +210,11 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
 
+        // 運んできた素材を、放した場所に置く。外側の面なら表、内側の面なら裏。
+        if let (Some(asset), Some((panel, at, back))) = (self.carry, drop.and_then(under)) {
+            self.place_asset(asset, panel, at, back);
+        }
+
         let proj = perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
         // 光は視点の少し右上から当てる（どの角度から見ても手前の面が明るくなる）。
         let right = normalize([view[0][0], view[1][0], view[2][0]]);
@@ -222,7 +234,7 @@ impl App {
     }
 
     /// 展開図。表（印刷面）か、裏（表を左右に裏返した向き）。いつも平らで、正面を向いている。
-    fn flat_view(&mut self, ui: &mut egui::Ui, rect: Rect, back: bool) {
+    fn flat_view(&mut self, ui: &mut egui::Ui, rect: Rect, back: bool, drop: Option<Pos2>) {
         let response = ui.interact(rect, ui.scope_id().with(("flat-view", back)), Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(rect);
         let visuals = ui.visuals().clone();
@@ -301,6 +313,11 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         } else if decal_under.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+
+        // 運んできた素材を、放した場所に置く。表の表示なら表、裏の表示なら裏。
+        if let (Some(asset), Some((panel, at))) = (self.carry, drop.filter(|p| area.contains(*p)).and_then(under)) {
+            self.place_asset(asset, panel, at, back);
         }
 
         // 展開図の絵。裏は、左右を逆にして貼る。
