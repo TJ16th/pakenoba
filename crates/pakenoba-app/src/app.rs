@@ -1,4 +1,12 @@
 //! ウィンドウ（egui / eframe）。
+//!
+//! 画面の並びは `docs/ui-design.md` の案 C。上のタブで工程（型、デザイン、出力）を切り替え、
+//! 左に「選ぶもの・道具」、右に「選んだものの設定」、下に「動き」を置く。
+//! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
+
+mod icons;
+mod panels;
+mod views;
 
 use std::path::{Path, PathBuf};
 
@@ -6,15 +14,12 @@ use eframe::egui;
 use eframe::egui_wgpu;
 
 use pakenoba_core::check::check;
-use pakenoba_core::math::{cross, look_at, mat4_mul, normalize, perspective, sub};
-use pakenoba_core::surface::{Decal, Surface, pick, ray_through};
-use pakenoba_core::template::{P2, Template, bounding_sphere};
+use pakenoba_core::surface::{Decal, Surface};
+use pakenoba_core::template::{P2, Template};
 
-use crate::art::{GuideHandling, SheetArt, compose, fit, load_psd, make_sheet_art, save_psd};
+use crate::art::{GuideHandling, SheetArt, compose, fit, load_psd, make_sheet_art};
 use crate::gpu::BoxRenderer;
-use crate::paint::{Picture, Placed, paint, spots};
-
-const PSD_NAME: &str = "pakenoba-dieline.psd";
+use crate::paint::{Picture, Placed, paint};
 
 /// 起動時の状態。画面を撮って確かめるときに、コマンドラインから指定できる。
 #[derive(Clone)]
@@ -44,11 +49,13 @@ pub struct Initial {
     pub band: Option<[f32; 4]>,
     /// 起動時に選んでおく柄の番号。
     pub select: Option<usize>,
+    /// デザインの工程で出しておく表示（立体、表、裏）。
+    pub views: Option<[bool; 3]>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None }
     }
 }
 
@@ -57,7 +64,32 @@ pub fn run(initial: Initial) -> eframe::Result {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]).with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
-    eframe::run_native("パケノバ", options, Box::new(move |_cc| Ok(Box::new(App::new(&initial)))))
+    eframe::run_native(
+        "パケノバ",
+        options,
+        Box::new(move |cc| {
+            setup_style(&cc.egui_ctx);
+            Ok(Box::new(App::new(&initial)))
+        }),
+    )
+}
+
+/// パケノバの色（ティール）。選択中と、いちばん主なボタンにだけ使う。
+const TEAL: egui::Color32 = egui::Color32::from_rgb(8, 126, 139);
+
+/// 文字の大きさと色。本文 13 px、補足 12 px。既定は暗いテーマ。
+fn setup_style(ctx: &egui::Context) {
+    use egui::{FontFamily, FontId, TextStyle};
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.all_styles_mut(|style| {
+        for (text_style, size) in [(TextStyle::Body, 13.0), (TextStyle::Button, 13.0), (TextStyle::Small, 12.0), (TextStyle::Heading, 13.0)] {
+            style.text_styles.insert(text_style, FontId::new(size, FontFamily::Proportional));
+        }
+        style.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        style.visuals.selection.bg_fill = TEAL;
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    });
 }
 
 /// ピロー型を表す番号。角柱の角の数と重ならない値にしてある。
@@ -157,6 +189,101 @@ enum Workspace {
     Output,
 }
 
+/// デザインの工程の道具。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tool {
+    Select,
+    Image,
+    Text,
+    Shape,
+    Ai,
+    Hand,
+}
+
+impl Tool {
+    const ALL: [Tool; 6] = [Tool::Select, Tool::Image, Tool::Text, Tool::Shape, Tool::Ai, Tool::Hand];
+
+    /// まだ作っていない道具は、押せない。
+    fn ready(self) -> bool {
+        matches!(self, Tool::Select | Tool::Image | Tool::Hand)
+    }
+
+    /// ツールチップ。名前とショートカット。押せない道具は、その理由。
+    fn tip(self) -> &'static str {
+        match self {
+            Tool::Select => "選択 (V)",
+            Tool::Image => "画像",
+            Tool::Text => "文字（これから作ります）",
+            Tool::Shape => "図形（これから作ります）",
+            Tool::Ai => "生成AI（これから作ります）",
+            Tool::Hand => "手のひら (H)",
+        }
+    }
+}
+
+/// 中央に出せる表示。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum View {
+    Solid,
+    Front,
+    Back,
+}
+
+/// どの表示を出しているか。少なくとも 1 つは出ている。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Shown {
+    solid: bool,
+    front: bool,
+    back: bool,
+}
+
+impl Shown {
+    const SOLID_ONLY: Shown = Shown { solid: true, front: false, back: false };
+
+    fn get(self, view: View) -> bool {
+        match view {
+            View::Solid => self.solid,
+            View::Front => self.front,
+            View::Back => self.back,
+        }
+    }
+
+    fn count(self) -> usize {
+        self.solid as usize + self.front as usize + self.back as usize
+    }
+
+    /// 出す、隠すを切り替える。最後の 1 つは隠せない（そのときは false を返す）。
+    fn toggle(&mut self, view: View) -> bool {
+        if self.get(view) && self.count() == 1 {
+            return false;
+        }
+        match view {
+            View::Solid => self.solid = !self.solid,
+            View::Front => self.front = !self.front,
+            View::Back => self.back = !self.back,
+        }
+        true
+    }
+
+    /// その表示だけにする。
+    fn solo(&mut self, view: View) {
+        *self = Shown { solid: view == View::Solid, front: view == View::Front, back: view == View::Back };
+    }
+}
+
+/// 展開図の表示の、拡大と位置。
+#[derive(Clone, Copy)]
+struct FlatCam {
+    zoom: f32,
+    pan: egui::Vec2,
+}
+
+impl Default for FlatCam {
+    fn default() -> Self {
+        FlatCam { zoom: 1.0, pan: egui::Vec2::ZERO }
+    }
+}
+
 struct App {
     dims: Dims,
     built_dims: Option<Dims>,
@@ -166,6 +293,13 @@ struct App {
     /// 型紙の検査の結果。（箱として成り立たない問題か、説明）。
     problems: Vec<(bool, String)>,
     workspace: Workspace,
+    tool: Tool,
+    /// デザインの工程で出している表示。
+    shown: Shown,
+    /// 展開図の表示（表、裏）の、拡大と位置。
+    flat: [FlatCam; 2],
+    /// 出力の工程で選んでいる出力の種類。
+    output_kind: usize,
     /// 立体の上で置いた柄。後ろのものほど上に重なる。
     decals: Vec<Placed>,
     selected: Option<usize>,
@@ -178,7 +312,15 @@ struct App {
     custom_source: Option<(Vec<u8>, [usize; 2])>,
     custom: Option<Vec<u8>>,
     show_guides: bool,
+    /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
+    /// 箱に貼る画像（展開図の表）。展開図の表示のために、取っておく。
+    front_rgba: Vec<u8>,
+    front_tex: Option<egui::TextureHandle>,
+    front_tex_dirty: bool,
+    /// 展開図の裏（紙の地とガイド線）。型紙が変わったら作り直す。
+    back_tex: Option<egui::TextureHandle>,
+    back_dirty: bool,
     fold: f32,
     /// アニメーションの行き先（0 か 1）。
     animate_to: Option<f32>,
@@ -195,10 +337,10 @@ struct App {
     renderer: Option<BoxRenderer>,
     psd_path: String,
     psd_info: String,
-    note: String,
+    /// 下の帯に出す知らせと、出し始めた時刻。数秒で消す。
+    message: Option<(String, Option<f64>)>,
     triangles: usize,
     backend: String,
-    decal_note: String,
 }
 
 impl App {
@@ -231,6 +373,10 @@ impl App {
             surface,
             problems,
             workspace: [Workspace::Shape, Workspace::Design, Workspace::Output][initial.workspace.min(2)],
+            tool: Tool::Select,
+            shown: initial.views.map(|[solid, front, back]| Shown { solid, front, back }).filter(|s| s.count() > 0).unwrap_or(Shown::SOLID_ONLY),
+            flat: [FlatCam::default(); 2],
+            output_kind: 0,
             decals,
             selected: None,
             grab: None,
@@ -240,6 +386,11 @@ impl App {
             custom: None,
             show_guides: initial.guides,
             art_dirty: true,
+            front_rgba: Vec::new(),
+            front_tex: None,
+            front_tex_dirty: true,
+            back_tex: None,
+            back_dirty: true,
             fold: initial.fold.clamp(0.0, 1.0),
             animate_to: None,
             view_to: None,
@@ -252,10 +403,9 @@ impl App {
             renderer: None,
             psd_path: String::new(),
             psd_info: String::new(),
-            note: String::new(),
+            message: None,
             triangles: 0,
             backend: String::new(),
-            decal_note: String::new(),
         };
         if let Some(path) = &initial.psd {
             app.psd_path = path.display().to_string();
@@ -277,12 +427,14 @@ impl App {
         (self.template, self.surface, self.problems) = self.dims.build();
         self.sheet = make_sheet_art(&self.template);
         self.built_dims = Some(self.dims);
+        self.back_dirty = true;
         if shape_changed {
             // 型を変えたら、パネルの並びが変わるので、置いた柄は外す。
             // 寸法だけを変えたときは、柄はパネルの中での位置で持っているので、そのまま付いてくる。
             self.decals.clear();
             self.selected = None;
             self.grab = None;
+            self.flat = [FlatCam::default(); 2];
         }
         if let Some((source, size)) = &self.custom_source {
             // 読み込んだ絵は、読み直さずに、展開図の新しい大きさへ合わせ直すだけにする。
@@ -330,10 +482,10 @@ impl App {
             Ok(picture) => {
                 let Picture::Image { w, h, .. } = &picture else { return };
                 let size = [50.0, 50.0 * *h as f32 / *w as f32];
-                self.decal_note = format!("{} を柄として置きました。", path.display());
+                self.say(format!("{} を柄として置きました。", path.display()));
                 self.add_decal(picture, size);
             }
-            Err(e) => self.decal_note = e,
+            Err(e) => self.say(e),
         }
     }
 
@@ -350,69 +502,6 @@ impl App {
             .collect()
     }
 
-    fn decal_controls(&mut self, ui: &mut egui::Ui) {
-        ui.strong("柄");
-        ui.label("PNG をウィンドウにドロップすると、画像が柄として箱に乗ります。箱の上の柄をドラッグすると面の上を動き、折り線や合わせ目をまたいで隣の面へ続きます。");
-        ui.horizontal(|ui| {
-            ui.weak("見本:");
-            if ui.button("ロゴ").clicked() {
-                self.add_decal(Picture::Logo, [46.0, 46.0]);
-            }
-            if ui.button("一周する帯").clicked() {
-                let (_, around) = self.dims.front_and_around(&self.template);
-                self.add_decal(Picture::Band, [around, 14.0]);
-            }
-        });
-        if !self.decal_note.is_empty() {
-            ui.weak(&self.decal_note);
-        }
-        ui.horizontal_wrapped(|ui| {
-            for index in 0..self.decals.len() {
-                let label = format!("{} {}", self.decals[index].picture.label(), index + 1);
-                if ui.selectable_label(self.selected == Some(index), label).clicked() {
-                    self.selected = if self.selected == Some(index) { None } else { Some(index) };
-                    self.art_dirty = true;
-                }
-            }
-        });
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else {
-            if !self.decals.is_empty() {
-                ui.weak("柄をクリックすると選べます。");
-            }
-            return;
-        };
-        let decal = &mut self.decals[index];
-        let before = (decal.size, decal.angle);
-        let mut width = decal.size[0];
-        ui.add(egui::Slider::new(&mut width, 8.0..=600.0).logarithmic(true).text("幅（mm）"));
-        if matches!(decal.picture, Picture::Band) {
-            ui.add(egui::Slider::new(&mut decal.size[1], 4.0..=60.0).text("高さ（mm）"));
-            decal.size[0] = width;
-        } else {
-            // ロゴと画像は、縦横の比を保つ。
-            decal.size = [width, decal.size[1] * width / decal.size[0]];
-        }
-        let mut degrees = decal.angle.to_degrees();
-        ui.add(egui::Slider::new(&mut degrees, -180.0..=180.0).text("回転（度）"));
-        decal.angle = degrees.to_radians();
-        if before != (decal.size, decal.angle) {
-            self.art_dirty = true;
-        }
-        // どのパネルにかかっているか。
-        let pieces = self.surface.layout(&self.template, &self.decals[index]);
-        let mut names: Vec<&str> = pieces.iter().map(|p| self.template.panels[p.panel].name).collect();
-        names.dedup();
-        let seams = pieces.iter().map(|p| p.seams).max().unwrap_or(0);
-        ui.weak(format!("かかっている面: {}", names.join("、")));
-        ui.weak(if seams > 0 { format!("合わせ目を {seams} 回またいでいます。") } else { "合わせ目はまたいでいません。".to_owned() });
-        if ui.button("この柄を消す").clicked() {
-            self.decals.remove(index);
-            self.selected = None;
-            self.grab = None;
-            self.art_dirty = true;
-        }
-    }
-
     fn open_psd(&mut self, path: &Path) {
         match std::fs::read(path) {
             Ok(bytes) => self.apply_psd(&bytes, &path.display().to_string()),
@@ -420,280 +509,98 @@ impl App {
         }
     }
 
-    /// 型: 箱の形と寸法を決める。
-    fn shape_panel(&mut self, ui: &mut egui::Ui) {
-        ui.strong("型");
-        ui.horizontal_wrapped(|ui| {
-            for (sides, label) in SHAPES {
-                ui.radio_value(&mut self.dims.sides, sides, label);
-            }
-        });
-        ui.add_space(8.0);
+    /// 下の帯に、知らせを 1 行出す。
+    fn say(&mut self, text: impl Into<String>) {
+        self.message = Some((text.into(), None));
+    }
 
-        ui.strong("寸法（内寸、mm）");
-        let gable = self.dims.sides == 2;
-        let pillow = self.dims.sides == PILLOW;
-        let prism = self.dims.sides >= 3 && !pillow;
-        ui.add(egui::Slider::new(&mut self.dims.w, 40.0..=300.0).text(if prism { "一辺" } else if pillow { "横の長さ" } else { "幅" }));
-        if !prism && !pillow {
-            ui.add(egui::Slider::new(&mut self.dims.d, 20.0..=200.0).text("奥行き"));
-        }
-        ui.add(egui::Slider::new(&mut self.dims.h, 40.0..=300.0).text(if gable { "胴の高さ" } else if pillow { "面の高さ" } else { "高さ" }));
-        if gable {
-            ui.add(egui::Slider::new(&mut self.dims.roof, 10.0..=150.0).text("屋根の高さ"));
-            if self.dims.d > self.dims.w {
-                ui.weak("奥行きは幅までに抑えています（側面の三角形が中央でぶつかるため）。");
-            }
-        }
-        if pillow {
-            ui.add(egui::Slider::new(&mut self.dims.bulge, 15.0..=90.0).text("ふくらみ（度）"));
-            let psi = self.dims.bulge.clamp(15.0, 90.0).to_radians();
-            let deepest = self.dims.h * (1.0 - (psi * 0.5).cos()) / psi;
-            ui.weak(format!("いちばん厚いところ: 約 {:.0} mm", deepest * 2.0));
-        }
-        ui.add(egui::Slider::new(&mut self.dims.t, 0.3..=6.0).step_by(0.1).text("紙の厚み"));
+    /// いまの型の名前と寸法（例: 「差し込み箱　120 × 60 × 160 mm」）。
+    fn shape_summary(&self) -> String {
         let d = self.dims;
-        if !prism && !gable && !pillow {
-            ui.weak(format!("外寸: {:.1} x {:.1} x {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
-        }
-        ui.weak(format!("展開図: {:.0} x {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
-        ui.add_space(8.0);
-
-        ui.strong("型紙の検査");
-        if self.problems.is_empty() {
-            ui.label("問題は見つかりませんでした。");
-        }
-        for (blocking, text) in &self.problems {
-            if *blocking {
-                ui.colored_label(egui::Color32::from_rgb(240, 120, 100), format!("問題: {text}"));
-            } else {
-                ui.label(format!("注意: {text}"));
-            }
-        }
-        ui.weak("閉じていない辺、開け口と留め、のりしろの貼る相手、展開図の重なりを見ています。");
-        ui.add_space(8.0);
-
-        self.motion_controls(ui);
-    }
-
-    /// 組み立てと、開け閉め。
-    fn motion_controls(&mut self, ui: &mut egui::Ui) {
-        ui.strong("組み立て");
-        if ui.add(egui::Slider::new(&mut self.fold, 0.0..=1.0).text("展開図 → 箱")).changed() {
-            self.animate_to = None;
-        }
-        ui.horizontal(|ui| {
-            if ui.button("組み立てる").clicked() {
-                self.animate_to = Some(1.0);
-                // 展開図に戻す前の視点があれば、そこへ戻す。
-                self.view_to = self.view_before_flat.take();
-            }
-            if ui.button("展開図に戻す").clicked() {
-                self.animate_to = Some(0.0);
-                // 展開図は、印刷面が手前を向く正面から見る（裏の白い面が見えてしまわないように）。
-                if self.view_before_flat.is_none() {
-                    self.view_before_flat = Some((self.yaw, self.pitch));
-                }
-                self.view_to = Some((0.0, 0.0));
-            }
-        });
-        if self.template.open_angle > 0.0 {
-            ui.add_space(4.0);
-            ui.strong("開け閉め");
-            if ui.add(egui::Slider::new(&mut self.open, 0.0..=1.0).text("閉じた → 開いた")).changed() {
-                // 開け閉めは、組み上がった箱に対する動き。
-                self.fold = 1.0;
-                self.animate_to = None;
-                self.open_to = None;
-            }
-            ui.horizontal(|ui| {
-                if ui.button("開ける").clicked() {
-                    self.fold = 1.0;
-                    self.open_to = Some(1.0);
-                }
-                if ui.button("閉じる").clicked() {
-                    self.fold = 1.0;
-                    self.open_to = Some(0.0);
-                }
-            });
+        let name = SHAPES.iter().find(|(sides, _)| *sides == d.sides).map_or("型", |(_, name)| name);
+        match d.sides {
+            PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
+            n if n >= 3 => format!("{name}　一辺 {:.0} × 高さ {:.0} mm", d.w, d.h),
+            _ => format!("{name}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h),
         }
     }
 
-    /// デザイン: 絵柄を置く。
-    fn design_panel(&mut self, ui: &mut egui::Ui) {
-        self.decal_controls(ui);
-        ui.add_space(10.0);
-
-        ui.strong("展開図まるごとの絵");
-        ui.label("「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップすると箱に貼られます。");
-        let mut load_clicked = false;
-        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-        ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            load_clicked = ui.button("読み込む").clicked();
-            ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text("PSD のパス").desired_width(f32::INFINITY));
-        });
-        if load_clicked {
-            let path = PathBuf::from(self.psd_path.trim().trim_matches('"'));
-            self.open_psd(&path);
-        }
-        if !self.psd_info.is_empty() {
-            ui.label(&self.psd_info);
-        }
-        if self.custom.is_some() && ui.button("絵を外す").clicked() {
-            self.custom = None;
-            self.custom_source = None;
-            self.psd_info.clear();
-            self.art_dirty = true;
-        }
-        ui.add_space(10.0);
-
-        ui.strong("表示");
-        if ui.checkbox(&mut self.show_guides, "切り線、折り線、のりしろを表示").changed() {
-            self.art_dirty = true;
-        }
-        ui.add_space(8.0);
-        self.motion_controls(ui);
+    /// 選んでいる柄を、重なりの上（+1）か下（-1）へ 1 つ動かす。
+    fn reorder_selected(&mut self, step: isize) {
+        let Some(index) = self.selected else { return };
+        let Some(other) = index.checked_add_signed(step).filter(|&i| i < self.decals.len()) else { return };
+        self.decals.swap(index, other);
+        self.selected = Some(other);
+        self.grab = None;
+        self.art_dirty = true;
     }
 
-    /// 出力: 見せるための画像や、型紙を書き出す。
-    fn output_panel(&mut self, ui: &mut egui::Ui) {
-        ui.strong("型紙");
-        ui.label("切り線、折り線、のりしろと、置いた絵柄を、レイヤーに分けた PSD で保存します。");
-        if ui.button("型紙を PSD で保存").clicked() {
-            self.note = match save_psd(&self.sheet, &self.decal_layers()).and_then(|b| std::fs::write(PSD_NAME, b).map_err(|e| e.to_string())) {
-                Ok(()) => {
-                    let full = std::env::current_dir().map(|dir| dir.join(PSD_NAME)).unwrap_or_else(|_| PathBuf::from(PSD_NAME));
-                    format!("保存しました: {}", full.display())
-                }
-                Err(e) => format!("保存できませんでした: {e}"),
-            };
-        }
-        if !self.note.is_empty() {
-            ui.weak(&self.note);
-        }
-        ui.weak("この型紙はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");
-        ui.add_space(10.0);
-
-        ui.strong("見せるための出力");
-        ui.weak("まだありません。次のものを、ボタン 1 つで書き出せるようにします。");
-        for item in ["16:9 の画像（スライド用）", "箱開け動画", "店の棚に並べた絵", "実寸の型紙（A4 や A3 に分けて印刷）"] {
-            ui.weak(format!("・{item}"));
+    /// 組み立てる（1）か、展開図に戻す（0）。
+    fn fold_to(&mut self, target: f32) {
+        self.animate_to = Some(target);
+        if target > 0.5 {
+            // 展開図に戻す前の視点があれば、そこへ戻す。
+            self.view_to = self.view_before_flat.take();
+        } else {
+            // 展開図は、印刷面が手前を向く正面から見る（裏の白い面が見えてしまわないように）。
+            if self.view_before_flat.is_none() {
+                self.view_before_flat = Some((self.yaw, self.pitch));
+            }
+            self.view_to = Some((0.0, 0.0));
         }
     }
 
-    /// 画面の下に出す、いまの状態。
-    fn status(&self) -> String {
-        let hover = self.hover.and_then(|i| self.template.panels.get(i)).map_or(String::new(), |p| format!("カーソルの下: {}　", p.name));
-        format!("{hover}パネル {} 枚　合わせ目 {} か所　三角形 {} 個　描画: {}", self.template.panels.len(), self.surface.seams.len(), self.triangles, self.backend)
-    }
-
-    fn viewport(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                self.zoom = (self.zoom * (scroll * 0.002).exp()).clamp(0.3, 6.0);
-            }
-        }
-
-        let Some(rs): Option<egui_wgpu::RenderState> = frame.wgpu_render_state().cloned() else {
-            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "wgpu を使えないため、箱を表示できません。", egui::FontId::proportional(16.0), egui::Color32::LIGHT_RED);
-            return;
-        };
-        if self.backend.is_empty() {
-            let info = rs.adapter.get_info();
-            self.backend = format!("{:?} / {}", info.backend, info.name);
-        }
-        let mesh = self.template.build_mesh(self.fold, 1.0 - self.open);
-        self.triangles = mesh.len() / 3;
-        let (center, radius) = bounding_sphere(&mesh);
-
-        let ppp = ui.ctx().pixels_per_point();
-        let size = [(rect.width() * ppp).round().max(2.0) as u32, (rect.height() * ppp).round().max(2.0) as u32];
-        let aspect = size[0] as f32 / size[1] as f32;
-        let fov = 30f32.to_radians();
-        // 縦長の画面でも箱がはみ出さないように、狭いほうに合わせて離れる。
-        let dist = radius / (fov * 0.5).sin() * 1.1 / self.zoom / aspect.min(1.0);
-        let dir = [self.pitch.cos() * self.yaw.sin(), self.pitch.sin(), self.pitch.cos() * self.yaw.cos()];
-        let eye = [center[0] + dir[0] * dist, center[1] + dir[1] * dist, center[2] + dir[2] * dist];
-        let view = look_at(eye, center, [0.0, 1.0, 0.0]);
-
-        // カーソルの下にある、立体の上の点（パネルと、展開図上の位置）。
-        let forward = normalize(sub(center, eye));
-        let side = normalize(cross(forward, [0.0, 1.0, 0.0]));
-        let upward = cross(side, forward);
-        let template = &self.template;
-        let under = |pos: egui::Pos2| {
-            let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
-            pick(template, &mesh, eye, ray_through(forward, side, upward, fov, aspect, x, y))
-        };
-        let pointer = response.interact_pointer_pos().or(response.hover_pos());
-        let hit = pointer.and_then(under);
-        self.hover = hit.map(|(panel, _)| panel);
-        let places = spots(&self.decals);
-        let decal_under = hit.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
-        if response.drag_started() {
-            // 押した場所に柄があれば、柄をつかむ。なければ、箱を回す。
-            let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
-            self.grab = pressed.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
-            if let Some((index, _)) = self.grab {
-                self.selected = Some(index);
-                self.art_dirty = true;
-            }
-        }
-        if response.dragged() {
-            match (self.grab, hit) {
-                (Some((index, grab)), Some((panel, at))) => {
-                    if let Some(decal) = self.decals.get_mut(index) {
-                        self.surface.drag(template, decal, panel, at, grab);
-                        self.art_dirty = true;
-                    }
-                }
-                (Some(_), None) => {}
-                (None, _) => {
-                    // 自分で回したら、視点の自動の動きは止める。
-                    self.view_to = None;
-                    let delta = response.drag_delta();
-                    self.yaw -= delta.x * 0.01;
-                    self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
-                }
-            }
-        }
-        if response.drag_stopped() {
-            self.grab = None;
-        }
-        if response.clicked() {
-            self.selected = decal_under.map(|(index, _)| index);
-            self.art_dirty = true;
-        }
-        if self.grab.is_some() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        } else if decal_under.is_some() && response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-        }
-
-        let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(&rs));
+    /// 柄や絵が変わっていたら、箱に貼る画像と、展開図の表示の画像を作り直す。
+    fn refresh_art(&mut self, ctx: &egui::Context, rs: Option<&egui_wgpu::RenderState>, shown: Shown) {
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            let rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, w, h, art));
-            renderer.set_art(&rs, w, h, &rgba);
+            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, w, h, art));
+            if let Some(rs) = rs {
+                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, w, h, &self.front_rgba);
+            }
             self.art_dirty = false;
+            self.front_tex_dirty = true;
         }
-
-        let proj = perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
-        // 光は視点の少し右上から当てる（どの角度から見ても手前の面が明るくなる）。
-        let right = normalize([view[0][0], view[1][0], view[2][0]]);
-        let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
-
-        // 抜き穴を、絵柄の座標（0〜1）に直して渡す。
-        let (sheet_w, sheet_h) = (self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]);
-        let mut holes = [[0.0f32; 4]; 2];
-        for (slot, h) in holes.iter_mut().zip(&self.template.holes) {
-            *slot = [(h[0] - self.template.min[0]) / sheet_w, (self.template.max[1] - h[1]) / sheet_h, h[2] / sheet_w, h[3] / sheet_h];
+        // 展開図の表示の画像は、その表示を出しているときだけ作る（柄を動かす間の負荷を抑える）。
+        if shown.front && self.front_tex_dirty {
+            self.front_tex = Some(views::texture(ctx, "sheet-front", self.sheet.w, self.sheet.h, &self.front_rgba));
+            self.front_tex_dirty = false;
         }
-        if let Some(id) = renderer.render(&rs, size, &mesh, mat4_mul(&proj, &view), light, holes) {
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(id, rect, uv, egui::Color32::WHITE);
+        if shown.back && self.back_dirty {
+            let rgba = compose(&self.sheet, None, true, |_| {});
+            self.back_tex = Some(views::texture(ctx, "sheet-back", self.sheet.w, self.sheet.h, &rgba));
+            self.back_dirty = false;
+        }
+    }
+
+    /// キーの割り当て。文字を打っている間は効かせない。
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let (plain, command, pressed) = ctx.input(|i| {
+            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0].map(|key| i.key_pressed(key));
+            (i.modifiers.is_none(), i.modifiers.command, pressed)
+        });
+        let [v, h, one, two, three, zero] = pressed;
+        if command && zero {
+            // Ctrl+0: 全体を表示。
+            self.zoom = 1.0;
+            self.flat = [FlatCam::default(); 2];
+        }
+        if !plain || self.workspace != Workspace::Design {
+            return;
+        }
+        if v {
+            self.tool = Tool::Select;
+        }
+        if h {
+            self.tool = Tool::Hand;
+        }
+        for (pressed, view) in [(one, View::Solid), (two, View::Front), (three, View::Back)] {
+            if pressed {
+                self.shown.solo(view);
+            }
         }
     }
 }
@@ -748,33 +655,26 @@ impl eframe::App for App {
             }
         }
 
-        // 上: ワークスペースの切り替え。左から順に進めば完成する。
-        egui::Panel::top("workspaces").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                ui.strong("パケノバ");
-                ui.add_space(16.0);
-                for (workspace, label) in [(Workspace::Shape, "型"), (Workspace::Design, "デザイン"), (Workspace::Output, "出力")] {
-                    ui.selectable_value(&mut self.workspace, workspace, format!("  {label}  "));
-                }
-            });
-        });
-        // 下: いまの状態。
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.weak(self.status());
-        });
-        // 左: ワークスペースごとの道具。幅は固定する（中身がはみ出してもパネルが広がらないように）。
-        egui::Panel::left("tools").resizable(false).exact_size(340.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(4.0);
-                match self.workspace {
-                    Workspace::Shape => self.shape_panel(ui),
-                    Workspace::Design => self.design_panel(ui),
-                    Workspace::Output => self.output_panel(ui),
-                }
-            });
-        });
+        self.shortcuts(ui.ctx());
+        self.top_bar(ui);
+        self.status_bar(ui);
+        self.motion_strip(ui);
+        match self.workspace {
+            Workspace::Shape => {
+                self.shape_list(ui);
+                self.shape_settings(ui);
+            }
+            Workspace::Design => {
+                self.options_bar(ui);
+                self.tool_strip(ui);
+                self.design_side(ui);
+            }
+            Workspace::Output => {
+                self.output_list(ui);
+                self.output_settings(ui);
+            }
+        }
         self.rebuild_if_needed();
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport(ui, frame));
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.views(ui, frame));
     }
 }
