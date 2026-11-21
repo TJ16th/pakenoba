@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use eframe::egui_wgpu;
 
-use crate::art::{GuideHandling, SheetArt, compose, load_psd, make_sheet_art, save_psd};
+use crate::art::{GuideHandling, SheetArt, compose, fit, load_psd, make_sheet_art, save_psd};
 use crate::decal::{Decal, Picture, Surface, pick, ray_through};
 use crate::gpu::BoxRenderer;
 use crate::math::{cross, look_at, mat4_mul, normalize, perspective, sub};
@@ -159,14 +159,18 @@ struct App {
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
-    /// 読み込んだ PSD の中身。寸法を変えたら展開図の大きさに合わせ直す。
-    custom_bytes: Option<Vec<u8>>,
+    /// 読み込んだ PSD の絵（合わせる前の画像と、その大きさ）。寸法を変えたら、展開図の大きさに合わせ直す。
+    custom_source: Option<(Vec<u8>, [usize; 2])>,
     custom: Option<Vec<u8>>,
     show_guides: bool,
     art_dirty: bool,
     fold: f32,
     /// アニメーションの行き先（0 か 1）。
     animate_to: Option<f32>,
+    /// 視点を動かす先（左右と上下の角度）。展開図に戻すときに、印刷面が見える正面へ向ける。
+    view_to: Option<(f32, f32)>,
+    /// 展開図に戻す前の視点。組み立て直すときに、ここへ戻す。
+    view_before_flat: Option<(f32, f32)>,
     /// お客さんが開けた度合い（0 が閉じた状態、1 が開いた状態）と、そのアニメーションの行き先。
     open: f32,
     open_to: Option<f32>,
@@ -216,12 +220,14 @@ impl App {
             grab: None,
             hover: None,
             sheet,
-            custom_bytes: None,
+            custom_source: None,
             custom: None,
             show_guides: initial.guides,
             art_dirty: true,
             fold: initial.fold.clamp(0.0, 1.0),
             animate_to: None,
+            view_to: None,
+            view_before_flat: None,
             open: initial.open.clamp(0.0, 1.0),
             open_to: None,
             yaw: initial.yaw,
@@ -262,8 +268,9 @@ impl App {
             self.selected = None;
             self.grab = None;
         }
-        if let Some(bytes) = self.custom_bytes.clone() {
-            self.apply_psd(&bytes, "読み込んだ PSD");
+        if let Some((source, size)) = &self.custom_source {
+            // 読み込んだ絵は、読み直さずに、展開図の新しい大きさへ合わせ直すだけにする。
+            self.custom = Some(fit(source, *size, self.sheet.w, self.sheet.h));
         }
         self.art_dirty = true;
     }
@@ -287,7 +294,7 @@ impl App {
                     if loaded.layer_names.is_empty() { "なし".to_owned() } else { loaded.layer_names.join("、") }
                 );
                 self.custom = Some(loaded.rgba);
-                self.custom_bytes = Some(bytes.to_vec());
+                self.custom_source = Some((loaded.source, loaded.source_size));
                 self.art_dirty = true;
             }
             Err(e) => self.psd_info = format!("{source}\n{e}"),
@@ -314,11 +321,17 @@ impl App {
         }
     }
 
-    /// 柄だけを、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。
-    fn decal_layer(&self) -> Vec<u8> {
-        let mut layer = vec![0u8; self.sheet.w * self.sheet.h * 4];
-        self.surface.paint(&self.template, &self.decals, None, self.sheet.w, self.sheet.h, &mut layer);
-        layer
+    /// 柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
+    fn decal_layers(&self) -> Vec<(String, Vec<u8>)> {
+        self.decals
+            .iter()
+            .enumerate()
+            .map(|(index, decal)| {
+                let mut layer = vec![0u8; self.sheet.w * self.sheet.h * 4];
+                self.surface.paint(&self.template, std::slice::from_ref(decal), None, self.sheet.w, self.sheet.h, &mut layer);
+                (format!("{}（{}）", index + 1, decal.picture.label()), layer)
+            })
+            .collect()
     }
 
     fn decal_controls(&mut self, ui: &mut egui::Ui) {
@@ -400,9 +413,16 @@ impl App {
         ui.horizontal(|ui| {
             if ui.button("組み立てる").clicked() {
                 self.animate_to = Some(1.0);
+                // 展開図に戻す前の視点があれば、そこへ戻す。
+                self.view_to = self.view_before_flat.take();
             }
             if ui.button("展開図に戻す").clicked() {
                 self.animate_to = Some(0.0);
+                // 展開図は、印刷面が手前を向く正面から見る（裏の白い面が見えてしまわないように）。
+                if self.view_before_flat.is_none() {
+                    self.view_before_flat = Some((self.yaw, self.pitch));
+                }
+                self.view_to = Some((0.0, 0.0));
             }
         });
         ui.add_space(6.0);
@@ -473,8 +493,7 @@ impl App {
             self.art_dirty = true;
         }
         if ui.button("型紙を PSD で保存").clicked() {
-            let layer = (!self.decals.is_empty()).then(|| self.decal_layer());
-            self.note = match save_psd(&self.sheet, layer.as_deref()).and_then(|b| std::fs::write(PSD_NAME, b).map_err(|e| e.to_string())) {
+            self.note = match save_psd(&self.sheet, &self.decal_layers()).and_then(|b| std::fs::write(PSD_NAME, b).map_err(|e| e.to_string())) {
                 Ok(()) => {
                     let full = std::env::current_dir().map(|dir| dir.join(PSD_NAME)).unwrap_or_else(|_| PathBuf::from(PSD_NAME));
                     format!("保存しました: {}", full.display())
@@ -499,7 +518,7 @@ impl App {
         ui.label(&self.psd_info);
         if self.custom.is_some() && ui.button("確認用の絵柄に戻す").clicked() {
             self.custom = None;
-            self.custom_bytes = None;
+            self.custom_source = None;
             self.psd_info = "確認用の絵柄".to_owned();
             self.art_dirty = true;
         }
@@ -582,6 +601,8 @@ impl App {
                 }
                 (Some(_), None) => {}
                 (None, _) => {
+                    // 自分で回したら、視点の自動の動きは止める。
+                    self.view_to = None;
                     let delta = response.drag_delta();
                     self.yaw -= delta.x * 0.01;
                     self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
@@ -637,6 +658,20 @@ impl eframe::App for App {
                 self.open_to = None;
             } else {
                 self.open += step * (target - self.open).signum();
+                ui.ctx().request_repaint();
+            }
+        }
+        // 視点のアニメーション。近いほうの回り方で、行き先へなめらかに寄せる。
+        if let Some((yaw, pitch)) = self.view_to {
+            let turn = (yaw - self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            let rise = pitch - self.pitch;
+            if turn.abs() < 0.002 && rise.abs() < 0.002 {
+                (self.yaw, self.pitch) = (yaw, pitch);
+                self.view_to = None;
+            } else {
+                let step = (ui.input(|i| i.stable_dt).min(0.05) * 5.0).min(1.0);
+                self.yaw += turn * step;
+                self.pitch += rise * step;
                 ui.ctx().request_repaint();
             }
         }

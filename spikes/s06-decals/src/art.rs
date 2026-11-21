@@ -42,22 +42,31 @@ fn to_px(tpl: &Template, p: P2) -> [f32; 2] {
     [(p[0] - tpl.min[0]) * PX_PER_MM, (tpl.max[1] - p[1]) * PX_PER_MM]
 }
 
-/// 確認用の絵柄とガイド線を作る。
-pub fn make_sheet_art(tpl: &Template) -> SheetArt {
-    let (w, h) = sheet_size(tpl);
-    // 透明な部分にも紙の色を入れておく（拡大縮小したときに縁が黒ずまないように）。
-    let mut art: Vec<u8> = [PAPER[0], PAPER[1], PAPER[2], 0].repeat(w * h);
-
+/// 確認用の絵柄を、行の束 1 つぶん塗る。`band` は `first_row` 行目からの画素。
+fn fill_band(tpl: &Template, w: usize, h: usize, first_row: usize, band: &mut [u8]) {
+    let last_row = (first_row + band.len() / (w * 4)).min(h);
     for panel in &tpl.panels {
         let px: Vec<[f32; 2]> = panel.outline.iter().map(|&p| to_px(tpl, p)).collect();
         let x0 = px.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min).floor().max(0.0) as usize;
         let x1 = (px.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max).ceil() as usize).min(w);
-        let y0 = px.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min).floor().max(0.0) as usize;
-        let y1 = (px.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max).ceil() as usize).min(h);
+        let y0 = (px.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min).floor().max(0.0) as usize).max(first_row);
+        let y1 = (px.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max).ceil() as usize).min(last_row);
+        let mut crossings: Vec<f32> = Vec::new();
         for y in y0..y1 {
-            for x in x0..x1 {
-                let (u, v) = (tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM);
-                if !inside(&panel.outline, [u, v]) || in_hole(tpl, u, v) {
+            // この行が輪郭を横切る位置を求めて、その間だけを塗る（画素ごとに内側かどうかを調べるより、ずっと速い）。
+            let v = tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM;
+            crossings.clear();
+            for i in 0..panel.outline.len() {
+                let (a, b) = (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()]);
+                if (a[1] > v) != (b[1] > v) {
+                    crossings.push(a[0] + (v - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                }
+            }
+            crossings.sort_by(f32::total_cmp);
+            let column = |u: f32| (((u - tpl.min[0]) * PX_PER_MM - 0.5).ceil().max(0.0) as usize).clamp(x0, x1);
+            for x in crossings.chunks_exact(2).flat_map(|pair| column(pair[0])..column(pair[1])) {
+                let u = tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM;
+                if in_hole(tpl, u, v) {
                     continue;
                 }
                 let color = if panel.hidden_when_closed {
@@ -81,19 +90,49 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
                     }
                     c
                 };
-                let o = (y * w + x) * 4;
-                art[o..o + 4].copy_from_slice(&[color[0] as u8, color[1] as u8, color[2] as u8, 255]);
+                let o = ((y - first_row) * w + x) * 4;
+                band[o..o + 4].copy_from_slice(&[color[0] as u8, color[1] as u8, color[2] as u8, 255]);
             }
         }
     }
+}
+
+/// 確認用の絵柄とガイド線を作る。
+pub fn make_sheet_art(tpl: &Template) -> SheetArt {
+    let (w, h) = sheet_size(tpl);
+    // 透明な部分にも紙の色を入れておく（拡大縮小したときに縁が黒ずまないように）。
+    let mut art: Vec<u8> = [PAPER[0], PAPER[1], PAPER[2], 0].repeat(w * h);
+
+    // 行の束ごとに、別のスレッドで塗る（寸法のスライダーを動かすたびに作り直すので、速さが効く）。
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    let band_rows = h.div_ceil(threads).max(32);
+    std::thread::scope(|scope| {
+        for (band_index, band) in art.chunks_mut(band_rows * w * 4).enumerate() {
+            scope.spawn(move || fill_band(tpl, w, h, band_index * band_rows, band));
+        }
+    });
 
     // ガイド線。切り線（輪郭）を先に描き、折り線を上から重ねる。
+    // 2 枚のパネルが展開図の上で同じ辺を共有しているところは、紙がつながっているので、切り線ではなく折り線。
+    // （ゲーブル型の側面の上の、斜めの線。データの上では親子になっていないが、1 枚の紙に入った折り線。）
+    const CUT: [u8; 4] = [30, 30, 34, 255];
+    const FOLD: [u8; 4] = [0, 150, 220, 255];
+    let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
+    let edges: Vec<Vec<(P2, P2)>> = tpl.panels.iter().map(|panel| (0..panel.outline.len()).map(|i| (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()])).collect()).collect();
     let mut guides = vec![0u8; w * h * 4];
-    for panel in &tpl.panels {
-        for i in 0..panel.outline.len() {
-            let (a, b) = (to_px(tpl, panel.outline[i]), to_px(tpl, panel.outline[(i + 1) % panel.outline.len()]));
-            draw_line(&mut guides, w, h, a, b, 1.6, [30, 30, 34, 255]);
+    let mut shared: Vec<(P2, P2)> = Vec::new();
+    for (index, own) in edges.iter().enumerate() {
+        for &(a, b) in own {
+            let other = edges.iter().enumerate().any(|(j, theirs)| j != index && theirs.iter().any(|&(c, d)| same(a, d) && same(b, c)));
+            if other {
+                shared.push((a, b));
+            } else {
+                draw_line(&mut guides, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
+            }
         }
+    }
+    for (a, b) in shared {
+        draw_line(&mut guides, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, FOLD);
     }
     // 抜き穴の輪郭も切り線として描く。
     for hole in &tpl.holes {
@@ -164,23 +203,38 @@ pub fn compose(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decal
     out
 }
 
-/// 立体の上で置いた柄のレイヤーの名前。
-pub const DECAL_LAYER: &str = "柄（立体の上で置いたもの）";
+/// 立体の上で置いた柄のレイヤーの名前は、この文字で始まる。
+pub const DECAL_LAYER_PREFIX: &str = "立体の柄";
 
-/// 型紙を PSD にする。レイヤーは「絵柄」と「ガイド」。`decals` があれば、その間に柄のレイヤーを入れる
-/// （展開図の上に描いた、透明な背景の画像。合わせ目をまたぐ柄は、分かれて描かれている）。
-pub fn save_psd(sheet: &SheetArt, decals: Option<&[u8]>) -> Result<Vec<u8>, String> {
+/// 型紙を PSD にする。レイヤーは下から「絵柄」、立体の上で置いた柄（1 つにつき 1 レイヤー）、「ガイド」。
+///
+/// `decals` は、柄ごとの名前と、展開図の大きさの透明な画像。合わせ目をまたぐ柄は、1 枚のレイヤーの中で分かれて描かれている。
+/// レイヤーは、描かれている範囲だけに切り詰めて入れる。
+pub fn save_psd(sheet: &SheetArt, decals: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
     let (w, h) = (sheet.w as u32, sheet.h as u32);
     let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(sheet.w * sheet.h);
     alpha_over(&mut composite, &sheet.art);
-    if let Some(decals) = decals {
-        alpha_over(&mut composite, decals);
+    for (_, image) in decals {
+        alpha_over(&mut composite, image);
     }
     alpha_over(&mut composite, &sheet.guides);
     let mut builder = PsdBuilder::new(w, h);
     builder.push_layer(LayerSpec::new("絵柄", 0, 0, w, h, PixelData::Rgba8(sheet.art.clone())));
-    if let Some(decals) = decals {
-        builder.push_layer(LayerSpec::new(DECAL_LAYER, 0, 0, w, h, PixelData::Rgba8(decals.to_vec())));
+    for (name, image) in decals {
+        // 何か描かれている範囲。
+        let (mut x0, mut y0, mut x1, mut y1) = (sheet.w, sheet.h, 0usize, 0usize);
+        for y in 0..sheet.h {
+            for x in 0..sheet.w {
+                if image[(y * sheet.w + x) * 4 + 3] > 0 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+                }
+            }
+        }
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        let cropped: Vec<u8> = (y0..y1).flat_map(|y| image[(y * sheet.w + x0) * 4..(y * sheet.w + x1) * 4].iter().copied()).collect();
+        builder.push_layer(LayerSpec::new(&format!("{DECAL_LAYER_PREFIX} {name}"), x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32, PixelData::Rgba8(cropped)));
     }
     builder.push_layer(LayerSpec::new(&format!("{GUIDE_LAYER_PREFIX}（切り線と折り線）"), 0, 0, w, h, PixelData::Rgba8(sheet.guides.clone())));
     builder.composite(PixelData::Rgba8(composite));
@@ -193,7 +247,7 @@ pub const GUIDE_LAYER_PREFIX: &str = "ガイド";
 /// このソフトが書き出したレイヤーのうち、読み込むときに除くもの（ガイドと、立体の上で置いた柄）。
 /// 柄は、このソフトの中に動かせる形で残っているので、絵として二重に読み込まない。
 fn is_generated(name: &str) -> bool {
-    name.starts_with(GUIDE_LAYER_PREFIX) || name == DECAL_LAYER
+    name.starts_with(GUIDE_LAYER_PREFIX) || name.starts_with(DECAL_LAYER_PREFIX)
 }
 
 /// 読み込んだ PSD に入っていたガイドの扱い。
@@ -209,7 +263,10 @@ pub enum GuideHandling {
 
 /// 読み込んだ PSD。画像は展開図の大きさに合わせてある。
 pub struct LoadedPsd {
+    /// 展開図の大きさに合わせた画像。
     pub rgba: Vec<u8>,
+    /// 合わせる前の画像（大きさは `source_size`）。寸法を変えたときに、ここから合わせ直す。
+    pub source: Vec<u8>,
     pub source_size: [usize; 2],
     pub layer_names: Vec<String>,
     pub has_real_merged: Option<bool>,
@@ -282,7 +339,11 @@ pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
         (true, Some(clean)) => (clean, GuideHandling::Removed),
         (true, None) => (image.data, GuideHandling::Baked),
     };
-    // 近い画素を拾うだけの単純な拡大縮小。
+    Ok(LoadedPsd { rgba: fit(&source, [sw, sh], w, h), source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
+}
+
+/// 画像を、展開図の大きさ（`w` x `h`）に合わせる。近い画素を拾うだけの単純な拡大縮小。
+pub fn fit(source: &[u8], [sw, sh]: [usize; 2], w: usize, h: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; w * h * 4];
     for y in 0..h {
         let sy = (y * sh / h).min(sh - 1);
@@ -291,7 +352,7 @@ pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
             rgba[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&source[(sy * sw + sx) * 4..(sy * sw + sx) * 4 + 4]);
         }
     }
-    Ok(LoadedPsd { rgba, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
+    rgba
 }
 
 #[cfg(test)]
@@ -308,7 +369,7 @@ mod tests {
         assert!(sheet.art.chunks_exact(4).any(|p| p[3] == 255));
         assert!(sheet.guides.chunks_exact(4).any(|p| p[3] == 255));
 
-        let bytes = save_psd(&sheet, None).unwrap();
+        let bytes = save_psd(&sheet, &[]).unwrap();
         let loaded = load_psd(&bytes, sheet.w, sheet.h).unwrap();
         assert_eq!(loaded.source_size, [sheet.w, sheet.h]);
         assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "ガイド（切り線と折り線）".to_owned()]);
@@ -328,9 +389,25 @@ mod tests {
         surface.paint(&tpl, &[logo], None, sheet.w, sheet.h, &mut layer);
         let painted: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| layer[i * 4 + 3] == 255).collect();
         assert!(painted.len() > 10_000);
+        let mut band_layer = vec![0u8; sheet.w * sheet.h * 4];
+        let band = Decal { picture: Picture::Band, panel: 0, at: [0.5, 0.2], size: [360.0, 14.0], angle: 0.0 };
+        surface.paint(&tpl, &[band], None, sheet.w, sheet.h, &mut band_layer);
 
-        let loaded = load_psd(&save_psd(&sheet, Some(&layer)).unwrap(), sheet.w, sheet.h).unwrap();
-        assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), DECAL_LAYER.to_owned(), "ガイド（切り線と折り線）".to_owned()]);
+        // 柄 1 つにつき 1 レイヤー。何も描かれていない柄は入れない。
+        let decals = [("1（帯）".to_owned(), band_layer), ("2（ロゴ）".to_owned(), layer.clone()), ("3（空）".to_owned(), vec![0u8; sheet.w * sheet.h * 4])];
+        let bytes = save_psd(&sheet, &decals).unwrap();
+        // ロゴのレイヤーは、描かれている範囲だけに切り詰められて、元の位置に入っている。
+        let file = PsdFile::from_bytes(&bytes).unwrap();
+        let saved = file.iter_layers().find(|l| l.name() == "立体の柄 2（ロゴ）").unwrap().rgba8().unwrap();
+        let (left, top, width) = (saved.left as usize, saved.top as usize, saved.width as usize);
+        assert!(width < 200 && (saved.height as usize) < 200, "切り詰められていない: {width} x {}", saved.height);
+        for &i in painted.iter().step_by(131) {
+            let (x, y) = (i % sheet.w, i / sheet.w);
+            let o = ((y - top) * width + (x - left)) * 4;
+            assert_eq!(&saved.data[o..o + 4], &layer[i * 4..i * 4 + 4]);
+        }
+        let loaded = load_psd(&bytes, sheet.w, sheet.h).unwrap();
+        assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "立体の柄 1（帯）".to_owned(), "立体の柄 2（ロゴ）".to_owned(), "ガイド（切り線と折り線）".to_owned()]);
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // 柄のあった画素でも、読み込んだ絵は元の絵柄のまま（柄が絵として焼き込まれていない）。
         for &i in painted.iter().step_by(97) {
@@ -339,10 +416,38 @@ mod tests {
     }
 
     #[test]
+    fn art_fills_exactly_the_panels() {
+        // 行ごとの塗りが、画素ごとに内側かどうかを調べた結果と一致する。
+        for tpl in [Template::tuck_box(120.0, 60.0, 160.0, 1.5), Template::pillow(180.0, 110.0, 0.5, 1.2), Template::gable(160.0, 100.0, 110.0, 45.0, 0.5)] {
+            let sheet = make_sheet_art(&tpl);
+            for y in (0..sheet.h).step_by(3) {
+                for x in (0..sheet.w).step_by(3) {
+                    let at = [tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM];
+                    let expected = tpl.panels.iter().any(|p| inside(&p.outline, at)) && !in_hole(&tpl, at[0], at[1]);
+                    assert_eq!(sheet.art[(y * sheet.w + x) * 4 + 3] == 255, expected, "{at:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_edges_are_drawn_as_folds() {
+        // ゲーブル型の側面の上の斜めの線は、2 枚の三角形が共有する辺。切り線ではなく折り線の色で描かれる。
+        let tpl = Template::gable(160.0, 100.0, 110.0, 45.0, 0.5);
+        let sheet = make_sheet_art(&tpl);
+        let center = tpl.panels.iter().find(|p| p.name == "右の三角").unwrap();
+        // 底辺の左端から頂点へ向かう斜めの線の、中ほどの点。
+        let (base, apex) = (center.outline.iter().copied().min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1]))).unwrap(), center.outline.iter().copied().max_by(|a, b| a[1].total_cmp(&b[1])).unwrap());
+        let mid = to_px(&tpl, [(base[0] + apex[0]) * 0.5, (base[1] + apex[1]) * 0.5]);
+        let o = (mid[1] as usize * sheet.w + mid[0] as usize) * 4;
+        assert_eq!(&sheet.guides[o..o + 4], &[0, 150, 220, 255]);
+    }
+
+    #[test]
     fn guides_are_removed_on_load() {
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let sheet = make_sheet_art(&tpl);
-        let loaded = load_psd(&save_psd(&sheet, None).unwrap(), sheet.w, sheet.h).unwrap();
+        let loaded = load_psd(&save_psd(&sheet, &[]).unwrap(), sheet.w, sheet.h).unwrap();
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // ガイドの線があった画素でも、読み込んだ絵は元の絵柄と同じになる（線が焼き込まれていない）。
         let mut on_guides = 0;
