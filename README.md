@@ -61,7 +61,7 @@ cargo test --workspace
 
 - [方針メモ](docs/concept.md): 何を作るか、決定事項、設計の提案、未決事項
 - [画面設計の検討](docs/ui-design.md): 画面の並び、文字やツールチップの方針、決まったこと、実装の状態
-- [案件の保存の検討](docs/project-file.md): 案件をファイルに残す形の案（未決定）
+- [案件の保存の検討](docs/project-file.md): 案件をファイル（`.pknb`）に残す形。中核の読み書きまで実装
 - [PhotoCraft / VectorCraft 調査メモ](docs/upstream-investigation.md): 部品として使える範囲と、編集画面を内蔵できるかの調査結果
 
 ## 試作

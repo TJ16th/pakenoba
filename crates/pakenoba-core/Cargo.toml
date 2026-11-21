@@ -10,3 +10,10 @@ publish.workspace = true
 [dependencies]
 # 描画用の頂点を、そのまま GPU へ渡せる形にするため。
 bytemuck = { version = "1", features = ["derive"] }
+# 案件のファイル（.pknb）の読み書き。中身は ZIP で、設定のテキスト（TOML）と素材のファイルが入る。
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+# 圧縮は、Rust だけで書かれた実装（zlib-rs）を使う。暗号化やほかの圧縮形式は入れない。
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 素材のファイルの、中身の印（SHA-256）。
+sha2 = "0.11"
