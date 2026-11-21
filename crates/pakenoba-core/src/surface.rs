@@ -8,7 +8,7 @@
 //!   合わせ目: 組み上がると接するが、展開図の上では離れている辺。隣のパネルの座標へ、回転と移動で写して続ける。
 //! - 合わせ目は、組み上がった形から自動で見つける。
 
-use crate::math::{V3, add, cross, dot, length, normalize, scale, sub};
+use crate::math::{Affine, V3, add, cross, dot, length, normalize, scale, sub};
 use crate::template::{P2, Panel, Template, Vertex, inside};
 
 /// 展開図の上での回転と移動（裏返しは含まない）。
@@ -221,6 +221,47 @@ struct Link {
 pub struct Surface {
     links: Vec<Vec<Link>>,
     pub seams: Vec<Seam>,
+    /// パネルごとの「上」の向き（`Decal::angle` と同じ測り方。この角度の柄は、その面でまっすぐ立って見える）。
+    up: Vec<f32>,
+}
+
+/// 組み上がった箱での、パネルごとの「上」の向き。
+///
+/// - 立っている面と、斜めの面（屋根など）: 箱の上へ向かう向き。
+/// - 上を向いた面（天面）: 奥へ向かう向き。正面から見下ろして、まっすぐ読める。
+/// - 下を向いた面（底面）: 手前へ向かう向き。箱を手前へ起こして、まっすぐ読める。
+///
+/// 丸めたパネルでは、パネルの中央での向きで決める。
+fn face_ups(tpl: &Template) -> Vec<f32> {
+    let world = tpl.world_at(1.0);
+    let frames: Vec<Affine> = tpl
+        .transforms(1.0, 1.0)
+        .iter()
+        .enumerate()
+        .map(|(index, place)| {
+            let (lo, hi) = panel_box(tpl, index);
+            world.then_after(&place.at([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5]))
+        })
+        .collect();
+    let centers: Vec<V3> = frames.iter().enumerate().map(|(index, frame)| {
+        let (lo, hi) = panel_box(tpl, index);
+        frame.point([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, 0.0])
+    }).collect();
+    let middle = centers.iter().fold(0.0, |sum, c| sum + c[1]) / centers.len().max(1) as f32;
+    frames
+        .iter()
+        .zip(&centers)
+        .map(|(frame, center)| {
+            let (ex, ey) = (frame.vector([1.0, 0.0, 0.0]), frame.vector([0.0, 1.0, 0.0]));
+            // 箱の上（Y）を、面の中へ映す。ほぼ水平な面では向きが決まらないので、奥か手前を使う。
+            let mut u = [ex[1], ey[1]];
+            if len2(u) < 0.35 {
+                let depth = if center[1] >= middle { -1.0 } else { 1.0 };
+                u = [ex[2] * depth, ey[2] * depth];
+            }
+            if len2(u) < 1e-3 { 0.0 } else { (-u[0]).atan2(u[1]) }
+        })
+        .collect()
 }
 
 /// 柄の、パネル 1 枚ぶんの置かれ方。
@@ -272,7 +313,7 @@ impl Surface {
             links[seam.b].push(Link { to: seam.a, map: map.inverse(), gate: open.iter().map(|&(lo, hi)| [along(pb, ub, -hi), along(pb, ub, -lo)]).collect(), seam: true });
             seams.push(*seam);
         }
-        Surface { links, seams }
+        Surface { links, seams, up: face_ups(tpl) }
     }
 
     /// 柄を、かかっているパネルごとに割り振る。最初の 1 つが、柄の置かれているパネル。
@@ -323,9 +364,37 @@ impl Surface {
         })
     }
 
+    /// そのパネルの「上」の向き（`Decal::angle` と同じ測り方）。
+    pub fn up(&self, panel: usize) -> f32 {
+        self.up.get(panel).copied().unwrap_or(0.0)
+    }
+
     /// つかんだ柄を、立体の上の別の点へ動かす。`grab` は、柄の座標でのつかんだ位置。
     ///
+    /// 向きは、面ごとの「上」を基準にして保つ。正面でまっすぐ立っている柄は、側面でも天面でも、まっすぐ立つ。
+    /// どの面をどの順にたどっても、同じ面に戻れば、同じ向きに戻る。
+    ///
+    /// 3 つの面が集まる角のまわりでは、絵をどの辺でも途切れさせずに運ぶと、一周で 90 度回ってしまう
+    /// （平らに開けない角だから）。それを避けるかわりに、側面から天面へ移るときのように、
+    /// 面の「上」どうしが続いていない辺では、またいだところで向きが切り替わる。
+    pub fn drag_on_solid(&self, tpl: &Template, decal: &mut Decal, panel: usize, at: P2, grab: P2) {
+        if tpl.panels[panel].hidden_when_closed() {
+            return;
+        }
+        let angle = decal.angle - self.up(decal.panel) + self.up(panel);
+        // 行ったり来たりしても値が少しずつずれないように、-180〜180 度に収める。
+        let angle = (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        let angle = if panel == decal.panel { decal.angle } else { angle };
+        let offset = Aff2::new(angle, [0.0, 0.0]).vector(grab);
+        decal.panel = panel;
+        decal.angle = angle;
+        decal.set_center(tpl, [at[0] - offset[0], at[1] - offset[1]]);
+    }
+
+    /// つかんだ柄を、展開図の上の別の点へ動かす。`grab` は、柄の座標でのつかんだ位置。
+    ///
     /// 行き先のパネルに、柄がすでにかかっていれば、その続き方のまま（合わせ目で回った向きのまま）置き直す。
+    /// 展開図の上では、動かしても絵は回らない。
     pub fn drag(&self, tpl: &Template, decal: &mut Decal, panel: usize, at: P2, grab: P2) {
         if tpl.panels[panel].hidden_when_closed() {
             return;
@@ -600,6 +669,87 @@ mod tests {
         assert_eq!(logo.panel, lid);
         let after = surface.layout(&tpl, &logo);
         // どのパネルでも、絵の位置と向きは変わらない。
+        for piece in &before {
+            let same = after.iter().find(|p| p.panel == piece.panel).expect("動かしたらパネルから外れた");
+            let between = piece.place.inverse().then_after(&same.place);
+            assert!(between.angle().abs() < 1e-3 && len2(between.t) < 0.6, "{} でずれた", tpl.panels[piece.panel].name);
+        }
+    }
+
+    /// 柄の「上」が、組み上がった箱の中で向いている向き。
+    fn up_in_box(tpl: &Template, decal: &Decal) -> V3 {
+        let frame = tpl.world_at(1.0).then_after(&tpl.transforms(1.0, 1.0)[decal.panel].at(decal.center(tpl)));
+        frame.vector([-decal.angle.sin(), decal.angle.cos(), 0.0])
+    }
+
+    /// 角度の差（-π〜π）。
+    fn turn(a: f32, b: f32) -> f32 {
+        (a - b + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+    }
+
+    #[test]
+    fn 立体の上で動かすと_面ごとの上にそろって立つ() {
+        let (tpl, surface) = tuck(0.5);
+        let mut logo = Decal { panel: index(&tpl, "正面"), at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.0 };
+        // 立っている面では箱の上、天面では奥、底面では手前が「上」。
+        let expected = [("正面", [0.0, 1.0, 0.0]), ("右側面", [0.0, 1.0, 0.0]), ("背面", [0.0, 1.0, 0.0]), ("左側面", [0.0, 1.0, 0.0]), ("上のフタ", [0.0, 0.0, -1.0]), ("底のフタ", [0.0, 0.0, 1.0])];
+        for (name, direction) in expected {
+            let panel = index(&tpl, name);
+            let at = Decal { panel, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+            surface.drag_on_solid(&tpl, &mut logo, panel, at, [0.0, 0.0]);
+            assert_eq!(logo.panel, panel);
+            assert!(dot(up_in_box(&tpl, &logo), direction) > 0.999, "{name}: {:?}", up_in_box(&tpl, &logo));
+        }
+    }
+
+    #[test]
+    fn 立体の上でどの面をたどっても_同じ面では同じ向きに戻る() {
+        for (tpl, thin) in [(Template::tuck_box(200.0, 160.0, 85.0, 0.5), Template::tuck_box(200.0, 160.0, 85.0, 0.02)), (Template::prism(6, 70.0, 160.0, 0.5), Template::prism(6, 70.0, 160.0, 0.02)), (Template::gable(160.0, 100.0, 110.0, 45.0, 0.5), Template::gable(160.0, 100.0, 110.0, 45.0, 0.02))] {
+            let surface = Surface::new(&tpl, &thin);
+            let visible: Vec<usize> = (0..tpl.panels.len()).filter(|&i| !tpl.panels[i].hidden_when_closed()).collect();
+            // 斜めに回した柄で、見えている面をでたらめな順に 400 回たどる。
+            let mut logo = Decal { panel: visible[0], at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.3 };
+            let mut seen: Vec<Option<f32>> = vec![None; tpl.panels.len()];
+            seen[logo.panel] = Some(logo.angle);
+            let mut state = 99u32;
+            for _ in 0..400 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let panel = visible[(state >> 16) as usize % visible.len()];
+                let at = Decal { panel, at: [0.3, 0.6], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+                surface.drag_on_solid(&tpl, &mut logo, panel, at, [4.0, -3.0]);
+                match seen[panel] {
+                    Some(first) => assert!(turn(logo.angle, first).abs() < 1e-3, "{} で向きが変わった", tpl.panels[panel].name),
+                    None => seen[panel] = Some(logo.angle),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn 立体の上で_角を一周しても向きが変わらない() {
+        // 正面 → 上のフタ → 右側面 → 正面。絵を途切れさせずに運ぶと、一周で 90 度回る道。
+        let (tpl, surface) = tuck(0.5);
+        let mut logo = Decal { panel: index(&tpl, "正面"), at: [0.8, 0.8], size: [30.0, 30.0], angle: 0.0 };
+        for _ in 0..3 {
+            for name in ["上のフタ", "右側面", "正面"] {
+                let panel = index(&tpl, name);
+                let at = Decal { panel, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+                surface.drag_on_solid(&tpl, &mut logo, panel, at, [0.0, 0.0]);
+            }
+            assert!(turn(logo.angle, 0.0).abs() < 1e-4, "{}", logo.angle);
+        }
+    }
+
+    #[test]
+    fn 立体の上で_正面から天面へは絵が途切れずに続く() {
+        let (tpl, surface) = tuck(0.5);
+        let (front, lid) = (index(&tpl, "正面"), index(&tpl, "上のフタ"));
+        let mut logo = Decal { panel: front, at: [0.5, 0.97], size: [40.0, 40.0], angle: 0.0 };
+        let before = surface.layout(&tpl, &logo);
+        let on_lid = *before.iter().find(|p| p.panel == lid).expect("フタにかかっていない");
+        surface.drag_on_solid(&tpl, &mut logo, lid, on_lid.place.point([0.0, 5.0]), [0.0, 5.0]);
+        assert_eq!(logo.panel, lid);
+        let after = surface.layout(&tpl, &logo);
         for piece in &before {
             let same = after.iter().find(|p| p.panel == piece.panel).expect("動かしたらパネルから外れた");
             let between = piece.place.inverse().then_after(&same.place);

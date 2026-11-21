@@ -211,7 +211,8 @@ impl App {
                 (Some((index, grab)), Some((panel, at, back))) => {
                     // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
                     if let Some(decal) = self.decals.get_mut(index).filter(|decal| decal.back == back) {
-                        self.surface.drag(template, decal, panel, at, grab);
+                        // 立体の上では、向きを面ごとの「上」にそろえて保つ（同じ面に戻れば、同じ向きに戻る）。
+                        self.surface.drag_on_solid(template, decal, panel, at, grab);
                         self.art_dirty = true;
                     }
                 }
