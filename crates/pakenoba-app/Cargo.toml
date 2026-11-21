@@ -1,0 +1,22 @@
+[package]
+name = "pakenoba-app"
+description = "パケノバ: パッケージデザイン専用の制作ソフト"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pakenoba"
+path = "src/main.rs"
+
+[dependencies]
+pakenoba-core = { path = "../pakenoba-core" }
+# egui と eframe は本家（crates.io）の版。試作 S01 の結果による。
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "system_fonts", "clipboard", "x11", "wayland"] }
+bytemuck = { version = "1", features = ["derive"] }
+# 柄にする画像（PNG）の読み込み。
+png = "0.18"
+# craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
+craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
