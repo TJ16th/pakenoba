@@ -42,6 +42,11 @@ fn main() -> ExitCode {
             ("--select", Some(v)) => initial.select = Some(v as usize),
             ("--back", Some(v)) => initial.back.push(v as usize),
             ("--assets", Some(v)) => initial.assets = Some(v < 1.5),
+            ("--debug", _) => {
+                initial.debug = true;
+                i += 1;
+                continue;
+            }
             ("--views", _) if i + 1 < args.len() => {
                 // 「立体、表、裏」を出すかどうかを、1 と 0 の 3 文字で（例: 110）。
                 let on: Vec<bool> = args[i + 1].chars().map(|c| c == '1').collect();

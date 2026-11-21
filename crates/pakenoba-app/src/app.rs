@@ -57,11 +57,13 @@ pub struct Initial {
     pub back: Vec<usize>,
     /// 起動時に素材の欄を開いておく。真なら道具の帯の箱側、偽なら道具の帯の外側。
     pub assets: Option<bool>,
+    /// 開発用の情報（パネルの数、描画の方式など）を、下の帯に出す。
+    pub debug: bool,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false }
     }
 }
 
@@ -80,6 +82,9 @@ pub fn run(initial: Initial) -> eframe::Result {
     )
 }
 
+/// 型の工程の、はじめの視点（斜め上から）。向きと、見下ろす角度。
+const SHAPE_VIEW: (f32, f32) = (0.6, 0.35);
+
 /// パケノバの色（ティール）。選択中と、いちばん主なボタンにだけ使う。
 const TEAL: egui::Color32 = egui::Color32::from_rgb(8, 126, 139);
 
@@ -92,6 +97,11 @@ fn setup_style(ctx: &egui::Context) {
             style.text_styles.insert(text_style, FontId::new(size, FontFamily::Proportional));
         }
         style.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        // 文字は、暗い地の上で、はっきり読める明るさにする（egui の既定は、本文も補足も暗すぎる）。
+        // 本文は地との明るさの比がおよそ 12:1、補足でも 7:1。
+        style.visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::from_gray(216);
+        style.visuals.widgets.inactive.fg_stroke.color = egui::Color32::from_gray(222);
+        style.visuals.weak_text_color = Some(egui::Color32::from_gray(164));
         style.visuals.selection.bg_fill = TEAL;
         style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -118,6 +128,17 @@ struct Dims {
 }
 
 impl Dims {
+    /// その型の、はじめの寸法。差し込み箱は、旧パケノバの既定（幅 200、高さ 85、奥行き 160 の横長の箱）。
+    fn for_shape(sides: usize, t: f32) -> Dims {
+        let (w, d, h) = match sides {
+            2 => (160.0, 100.0, 110.0),
+            PILLOW => (180.0, 60.0, 110.0),
+            n if n >= 3 => (70.0, 60.0, 160.0),
+            _ => (200.0, 160.0, 85.0),
+        };
+        Dims { sides, w, d, h, t, bulge: if sides == PILLOW { 70.0 } else { 40.0 }, roof: 45.0 }
+    }
+
     fn template(&self) -> Template {
         match self.sides {
             2 => Template::gable(self.w, self.d, self.h, self.roof, self.t),
@@ -199,7 +220,6 @@ enum Workspace {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tool {
     Select,
-    Image,
     Text,
     Shape,
     Ai,
@@ -207,18 +227,17 @@ enum Tool {
 }
 
 impl Tool {
-    const ALL: [Tool; 6] = [Tool::Select, Tool::Image, Tool::Text, Tool::Shape, Tool::Ai, Tool::Hand];
+    const ALL: [Tool; 5] = [Tool::Select, Tool::Text, Tool::Shape, Tool::Ai, Tool::Hand];
 
     /// まだ作っていない道具は、押せない。
     fn ready(self) -> bool {
-        matches!(self, Tool::Select | Tool::Image | Tool::Hand)
+        matches!(self, Tool::Select | Tool::Hand)
     }
 
     /// ツールチップ。名前とショートカット。押せない道具は、その理由。
     fn tip(self) -> &'static str {
         match self {
             Tool::Select => "選択 (V)",
-            Tool::Image => "画像",
             Tool::Text => "文字（これから作ります）",
             Tool::Shape => "図形（これから作ります）",
             Tool::Ai => "生成AI（これから作ります）",
@@ -290,12 +309,14 @@ impl Default for FlatCam {
     }
 }
 
-/// 元に戻すときに取っておく状態。柄の並びと、選んでいる柄。
+/// 元に戻すときに取っておく状態。柄の並びと、選んでいる柄と、型。
 /// 絵のデータは共有しているので、取っておいても軽い。
 #[derive(Clone)]
 struct Snapshot {
     decals: Vec<Placed>,
     selected: Option<usize>,
+    /// 型と寸法。戻すときに使うのは、型の種類が違うときだけ（寸法だけの変更は、履歴の対象外）。
+    dims: Dims,
 }
 
 struct App {
@@ -326,6 +347,21 @@ struct App {
     history: history::History<Snapshot>,
     /// 数値の欄で値を変えている途中か。ひと続きの変更を、1 回ぶんの「元に戻す」にまとめる。
     editing: bool,
+    /// 型を変えようとして、確認を待っている型。
+    pending_shape: Option<usize>,
+    /// 次に型紙を作り直すとき、柄を外さない（元に戻すで型を戻すとき）。
+    keep_decals: bool,
+    /// 素材の欄から運んでいる素材を、いま放したら置かれる柄。箱の上に、仮に描いて見せる。
+    preview: Option<Placed>,
+    /// 素材の欄で選んでいる素材。
+    asset_selected: Option<usize>,
+    /// 素材の欄の、絵の大きさ。
+    thumb_size: f32,
+    /// 工程ごとの視点（向きと拡大）。工程を移っても、それぞれの見え方を保つ。
+    cams: [(f32, f32, f32); 3],
+    /// いまの視点が、どの工程のものか。
+    cam_owner: Workspace,
+    debug: bool,
     /// 立体の上で置いた柄。後ろのものほど上に重なる。
     decals: Vec<Placed>,
     selected: Option<usize>,
@@ -377,15 +413,8 @@ struct App {
 impl App {
     fn new(initial: &Initial) -> Self {
         let sides = initial.sides;
-        let (w, d, h) = match sides {
-            2 => (160.0, 100.0, 110.0),
-            PILLOW => (180.0, 60.0, 110.0),
-            n if n >= 3 => (70.0, 60.0, 160.0),
-            _ => (120.0, 60.0, 160.0),
-        };
-        let (w, h) = (initial.width.unwrap_or(w), initial.height.unwrap_or(h));
-        let bulge = initial.bulge.unwrap_or(if sides == PILLOW { 70.0 } else { 40.0 });
-        let dims = Dims { sides, w, d, h, t: initial.thickness, bulge, roof: 45.0 };
+        let base = Dims::for_shape(sides, initial.thickness);
+        let dims = Dims { w: initial.width.unwrap_or(base.w), h: initial.height.unwrap_or(base.h), bulge: initial.bulge.unwrap_or(base.bulge), ..base };
         let (template, surface, problems) = dims.build();
         let sheet = make_sheet_art(&template);
         let (front, around) = dims.front_and_around(&template);
@@ -414,6 +443,14 @@ impl App {
             carry: None,
             history: history::History::default(),
             editing: false,
+            pending_shape: None,
+            keep_decals: false,
+            preview: None,
+            asset_selected: None,
+            thumb_size: 72.0,
+            cams: [(SHAPE_VIEW.0, SHAPE_VIEW.1, 1.0), (initial.yaw, initial.pitch, 1.0), (initial.yaw, initial.pitch, 1.0)],
+            cam_owner: [Workspace::Shape, Workspace::Design, Workspace::Output][initial.workspace.min(2)],
+            debug: initial.debug,
             decals,
             selected: None,
             grab: None,
@@ -474,13 +511,22 @@ impl App {
         self.built_dims = Some(self.dims);
         self.back_dirty = true;
         if shape_changed {
-            // 型を変えたら、パネルの並びが変わるので、置いた柄は外す。
+            // 型を変えたら、パネルの並びが変わるので、置いた柄は外す（元に戻すで型を戻すときは、外さない）。
             // 寸法だけを変えたときは、柄はパネルの中での位置で持っているので、そのまま付いてくる。
-            self.decals.clear();
-            self.history.clear();
-            self.selected = None;
+            if !std::mem::take(&mut self.keep_decals) {
+                self.decals.clear();
+                self.selected = None;
+            }
             self.grab = None;
+            self.preview = None;
             self.flat = [FlatCam::default(); 2];
+            // 型の工程は、型を変えるたびに、決まった斜めの向きから見る。
+            self.cams[0] = (SHAPE_VIEW.0, SHAPE_VIEW.1, 1.0);
+            if self.cam_owner == Workspace::Shape {
+                (self.yaw, self.pitch, self.zoom) = self.cams[0];
+                self.view_to = None;
+                self.view_before_flat = None;
+            }
         }
         if let Some((source, size)) = &self.custom_source {
             // 読み込んだ絵は、読み直さずに、展開図の新しい大きさへ合わせ直すだけにする。
@@ -517,15 +563,21 @@ impl App {
 
     /// いまの、柄の状態。
     fn snapshot(&self) -> Snapshot {
-        Snapshot { decals: self.decals.clone(), selected: self.selected }
+        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims }
     }
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
     fn checkpoint(&mut self) {
-        self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
+        self.history.record(self.snapshot());
     }
 
     fn restore(&mut self, state: Snapshot) {
+        if state.dims.sides != self.dims.sides {
+            // 型を変える前へ戻す。型紙を作り直してから、柄を戻す。
+            self.dims = state.dims;
+            self.keep_decals = true;
+            self.rebuild_if_needed();
+        }
         self.decals = state.decals;
         self.selected = state.selected.filter(|&i| i < self.decals.len());
         self.grab = None;
@@ -533,15 +585,31 @@ impl App {
         self.back_dirty = true;
     }
 
+    /// 型を変える。置いた柄は外れるが、元に戻せる。
+    fn set_shape(&mut self, sides: usize) {
+        if sides == self.dims.sides {
+            return;
+        }
+        self.checkpoint();
+        let removed = self.decals.len();
+        self.dims = Dims::for_shape(sides, self.dims.t);
+        self.fold = 1.0;
+        self.open = 0.0;
+        (self.animate_to, self.open_to) = (None, None);
+        if removed > 0 {
+            self.say(format!("型を変えたので、置いた柄 {removed} つを外しました。Ctrl+Z で、前の型と柄に戻せます。"));
+        }
+    }
+
     fn undo(&mut self) {
-        let current = Snapshot { decals: self.decals.clone(), selected: self.selected };
+        let current = self.snapshot();
         if let Some(state) = self.history.undo(|| current) {
             self.restore(state);
         }
     }
 
     fn redo(&mut self) {
-        let current = Snapshot { decals: self.decals.clone(), selected: self.selected };
+        let current = self.snapshot();
         if let Some(state) = self.history.redo(|| current) {
             self.restore(state);
         }
@@ -655,27 +723,36 @@ impl App {
 
     /// 柄や絵が変わっていたら、箱に貼る画像と、展開図の表示の画像を作り直す。
     fn refresh_art(&mut self, ctx: &egui::Context, rs: Option<&egui_wgpu::RenderState>, shown: Shown) {
+        // 素材を運んでいる間は、放したら置かれる柄を、仮に足して描く。
+        let with_preview: Vec<Placed>;
+        let (decals, selected): (&[Placed], Option<usize>) = match &self.preview {
+            Some(preview) => {
+                with_preview = self.decals.iter().cloned().chain([preview.clone()]).collect();
+                (&with_preview, Some(with_preview.len() - 1))
+            }
+            None => (&self.decals, self.selected),
+        };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, false, Canvas { w, h, rgba: art }));
+            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, false, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
             }
             self.art_dirty = false;
             self.front_tex_dirty = true;
             // 裏は、裏に柄があるとき（と、なくなった直後）だけ作り直す。表の柄を動かす間の負荷を増やさない。
-            let has_back = self.decals.iter().any(|decal| decal.back);
+            let has_back = decals.iter().any(|decal| decal.back);
             if has_back || self.back_has_decals {
                 self.back_dirty = true;
             }
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.back_rgba = compose_back(&self.sheet, self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, true, Canvas { w, h, rgba: art }));
+            self.back_rgba = compose_back(&self.sheet, self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, true, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
             }
-            self.back_has_decals = self.decals.iter().any(|decal| decal.back);
+            self.back_has_decals = decals.iter().any(|decal| decal.back);
             self.back_dirty = false;
             self.back_tex_dirty = true;
         }
@@ -688,6 +765,21 @@ impl App {
             self.back_tex = Some(views::texture(ctx, "sheet-back", self.sheet.w, self.sheet.h, &self.back_rgba));
             self.back_tex_dirty = false;
         }
+    }
+
+    /// 工程を移ったら、視点を、その工程のものに切り替える。
+    fn switch_camera(&mut self) {
+        if self.cam_owner == self.workspace {
+            return;
+        }
+        let slot = |w: Workspace| [Workspace::Shape, Workspace::Design, Workspace::Output].iter().position(|x| *x == w).unwrap_or(0);
+        self.cams[slot(self.cam_owner)] = (self.yaw, self.pitch, self.zoom);
+        // 型の工程は、いつも決まった斜めの向きから見る（前の工程の向きに引きずられると、上下が分かりにくい）。
+        self.cams[0] = (SHAPE_VIEW.0, SHAPE_VIEW.1, 1.0);
+        (self.yaw, self.pitch, self.zoom) = self.cams[slot(self.workspace)];
+        self.cam_owner = self.workspace;
+        self.view_to = None;
+        self.view_before_flat = None;
     }
 
     /// キーの割り当て。文字を打っている間は効かせない。
@@ -733,9 +825,9 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // お客さんが開け閉めするアニメーション。約 1.5 秒。
+        // お客さんが開け閉めするアニメーション。約 0.45 秒。
         if let Some(target) = self.open_to {
-            let step = ui.input(|i| i.stable_dt).min(0.05) / 1.5;
+            let step = ui.input(|i| i.stable_dt).min(0.05) / 0.45;
             if (target - self.open).abs() <= step {
                 self.open = target;
                 self.open_to = None;
@@ -752,15 +844,15 @@ impl eframe::App for App {
                 (self.yaw, self.pitch) = (yaw, pitch);
                 self.view_to = None;
             } else {
-                let step = (ui.input(|i| i.stable_dt).min(0.05) * 5.0).min(1.0);
+                let step = (ui.input(|i| i.stable_dt).min(0.05) * 12.0).min(1.0);
                 self.yaw += turn * step;
                 self.pitch += rise * step;
                 ui.ctx().request_repaint();
             }
         }
-        // 組み立てのアニメーション。全体で約 3 秒。
+        // 組み立てのアニメーション。全体で約 1 秒。
         if let Some(target) = self.animate_to {
-            let step = ui.input(|i| i.stable_dt).min(0.05) / 3.0;
+            let step = ui.input(|i| i.stable_dt).min(0.05) / 1.0;
             if (target - self.fold).abs() <= step {
                 self.fold = target;
                 self.animate_to = None;
@@ -787,8 +879,9 @@ impl eframe::App for App {
         }
         self.shortcuts(ui.ctx());
         self.top_bar(ui);
+        self.switch_camera();
         self.status_bar(ui);
-        self.motion_strip(ui);
+        self.confirm_shape(ui.ctx());
         match self.workspace {
             Workspace::Shape => {
                 self.shape_list(ui);

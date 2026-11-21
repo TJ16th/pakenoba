@@ -46,12 +46,6 @@ fn draw(painter: &egui::Painter, center: Pos2, tool: Tool, stroke: Stroke) {
             // 矢印のカーソル。
             painter.add(Shape::closed_line(path(&[(5.0, 3.0), (5.0, 16.0), (8.5, 12.8), (11.0, 18.0), (13.0, 17.1), (10.6, 12.0), (15.0, 12.0)]), stroke));
         }
-        Tool::Image => {
-            // 額と、山と、日。
-            painter.rect_stroke(Rect::from_min_max(p(3.0, 4.0), p(17.0, 16.0)), 1.5, stroke, StrokeKind::Middle);
-            painter.add(Shape::line(path(&[(3.5, 14.0), (8.0, 9.5), (11.0, 12.5), (13.5, 10.5), (16.5, 13.5)]), stroke));
-            painter.circle_stroke(p(13.2, 7.4), 1.2, stroke);
-        }
         Tool::Text => {
             // T の字。
             for (a, b) in [((5.0, 5.0), (15.0, 5.0)), ((10.0, 5.0), (10.0, 16.0)), ((5.0, 5.0), (5.0, 7.2)), ((15.0, 5.0), (15.0, 7.2)), ((8.0, 16.0), (12.0, 16.0))] {

@@ -62,7 +62,8 @@ fn same_picture(a: &Picture, b: &Picture) -> bool {
     }
 }
 
-const THUMB: f32 = 52.0;
+/// 一覧の絵の、もとの大きさ（px）。大きく見るときにも使うので、多めに取る。
+const THUMB_PX: usize = 256;
 
 impl App {
     /// その素材を、箱で何か所に使っているか。
@@ -71,19 +72,27 @@ impl App {
         self.decals.iter().filter(|decal| same_picture(&decal.picture, picture)).count()
     }
 
-    /// 素材を、柄として置く。`at` は展開図上の位置、`back` が真なら紙の裏。
-    pub(super) fn place_asset(&mut self, asset: usize, panel: usize, at: P2, back: bool) {
-        let Some(source) = self.assets.get(asset) else { return };
-        let size = if matches!(source.picture, Picture::Band) { [self.dims.front_and_around(&self.template).1, source.size[1]] } else { source.size };
-        let mut decal = Decal { panel, at: [0.5, 0.5], size, angle: 0.0 };
+    /// 置くときの大きさ（mm）。帯は、箱を一周する長さにする。
+    fn asset_size(&self, asset: &Asset) -> P2 {
+        if matches!(asset.picture, Picture::Band) { [self.dims.front_and_around(&self.template).1, asset.size[1]] } else { asset.size }
+    }
+
+    /// 素材を、その場所に置いたときの柄。`at` は展開図上の位置、`back` が真なら紙の裏。
+    pub(super) fn asset_decal(&self, asset: usize, panel: usize, at: P2, back: bool, angle: f32) -> Option<Placed> {
+        let source = self.assets.get(asset)?;
+        let mut decal = Decal { panel, at: [0.5, 0.5], size: self.asset_size(source), angle };
         decal.set_center(&self.template, at);
-        let picture = source.picture.clone();
+        Some(Placed { picture: source.picture.clone(), decal, back })
+    }
+
+    /// 柄を置いて、選ぶ。
+    pub(super) fn place(&mut self, placed: Placed) {
         self.checkpoint();
-        self.decals.push(Placed { picture, decal, back });
+        self.decals.push(placed);
         self.selected = Some(self.decals.len() - 1);
         self.tool = Tool::Select;
         self.art_dirty = true;
-        self.back_dirty |= back;
+        self.back_dirty = true;
     }
 
     /// 左（デザイン）: 素材の欄。
@@ -91,7 +100,7 @@ impl App {
         if !self.assets_open {
             return;
         }
-        egui::Panel::left("assets").resizable(true).default_size(196.0).size_range(150.0..=320.0).show(ui, |ui| {
+        egui::Panel::left("assets").resizable(true).default_size(236.0).size_range(170.0..=520.0).show(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.strong("素材");
@@ -102,11 +111,19 @@ impl App {
                     }
                 });
             });
-            ui.small("箱や展開図へドラッグして置きます。");
+            ui.horizontal(|ui| {
+                ui.label("絵の大きさ");
+                ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(40.0, 200.0);
+                ui.add(egui::Slider::new(&mut self.thumb_size, 48.0..=200.0).show_value(false));
+            });
+            // 下: 選んだ素材を、大きく見る。
+            if let Some(selected) = self.asset_selected.filter(|&i| i < self.assets.len()) {
+                egui::Panel::bottom("asset-detail").resizable(false).show(ui, |ui| self.asset_detail(ui, selected));
+            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 for bundled in [false, true] {
-                    ui.add_space(4.0);
-                    ui.weak(if bundled { "付属の見本" } else { "この案件の素材" });
+                    ui.add_space(6.0);
+                    ui.label(if bundled { "付属の見本" } else { "この案件の素材" });
                     let list: Vec<usize> = (0..self.assets.len()).filter(|&i| self.assets[i].bundled == bundled).collect();
                     if list.is_empty() {
                         ui.small("画像（PNG）をウィンドウにドロップすると、ここに入ります。");
@@ -118,54 +135,93 @@ impl App {
                         }
                     });
                 }
-                ui.add_space(4.0);
-                ui.weak("コレクション");
+                ui.add_space(6.0);
+                ui.label("コレクション");
                 ui.small("フォルダを登録して、案件をまたいで使う素材を並べる機能は、これから作ります。");
             });
         });
     }
 
-    /// 素材 1 つぶんのマス。クリックで正面の中央に置く。ドラッグで、落とした場所に置く。
+    /// 一覧に出す絵。初めて出すときに作る。
+    fn thumb(&mut self, ctx: &egui::Context, index: usize) -> egui::TextureId {
+        let asset = &mut self.assets[index];
+        asset
+            .thumb
+            .get_or_insert_with(|| {
+                let image = egui::ColorImage::from_rgba_unmultiplied([THUMB_PX, THUMB_PX], &thumbnail(&asset.picture, asset.size, THUMB_PX));
+                ctx.load_texture(format!("asset-{index}"), image, egui::TextureOptions::LINEAR)
+            })
+            .id()
+    }
+
+    /// 素材 1 つぶんのマス。クリックで選ぶ（置かない）。ドラッグで、箱や展開図へ運ぶ。
     fn asset_tile(&mut self, ui: &mut egui::Ui, index: usize) {
         let uses = self.uses(index);
-        let asset = &mut self.assets[index];
-        let (rect, response) = ui.allocate_exact_size(vec2(THUMB, THUMB), Sense::click_and_drag());
-        let texture = asset.thumb.get_or_insert_with(|| {
-            let side = 96;
-            let image = egui::ColorImage::from_rgba_unmultiplied([side, side], &thumbnail(&asset.picture, asset.size, side));
-            ui.ctx().load_texture(format!("asset-{index}"), image, egui::TextureOptions::LINEAR)
-        });
+        let texture = self.thumb(ui.ctx(), index);
+        let side = self.thumb_size;
+        let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+        let selected = self.asset_selected == Some(index);
         let visuals = ui.visuals();
         let painter = ui.painter();
         painter.rect_filled(rect, 4.0, if response.hovered() { visuals.widgets.hovered.bg_fill } else { visuals.extreme_bg_color });
-        painter.image(texture.id(), rect.shrink(4.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        painter.image(texture, rect.shrink(4.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        if selected {
+            painter.rect_stroke(rect, 4.0, egui::Stroke::new(2.0, visuals.selection.bg_fill), egui::StrokeKind::Inside);
+        }
         if uses > 0 {
             // 箱で使っている素材の印。
-            painter.circle_filled(rect.right_bottom() - vec2(7.0, 7.0), 3.5, visuals.selection.bg_fill);
+            painter.circle_filled(rect.right_bottom() - vec2(8.0, 8.0), 4.0, visuals.selection.bg_fill);
         }
-        let name = asset.name.clone();
-        let size = asset.size;
-        let picture = asset.picture.clone();
+        if response.drag_started() {
+            self.carry = Some(index);
+            self.asset_selected = Some(index);
+        }
+        if response.clicked() {
+            self.asset_selected = if selected { None } else { Some(index) };
+        }
+        response.on_hover_text(&self.assets[index].name);
+    }
+
+    /// 選んだ素材を、大きく見る。名前、大きさ、使っている数。置くのは、ドラッグか、下のボタン。
+    fn asset_detail(&mut self, ui: &mut egui::Ui, index: usize) {
+        let uses = self.uses(index);
+        let texture = self.thumb(ui.ctx(), index);
+        ui.add_space(6.0);
+        let side = ui.available_width().min(260.0);
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), side), Sense::drag());
+        let image = Rect::from_center_size(rect.center(), vec2(side, side));
+        ui.painter().rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+        ui.painter().image(texture, image.shrink(6.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        // 大きい絵からも、箱へ運べる。
         if response.drag_started() {
             self.carry = Some(index);
         }
-        if response.clicked() {
-            let size = if matches!(picture, Picture::Band) { [self.dims.front_and_around(&self.template).1, size[1]] } else { size };
+        let asset = &self.assets[index];
+        let size = self.asset_size(asset);
+        ui.label(&asset.name);
+        if let Picture::Image { w, h, .. } = &asset.picture {
+            ui.small(format!("画像: {w} × {h} px"));
+        }
+        ui.small(format!("置く大きさ: {:.0} × {:.0} mm", size[0], size[1]));
+        ui.small(if uses > 0 { format!("箱で {uses} か所に使っています") } else { "まだ箱に置いていません".to_owned() });
+        ui.add_space(2.0);
+        let picture = asset.picture.clone();
+        if ui.button("正面に置く").on_hover_text("箱や展開図へドラッグすると、落とした場所に置けます").clicked() {
             self.add_decal(picture, size);
             self.tool = Tool::Select;
         }
-        response.on_hover_text(if uses > 0 { format!("{name}（箱で {uses} か所に使用）") } else { name });
+        ui.add_space(4.0);
     }
 
-    /// 運んでいる途中の素材を、カーソルのそばに出す。
+    /// 運んでいる途中の素材を、カーソルのそばに出す（箱の上では、仮に置いた姿を見せるので、出さない）。
     pub(super) fn carry_ghost(&self, ui: &egui::Ui) {
         let (Some(asset), Some(pointer)) = (self.carry.and_then(|i| self.assets.get(i)), ui.input(|i| i.pointer.interact_pos())) else { return };
-        let Some(texture) = &asset.thumb else { return };
-        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("carried-asset")));
-        let rect = Rect::from_center_size(pointer, vec2(THUMB, THUMB));
-        painter.image(texture.id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::from_white_alpha(200));
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         ui.ctx().request_repaint();
+        let (Some(texture), None) = (&asset.thumb, &self.preview) else { return };
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("carried-asset")));
+        let rect = Rect::from_center_size(pointer, vec2(64.0, 64.0));
+        painter.image(texture.id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::from_white_alpha(200));
     }
 }
 

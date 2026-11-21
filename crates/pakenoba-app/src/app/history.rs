@@ -47,12 +47,6 @@ impl<T> History<T> {
     pub fn can_redo(&self) -> bool {
         !self.future.is_empty()
     }
-
-    /// 履歴を捨てる（型を変えて、柄の置き場所の意味が変わったとき）。
-    pub fn clear(&mut self) {
-        self.past.clear();
-        self.future.clear();
-    }
 }
 
 #[cfg(test)]
@@ -90,9 +84,9 @@ mod tests {
         history.record(state);
         assert!(!history.can_redo());
         // 戻せないときは、いまの状態を作らない（やり直しにも積まない）。
-        history.clear();
-        assert!(history.undo(|| panic!("呼ばれない")).is_none());
-        assert!(!history.can_redo());
+        let mut empty: History<i32> = History::default();
+        assert!(empty.undo(|| panic!("呼ばれない")).is_none());
+        assert!(!empty.can_redo());
     }
 
     #[test]

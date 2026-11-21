@@ -63,25 +63,20 @@ impl App {
                             if ui.add_enabled(self.neighbor(index, -1).is_some(), egui::Button::new("背面へ")).clicked() {
                                 self.reorder_selected(-1);
                             }
+                            ui.separator();
+                            if ui.button("90 度回す").clicked() {
+                                self.checkpoint();
+                                let decal = &mut self.decals[index];
+                                let turned = decal.angle + std::f32::consts::FRAC_PI_2;
+                                decal.angle = (turned + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                                self.art_dirty = true;
+                                self.back_dirty = true;
+                            }
                         }
                         None => {
-                            ui.weak("柄をクリックして選びます");
+                            ui.weak("柄をクリックして選びます。素材は、左の素材の欄から、箱や展開図へドラッグして置きます");
                         }
                     },
-                    Tool::Image => {
-                        ui.label("見本を置く");
-                        if ui.button("ロゴ").clicked() {
-                            self.add_decal(Picture::Logo, [46.0, 46.0]);
-                            self.tool = Tool::Select;
-                        }
-                        if ui.button("一周する帯").clicked() {
-                            let (_, around) = self.dims.front_and_around(&self.template);
-                            self.add_decal(Picture::Band, [around, 14.0]);
-                            self.tool = Tool::Select;
-                        }
-                        ui.separator();
-                        ui.weak("画像（PNG）は、ウィンドウにドロップして置きます。置いた画像は、素材の欄から何度でも置けます");
-                    }
                     Tool::Hand => {
                         ui.weak("ドラッグで、箱を回す、展開図をずらす");
                     }
@@ -255,7 +250,7 @@ impl App {
             }
             // 紙の表と裏に分けて、上に重なっているものから並べる。
             for back in [false, true] {
-                ui.weak(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
+                ui.label(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
                 let mut any = false;
                 for index in (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back) {
                     any = true;
@@ -321,7 +316,14 @@ impl App {
             ui.strong("型");
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (sides, label) in SHAPES {
-                    ui.selectable_value(&mut self.dims.sides, sides, label);
+                    if ui.selectable_label(self.dims.sides == sides, label).clicked() && self.dims.sides != sides {
+                        if self.decals.is_empty() {
+                            self.set_shape(sides);
+                        } else {
+                            // 置いた柄が外れるので、先に確かめる。
+                            self.pending_shape = Some(sides);
+                        }
+                    }
                 }
             });
         });
@@ -432,50 +434,92 @@ impl App {
         });
     }
 
-    /// 下の帯: 動き。開け閉め（買った人の動き）と、組み立て（展開図から箱まで）。どちらも立体の表示に効く。
-    pub(super) fn motion_strip(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::bottom("motion").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(ui.spacing().interact_size.y + 6.0);
-                ui.add_space(4.0);
-                // 開け閉めを左に、大きく置く。デザイン中にいちばん動かすため。
-                let can_open = self.template.can_open();
-                ui.add_enabled_ui(can_open, |ui| {
-                    ui.strong("開け閉め");
-                    if ui.button("閉じる").clicked() {
-                        self.fold = 1.0;
-                        self.open_to = Some(0.0);
-                    }
-                    ui.spacing_mut().slider_width = 260.0;
-                    if ui.add(egui::Slider::new(&mut self.open, 0.0..=1.0).show_value(false)).changed() {
-                        // 開け閉めは、組み上がった箱に対する動き。
-                        self.fold = 1.0;
-                        self.animate_to = None;
-                        self.open_to = None;
-                    }
-                    if ui.button("開ける").clicked() {
-                        self.fold = 1.0;
-                        self.open_to = Some(1.0);
-                    }
-                })
-                .response
-                .on_disabled_hover_text("この型には、開け閉めの動きがまだ入っていません");
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-                ui.strong("組み立て");
-                if ui.button("展開図").clicked() {
-                    self.fold_to(0.0);
-                }
-                ui.spacing_mut().slider_width = 150.0;
-                if ui.add(egui::Slider::new(&mut self.fold, 0.0..=1.0).show_value(false)).changed() {
-                    self.animate_to = None;
-                }
-                if ui.button("箱").clicked() {
-                    self.fold_to(1.0);
-                }
-            });
+    /// 型を変える前の確認。置いた柄が外れることを知らせる。
+    pub(super) fn confirm_shape(&mut self, ctx: &egui::Context) {
+        let Some(sides) = self.pending_shape else { return };
+        let name = SHAPES.iter().find(|(s, _)| *s == sides).map_or("別の型", |(_, name)| name);
+        let count = self.decals.len();
+        let response = egui::Modal::new(egui::Id::unique("confirm-shape")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.strong(format!("型を「{name}」に変えますか"));
+            ui.add_space(4.0);
+            ui.label(format!("型を変えると、面の並びが変わるので、置いた柄 {count} つが箱から外れます。"));
+            ui.label("変えたあとでも、Ctrl+Z で、前の型と柄に戻せます。");
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let change = ui.button("型を変える").clicked();
+                let cancel = ui.button("やめる").clicked();
+                (change, cancel)
+            })
+            .inner
         });
+        let (change, cancel) = response.inner;
+        if change {
+            self.pending_shape = None;
+            self.set_shape(sides);
+        } else if cancel || response.should_close() {
+            self.pending_shape = None;
+        }
+    }
+
+    /// 立体の表示の下に置く、動きの操作。開け閉め（買った人の動き）と、組み立て（展開図から箱まで）。
+    /// 幅が足りないときは、2 行に分ける。
+    pub(super) fn motion_controls(&mut self, ui: &mut egui::Ui, two_rows: bool) {
+        let width = ui.available_width();
+        if two_rows {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| self.open_controls(ui, (width - 190.0).clamp(60.0, 320.0)));
+                ui.horizontal(|ui| self.fold_controls(ui, (width - 190.0).clamp(60.0, 320.0)));
+            });
+        } else {
+            ui.horizontal(|ui| {
+                // 開け閉めを左に、大きく置く。デザイン中にいちばん動かすため。
+                let spare = (width - 420.0).max(120.0);
+                self.open_controls(ui, (spare * 0.62).clamp(60.0, 320.0));
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+                self.fold_controls(ui, (spare * 0.38).clamp(50.0, 200.0));
+            });
+        }
+    }
+
+    fn open_controls(&mut self, ui: &mut egui::Ui, slider: f32) {
+        let can_open = self.template.can_open();
+        ui.add_enabled_ui(can_open, |ui| {
+            ui.strong("開け閉め");
+            if ui.button("閉じる").clicked() {
+                self.fold = 1.0;
+                self.open_to = Some(0.0);
+            }
+            ui.spacing_mut().slider_width = slider;
+            if ui.add(egui::Slider::new(&mut self.open, 0.0..=1.0).show_value(false)).changed() {
+                // 開け閉めは、組み上がった箱に対する動き。
+                self.fold = 1.0;
+                self.animate_to = None;
+                self.open_to = None;
+            }
+            if ui.button("開ける").clicked() {
+                self.fold = 1.0;
+                self.open_to = Some(1.0);
+            }
+        })
+        .response
+        .on_disabled_hover_text("この型には、開け閉めの動きがまだ入っていません");
+    }
+
+    fn fold_controls(&mut self, ui: &mut egui::Ui, slider: f32) {
+        ui.strong("組み立て");
+        if ui.button("展開図").clicked() {
+            self.fold_to(0.0);
+        }
+        ui.spacing_mut().slider_width = slider;
+        if ui.add(egui::Slider::new(&mut self.fold, 0.0..=1.0).show_value(false)).changed() {
+            self.animate_to = None;
+        }
+        if ui.button("箱").clicked() {
+            self.fold_to(1.0);
+        }
     }
 
     /// いちばん下: 知らせと、いまの状態。
@@ -497,8 +541,16 @@ impl App {
                     ui.small(text);
                     ui.separator();
                 }
-                let hover = self.hover.and_then(|i| self.template.panels.get(i)).map_or(String::new(), |p| format!("カーソルの下: {}　", p.name));
-                ui.label(egui::RichText::new(format!("{hover}パネル {} 枚　合わせ目 {} か所　三角形 {} 個　描画: {}", self.template.panels.len(), self.surface.seams.len(), self.triangles, self.backend)).small().weak());
+                // カーソルの下の面の名前と、いまの型。
+                if let Some(panel) = self.hover.and_then(|i| self.template.panels.get(i)) {
+                    ui.small(format!("カーソルの下: {}", panel.name));
+                    ui.separator();
+                }
+                ui.label(egui::RichText::new(self.shape_summary()).small().weak());
+                if self.debug {
+                    ui.separator();
+                    ui.label(egui::RichText::new(format!("パネル {} 枚　合わせ目 {} か所　三角形 {} 個　描画: {}", self.template.panels.len(), self.surface.seams.len(), self.triangles, self.backend)).small().weak());
+                }
             });
         });
     }

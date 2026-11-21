@@ -12,7 +12,7 @@ use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown, Snapshot, Tool, Workspace};
 use crate::gpu::BoxRenderer;
-use crate::paint::spots_on;
+use crate::paint::{Placed, spots_on};
 
 /// 表示と表示の間のすき間。
 const GAP: f32 = 2.0;
@@ -91,29 +91,55 @@ impl App {
         self.hover = None;
         let [solid, front, back] = layout(rect, shown);
         let several = shown.count() > 1;
-        // 素材の欄から運んできた素材を、ここで放したか。放した場所を、各表示へ伝える。
+        // 素材の欄から素材を運んでいる間は、カーソルの場所を各表示へ伝える。
+        // 各表示は、「いま放したら置かれる柄」を返す。それを箱の上に仮に描いて見せ、放したら本当に置く。
         let released = ui.input(|i| i.pointer.any_released());
-        let drop = ui.input(|i| i.pointer.interact_pos()).filter(|_| released && self.carry.is_some());
+        let carry = self.carry.zip(ui.input(|i| i.pointer.interact_pos()));
+        let mut candidate: Option<Placed> = None;
         if let Some(rect) = solid {
-            self.solid_view(ui, rect, rs.as_ref(), drop.filter(|p| rect.contains(*p)));
+            // 開け閉めと組み立ては、立体の表示に付く操作なので、立体の表示のすぐ下に置く。
+            let two_rows = rect.width() < 660.0;
+            let split = rect.bottom() - if two_rows { 66.0 } else { 38.0 };
+            let (view, strip) = (Rect::from_min_max(rect.min, pos2(rect.right(), split)), Rect::from_min_max(pos2(rect.left(), split), rect.max));
+            candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
+            ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, two_rows));
             if several {
                 tag(ui, rect.min + vec2(8.0, 6.0), "立体");
             }
         }
         if let Some(rect) = front {
-            self.flat_view(ui, rect, false, drop.filter(|p| rect.contains(*p)));
+            candidate = candidate.or(self.flat_view(ui, rect, false, carry.filter(|(_, p)| rect.contains(*p))));
         }
         if let Some(rect) = back {
-            self.flat_view(ui, rect, true, drop.filter(|p| rect.contains(*p)));
+            candidate = candidate.or(self.flat_view(ui, rect, true, carry.filter(|(_, p)| rect.contains(*p))));
+        }
+        if self.carry.is_some() {
+            if released {
+                if let Some(placed) = candidate.take() {
+                    self.place(placed);
+                }
+                self.carry = None;
+            }
+            // 仮に置いた姿が変わったら、絵を作り直す。
+            let same = match (&self.preview, &candidate) {
+                (Some(a), Some(b)) => a.decal == b.decal && a.back == b.back,
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                self.preview = candidate;
+                self.art_dirty = true;
+                self.back_dirty = true;
+                ui.ctx().request_repaint();
+            }
         }
         self.carry_ghost(ui);
-        if released {
-            self.carry = None;
-        }
     }
 
     /// 立体。
-    fn solid_view(&mut self, ui: &mut egui::Ui, rect: Rect, rs: Option<&egui_wgpu::RenderState>, drop: Option<Pos2>) {
+    /// 返すのは、素材を運んでいるとき、いま放したら置かれる柄。
+    fn solid_view(&mut self, ui: &mut egui::Ui, rect: Rect, rs: Option<&egui_wgpu::RenderState>, carry: Option<(usize, Pos2)>) -> Option<Placed> {
         let response = ui.interact(rect, ui.scope_id().with("solid-view"), Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(rect);
         if response.hovered() {
@@ -125,7 +151,7 @@ impl App {
         let Some(rs) = rs else {
             painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
             painter.text(rect.center(), Align2::CENTER_CENTER, "wgpu を使えないため、箱を表示できません。", FontId::proportional(13.0), Color32::LIGHT_RED);
-            return;
+            return None;
         };
         if self.backend.is_empty() {
             let info = rs.adapter.get_info();
@@ -175,7 +201,7 @@ impl App {
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
-                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
+                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims });
                 self.selected = Some(index);
                 self.art_dirty = true;
             }
@@ -212,10 +238,20 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
 
-        // 運んできた素材を、放した場所に置く。外側の面なら表、内側の面なら裏。
-        if let (Some(asset), Some((panel, at, back))) = (self.carry, drop.and_then(under)) {
-            self.place_asset(asset, panel, at, back);
-        }
+        // 運んでいる素材を、いま放したら置かれる柄。外側の面なら表、内側の面なら裏。
+        // 向きは、画面で見て上が上になるようにする（面の辺にそろえて、90 度刻み）。
+        let candidate = carry.and_then(|(asset, pos)| {
+            let (panel, at, back) = under(pos)?;
+            // 画面で少し上（だめなら下）の点が、展開図ではどちらの向きかを調べる。
+            let upward = [(-6.0f32, 1.0f32), (6.0, -1.0)].into_iter().find_map(|(dy, sign)| {
+                let (p, a, b) = under(pos + vec2(0.0, dy))?;
+                let d = [(a[0] - at[0]) * sign, (a[1] - at[1]) * sign];
+                (p == panel && b == back && d[0].hypot(d[1]) > 1e-3).then_some(d)
+            });
+            let quarter = std::f32::consts::FRAC_PI_2;
+            let angle = upward.map_or(0.0, |d| ((-d[0]).atan2(d[1]) / quarter).round() * quarter);
+            self.asset_decal(asset, panel, at, back, angle)
+        });
 
         let proj = perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
         // 光は視点の少し右上から当てる（どの角度から見ても手前の面が明るくなる）。
@@ -233,10 +269,22 @@ impl App {
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             painter.image(id, rect, uv, Color32::WHITE);
         }
+
+        // 向きの目印。X は右、Y は上、Z は手前。奥の軸から描く。
+        let origin = pos2(rect.left() + 40.0, rect.bottom() - 40.0);
+        let mut axes = [("X", 0, Color32::from_rgb(226, 104, 92)), ("Y", 1, Color32::from_rgb(124, 196, 96)), ("Z", 2, Color32::from_rgb(98, 150, 236))];
+        axes.sort_by(|a, b| view[a.1][2].total_cmp(&view[b.1][2]));
+        for (name, axis, color) in axes {
+            let tip = origin + vec2(view[axis][0], -view[axis][1]) * 24.0;
+            painter.line_segment([origin, tip], (2.0, color));
+            painter.text(origin + (tip - origin) * 1.38, Align2::CENTER_CENTER, name, FontId::proportional(12.0), color);
+        }
+        candidate
     }
 
     /// 展開図。表（印刷面）か、裏（表を左右に裏返した向き）。いつも平らで、正面を向いている。
-    fn flat_view(&mut self, ui: &mut egui::Ui, rect: Rect, back: bool, drop: Option<Pos2>) {
+    /// 返すのは、素材を運んでいるとき、いま放したら置かれる柄。
+    fn flat_view(&mut self, ui: &mut egui::Ui, rect: Rect, back: bool, carry: Option<(usize, Pos2)>) -> Option<Placed> {
         let response = ui.interact(rect, ui.scope_id().with(("flat-view", back)), Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(rect);
         let visuals = ui.visuals().clone();
@@ -288,7 +336,7 @@ impl App {
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
-                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
+                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims });
                 self.selected = Some(index);
                 self.art_dirty = true;
             }
@@ -319,10 +367,11 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
 
-        // 運んできた素材を、放した場所に置く。表の表示なら表、裏の表示なら裏。
-        if let (Some(asset), Some((panel, at))) = (self.carry, drop.filter(|p| area.contains(*p)).and_then(under)) {
-            self.place_asset(asset, panel, at, back);
-        }
+        // 運んでいる素材を、いま放したら置かれる柄。表の表示なら表、裏の表示なら裏。展開図では、上が上。
+        let candidate = carry.filter(|(_, p)| area.contains(*p)).and_then(|(asset, pos)| {
+            let (panel, at) = under(pos)?;
+            self.asset_decal(asset, panel, at, back, 0.0)
+        });
 
         // 展開図の絵。裏は、左右を逆にして貼る。
         let texture = if back { &self.back_tex } else { &self.front_tex };
@@ -369,6 +418,7 @@ impl App {
         painter.text(rect.min + vec2(RULER_LEFT * 0.5, RULER_TOP * 0.5), Align2::CENTER_CENTER, "mm", font, line);
 
         tag(ui, area.min + vec2(8.0, 6.0), if back { "裏" } else { "表" });
+        candidate
     }
 }
 
