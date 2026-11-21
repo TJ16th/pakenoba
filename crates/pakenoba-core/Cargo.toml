@@ -1,0 +1,12 @@
+[package]
+name = "pakenoba-core"
+description = "パケノバの中核: 型紙、折りの計算、面のつながり、型紙の検査"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# 描画用の頂点を、そのまま GPU へ渡せる形にするため。
+bytemuck = { version = "1", features = ["derive"] }
