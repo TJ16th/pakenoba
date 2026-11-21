@@ -14,7 +14,10 @@ pub struct SheetArt {
     pub w: usize,
     pub h: usize,
     pub art: Vec<u8>,
+    /// ガイド（切り線、折り線、のりしろの斜線）。紙の表に重ねる。
     pub guides: Vec<u8>,
+    /// 切り線と折り線だけ。紙の裏に重ねる（のりを付けるのは表の面なので、裏には斜線を出さない）。
+    pub lines: Vec<u8>,
 }
 
 fn sheet_size(tpl: &Template) -> (usize, usize) {
@@ -87,7 +90,8 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
     const FOLD: [u8; 4] = [0, 150, 220, 255];
     let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
     let edges: Vec<Vec<(P2, P2)>> = tpl.panels.iter().map(|panel| (0..panel.outline.len()).map(|i| (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()])).collect()).collect();
-    let mut guides = vec![0u8; w * h * 4];
+    let mut lines = vec![0u8; w * h * 4];
+    let mut glue = vec![0u8; w * h * 4];
     let mut shared: Vec<(P2, P2)> = Vec::new();
     for (index, own) in edges.iter().enumerate() {
         for &(a, b) in own {
@@ -95,12 +99,12 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
             if other {
                 shared.push((a, b));
             } else {
-                draw_line(&mut guides, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
+                draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
             }
         }
     }
     for (a, b) in shared {
-        draw_line(&mut guides, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, FOLD);
+        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, FOLD);
     }
     // のりしろには、のりを付ける面だと分かるよう、斜めの細い線を入れる。
     const GLUE: [u8; 4] = [226, 138, 40, 255];
@@ -114,7 +118,7 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
             for x in x0..x1 {
                 let (u, v) = (tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM);
                 if ((u - v) / 3.0).rem_euclid(1.0) < 0.14 && inside(&panel.outline, [u, v]) {
-                    guides[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&GLUE);
+                    glue[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&GLUE);
                 }
             }
         }
@@ -127,19 +131,22 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
             to_px(tpl, [hole[0] + hole[2] * c.signum() * c.abs().sqrt(), hole[1] + hole[3] * s.signum() * s.abs().sqrt()])
         };
         for i in 0..64 {
-            draw_line(&mut guides, w, h, point(i), point(i + 1), 1.6, [30, 30, 34, 255]);
+            draw_line(&mut lines, w, h, point(i), point(i + 1), 1.6, [30, 30, 34, 255]);
         }
     }
     for hinge in tpl.panels.iter().filter_map(|p| p.hinge.as_ref()) {
-        draw_line(&mut guides, w, h, to_px(tpl, hinge.a), to_px(tpl, hinge.b), 1.6, [0, 150, 220, 255]);
+        draw_line(&mut lines, w, h, to_px(tpl, hinge.a), to_px(tpl, hinge.b), 1.6, [0, 150, 220, 255]);
     }
     // 曲線の折り線。
     for curved in tpl.panels.iter().filter_map(|p| p.curved.as_ref()) {
         for pair in curved.line.windows(2) {
-            draw_line(&mut guides, w, h, to_px(tpl, pair[0]), to_px(tpl, pair[1]), 1.6, [0, 150, 220, 255]);
+            draw_line(&mut lines, w, h, to_px(tpl, pair[0]), to_px(tpl, pair[1]), 1.6, [0, 150, 220, 255]);
         }
     }
-    SheetArt { w, h, art, guides }
+    // 表のガイドは、のりしろの斜線の上に、線を重ねたもの。
+    let mut guides = glue;
+    alpha_over(&mut guides, &lines);
+    SheetArt { w, h, art, guides, lines }
 }
 
 fn draw_line(buf: &mut [u8], w: usize, h: usize, a: [f32; 2], b: [f32; 2], width: f32, color: [u8; 4]) {
@@ -175,6 +182,20 @@ fn alpha_over(base: &mut [u8], over: &[u8]) {
         }
         b[3] = (255.0 * (a + b[3] as f32 / 255.0 * (1.0 - a))).round() as u8;
     }
+}
+
+/// 紙の裏の色。立体の表示で、柄のない内側の面に使う色と同じ。
+const BACK_PAPER: [u8; 3] = [231, 226, 215];
+
+/// 紙の裏（箱の内側の面）の画像を作る。紙の地、裏に置いた柄（`decals` で描く）、切り線と折り線。
+pub fn compose_back(sheet: &SheetArt, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    // 形は表と同じで、色だけが裏の色。
+    let mut out: Vec<u8> = sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect();
+    decals(&mut out);
+    if show_guides {
+        alpha_over(&mut out, &sheet.lines);
+    }
+    out
 }
 
 /// 箱に貼る画像を作る。`custom` があれば確認用の絵柄の代わりに使う。
@@ -365,19 +386,19 @@ mod tests {
 
     #[test]
     fn decal_layer_is_saved_and_left_out_on_load() {
-        use crate::paint::{Picture, Placed, paint};
+        use crate::paint::{Canvas, Picture, Placed, paint};
         use pakenoba_core::surface::{Decal, Surface};
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let surface = Surface::new(&tpl, &Template::tuck_box(120.0, 60.0, 160.0, 0.02));
         let sheet = make_sheet_art(&tpl);
         let mut layer = vec![0u8; sheet.w * sheet.h * 4];
-        let logo = Placed { picture: Picture::Logo, decal: Decal { panel: 0, at: [0.5, 0.5], size: [40.0, 40.0], angle: 0.0 } };
-        paint(&surface, &tpl, &[logo], None, sheet.w, sheet.h, &mut layer);
+        let logo = Placed { picture: Picture::Logo, decal: Decal { panel: 0, at: [0.5, 0.5], size: [40.0, 40.0], angle: 0.0 }, back: false };
+        paint(&surface, &tpl, &[logo], None, false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut layer });
         let painted: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| layer[i * 4 + 3] == 255).collect();
         assert!(painted.len() > 10_000);
         let mut band_layer = vec![0u8; sheet.w * sheet.h * 4];
-        let band = Placed { picture: Picture::Band, decal: Decal { panel: 0, at: [0.5, 0.2], size: [360.0, 14.0], angle: 0.0 } };
-        paint(&surface, &tpl, &[band], None, sheet.w, sheet.h, &mut band_layer);
+        let band = Placed { picture: Picture::Band, decal: Decal { panel: 0, at: [0.5, 0.2], size: [360.0, 14.0], angle: 0.0 }, back: false };
+        paint(&surface, &tpl, &[band], None, false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut band_layer });
 
         // 柄 1 つにつき 1 レイヤー。何も描かれていない柄は入れない。
         let decals = [("1（帯）".to_owned(), band_layer), ("2（ロゴ）".to_owned(), layer.clone()), ("3（空）".to_owned(), vec![0u8; sheet.w * sheet.h * 4])];

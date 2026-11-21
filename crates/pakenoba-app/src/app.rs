@@ -17,9 +17,9 @@ use pakenoba_core::check::check;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template};
 
-use crate::art::{GuideHandling, SheetArt, compose, fit, load_psd, make_sheet_art};
+use crate::art::{GuideHandling, SheetArt, compose, compose_back, fit, load_psd, make_sheet_art};
 use crate::gpu::BoxRenderer;
-use crate::paint::{Picture, Placed, paint};
+use crate::paint::{Canvas, Picture, Placed, paint};
 
 /// 起動時の状態。画面を撮って確かめるときに、コマンドラインから指定できる。
 #[derive(Clone)]
@@ -51,11 +51,13 @@ pub struct Initial {
     pub select: Option<usize>,
     /// デザインの工程で出しておく表示（立体、表、裏）。
     pub views: Option<[bool; 3]>,
+    /// 起動時に、紙の裏へ移しておく柄の番号。
+    pub back: Vec<usize>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new() }
     }
 }
 
@@ -318,9 +320,14 @@ struct App {
     front_rgba: Vec<u8>,
     front_tex: Option<egui::TextureHandle>,
     front_tex_dirty: bool,
-    /// 展開図の裏（紙の地とガイド線）。型紙が変わったら作り直す。
+    /// 紙の裏（箱の内側の面）の画像。紙の地と、裏に置いた柄と、ガイド線。
+    back_rgba: Vec<u8>,
     back_tex: Option<egui::TextureHandle>,
+    back_tex_dirty: bool,
+    /// 裏の画像を作り直す。型紙やガイド線の表示が変わったときと、裏の柄が変わったとき。
     back_dirty: bool,
+    /// いまの裏の画像に、柄が描いてあるか。
+    back_has_decals: bool,
     fold: f32,
     /// アニメーションの行き先（0 か 1）。
     animate_to: Option<f32>,
@@ -363,7 +370,7 @@ impl App {
         for (picture, size, place) in [(Picture::Band, [around, 14.0], initial.band), (Picture::Logo, [logo, logo], initial.logo)] {
             if let Some([panel, x, y, degrees]) = place {
                 let panel = Some((panel as usize).min(template.panels.len() - 1)).filter(|&i| !template.panels[i].hidden_when_closed()).unwrap_or(front);
-                decals.push(Placed { picture, decal: Decal { panel, at: [x, y], size, angle: degrees.to_radians() } });
+                decals.push(Placed { picture, decal: Decal { panel, at: [x, y], size, angle: degrees.to_radians() }, back: false });
             }
         }
         let mut app = App {
@@ -389,8 +396,11 @@ impl App {
             front_rgba: Vec::new(),
             front_tex: None,
             front_tex_dirty: true,
+            back_rgba: Vec::new(),
             back_tex: None,
+            back_tex_dirty: true,
             back_dirty: true,
+            back_has_decals: false,
             fold: initial.fold.clamp(0.0, 1.0),
             animate_to: None,
             view_to: None,
@@ -413,6 +423,11 @@ impl App {
         }
         if let Some(path) = &initial.png {
             app.add_png(path);
+        }
+        for &index in &initial.back {
+            if let Some(decal) = app.decals.get_mut(index) {
+                decal.back = true;
+            }
         }
         app.selected = initial.select.filter(|&i| i < app.decals.len());
         app
@@ -472,7 +487,7 @@ impl App {
     /// 柄を 1 つ足して、選ぶ。正面（なければ最初のパネル）の中央に置く。
     fn add_decal(&mut self, picture: Picture, size: P2) {
         let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
-        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 } });
+        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false });
         self.selected = Some(self.decals.len() - 1);
         self.art_dirty = true;
     }
@@ -489,14 +504,16 @@ impl App {
         }
     }
 
-    /// 柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
+    /// 表の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
+    /// 裏の柄は入れない（型紙の PSD は、紙の表の 1 枚ぶん）。
     fn decal_layers(&self) -> Vec<(String, Vec<u8>)> {
         self.decals
             .iter()
             .enumerate()
+            .filter(|(_, decal)| !decal.back)
             .map(|(index, decal)| {
                 let mut layer = vec![0u8; self.sheet.w * self.sheet.h * 4];
-                paint(&self.surface, &self.template, std::slice::from_ref(decal), None, self.sheet.w, self.sheet.h, &mut layer);
+                paint(&self.surface, &self.template, std::slice::from_ref(decal), None, false, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut layer });
                 (format!("{}（{}）", index + 1, decal.picture.label()), layer)
             })
             .collect()
@@ -525,10 +542,17 @@ impl App {
         }
     }
 
-    /// 選んでいる柄を、重なりの上（+1）か下（-1）へ 1 つ動かす。
+    /// 同じ面（表か裏）で、すぐ上（+1）か、すぐ下（-1）に重なっている柄。
+    fn neighbor(&self, index: usize, step: isize) -> Option<usize> {
+        let back = self.decals.get(index)?.back;
+        let same = |i: &usize| self.decals[*i].back == back;
+        if step > 0 { (index + 1..self.decals.len()).find(same) } else { (0..index).rev().find(same) }
+    }
+
+    /// 選んでいる柄を、同じ面の中で、重なりの上（+1）か下（-1）へ 1 つ動かす。
     fn reorder_selected(&mut self, step: isize) {
         let Some(index) = self.selected else { return };
-        let Some(other) = index.checked_add_signed(step).filter(|&i| i < self.decals.len()) else { return };
+        let Some(other) = self.neighbor(index, step) else { return };
         self.decals.swap(index, other);
         self.selected = Some(other);
         self.grab = None;
@@ -554,22 +578,36 @@ impl App {
     fn refresh_art(&mut self, ctx: &egui::Context, rs: Option<&egui_wgpu::RenderState>, shown: Shown) {
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, w, h, art));
+            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, false, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
-                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, w, h, &self.front_rgba);
+                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
             }
             self.art_dirty = false;
             self.front_tex_dirty = true;
+            // 裏は、裏に柄があるとき（と、なくなった直後）だけ作り直す。表の柄を動かす間の負荷を増やさない。
+            let has_back = self.decals.iter().any(|decal| decal.back);
+            if has_back || self.back_has_decals {
+                self.back_dirty = true;
+            }
+        }
+        if self.back_dirty {
+            let (w, h) = (self.sheet.w, self.sheet.h);
+            self.back_rgba = compose_back(&self.sheet, self.show_guides, |art| paint(&self.surface, &self.template, &self.decals, self.selected, true, Canvas { w, h, rgba: art }));
+            if let Some(rs) = rs {
+                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
+            }
+            self.back_has_decals = self.decals.iter().any(|decal| decal.back);
+            self.back_dirty = false;
+            self.back_tex_dirty = true;
         }
         // 展開図の表示の画像は、その表示を出しているときだけ作る（柄を動かす間の負荷を抑える）。
         if shown.front && self.front_tex_dirty {
             self.front_tex = Some(views::texture(ctx, "sheet-front", self.sheet.w, self.sheet.h, &self.front_rgba));
             self.front_tex_dirty = false;
         }
-        if shown.back && self.back_dirty {
-            let rgba = compose(&self.sheet, None, true, |_| {});
-            self.back_tex = Some(views::texture(ctx, "sheet-back", self.sheet.w, self.sheet.h, &rgba));
-            self.back_dirty = false;
+        if shown.back && self.back_tex_dirty {
+            self.back_tex = Some(views::texture(ctx, "sheet-back", self.sheet.w, self.sheet.h, &self.back_rgba));
+            self.back_tex_dirty = false;
         }
     }
 

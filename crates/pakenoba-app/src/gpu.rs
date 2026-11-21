@@ -25,6 +25,7 @@ struct Globals {
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var art: texture_2d<f32>;
 @group(1) @binding(1) var art_sampler: sampler;
+@group(1) @binding(2) var back_art: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -50,11 +51,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let inner = vec3<f32>(0.80, 0.76, 0.68);
     let edge = vec3<f32>(0.62, 0.56, 0.47);
     let texel = textureSample(art, art_sampler, in.uv);
+    let back = textureSample(back_art, art_sampler, in.uv);
     var base = mix(paper, texel.rgb, texel.a);
     if in.kind > 1.5 {
         base = edge;
     } else if in.kind > 0.5 {
-        base = inner;
+        // 紙の裏（箱の内側の面）。裏に置いた柄が見える。
+        base = mix(inner, back.rgb, back.a);
     }
     // 抜き穴の中は描かない。角の丸い四角として判定する。
     for (var i = 0; i < 2; i++) {
@@ -95,6 +98,9 @@ pub struct BoxRenderer {
     globals_bind: wgpu::BindGroup,
     art_layout: wgpu::BindGroupLayout,
     art_bind: wgpu::BindGroup,
+    /// 紙の表の絵と、裏の絵。
+    front: wgpu::TextureView,
+    back: wgpu::TextureView,
     sampler: wgpu::Sampler,
     vertex_buf: wgpu::Buffer,
     vertex_capacity: usize,
@@ -148,6 +154,12 @@ impl BoxRenderer {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("box layout"), bind_group_layouts: &[Some(&globals_layout), Some(&art_layout)], immediate_size: 0 });
@@ -202,7 +214,9 @@ impl BoxRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, 1, 1, &[255, 255, 255, 0]);
+        let front = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
+        let back = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
+        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &front, &back);
         let vertex_capacity = 4096;
         BoxRenderer {
             pipeline,
@@ -210,6 +224,8 @@ impl BoxRenderer {
             globals_bind,
             art_layout,
             art_bind,
+            front,
+            back,
             sampler,
             vertex_buf: vertex_buffer(device, vertex_capacity),
             vertex_capacity,
@@ -218,7 +234,8 @@ impl BoxRenderer {
         }
     }
 
-    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, w: u32, h: u32, rgba: &[u8]) -> wgpu::BindGroup {
+    /// 画像を GPU に送る。
+    fn upload(rs: &egui_wgpu::RenderState, w: u32, h: u32, rgba: &[u8]) -> wgpu::TextureView {
         // 絵柄は sRGB として読ませる（シェーダーには線形の値が届く）。
         let tex = texture(&rs.device, "box art", [w, h], wgpu::TextureFormat::Rgba8UnormSrgb, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
         rs.queue.write_texture(
@@ -227,21 +244,34 @@ impl BoxRenderer {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, front: &wgpu::TextureView, back: &wgpu::TextureView) -> wgpu::BindGroup {
         rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("box art"),
             layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }],
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(front) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(back) },
+            ],
         })
     }
 
-    /// 箱に貼る画像を差し替える。
-    pub fn set_art(&mut self, rs: &egui_wgpu::RenderState, w: usize, h: usize, rgba: &[u8]) {
+    /// 箱に貼る画像を差し替える。`back` が真なら、紙の裏（箱の内側の面）の画像。
+    pub fn set_art(&mut self, rs: &egui_wgpu::RenderState, back: bool, w: usize, h: usize, rgba: &[u8]) {
         let max = rs.device.limits().max_texture_dimension_2d as usize;
         if w == 0 || h == 0 || w > max || h > max || rgba.len() != w * h * 4 {
             return;
         }
-        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, w as u32, h as u32, rgba);
+        let view = Self::upload(rs, w as u32, h as u32, rgba);
+        if back {
+            self.back = view;
+        } else {
+            self.front = view;
+        }
+        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &self.front, &self.back);
     }
 
     fn ensure_target(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2]) {

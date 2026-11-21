@@ -16,6 +16,9 @@ use crate::art::PX_PER_MM;
 pub struct Placed {
     pub decal: Decal,
     pub picture: Picture,
+    /// 紙の裏（箱の内側の面）に置いた柄か。
+    /// 場所は、表の柄と同じく展開図の座標で持つ。絵は、裏から見て正しく読めるように、左右を逆にして描く。
+    pub back: bool,
 }
 
 impl Deref for Placed {
@@ -31,9 +34,10 @@ impl DerefMut for Placed {
     }
 }
 
-/// 柄の場所だけを取り出す（中核の関数に渡すため）。
-pub fn spots(decals: &[Placed]) -> Vec<Decal> {
-    decals.iter().map(|p| p.decal).collect()
+/// 表か裏の、どちらかの面にある柄の場所を取り出す（中核の関数に渡すため）。
+/// 返すのは、もとの番号の並びと、場所の並び。
+pub fn spots_on(decals: &[Placed], back: bool) -> (Vec<usize>, Vec<Decal>) {
+    decals.iter().enumerate().filter(|(_, p)| p.back == back).map(|(index, p)| (index, p.decal)).unzip()
 }
 
 /// 柄の絵。
@@ -111,9 +115,18 @@ impl Picture {
     }
 }
 
-/// 柄を、展開図の画像（RGBA、左上が展開図の左上）に描く。`selected` の柄には、枠を付ける。
-pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Option<usize>, w: usize, h: usize, rgba: &mut [u8]) {
-    for (index, decal) in decals.iter().enumerate() {
+/// 描き込む先の、展開図の画像（RGBA、左上が展開図の左上）。
+pub struct Canvas<'a> {
+    pub w: usize,
+    pub h: usize,
+    pub rgba: &'a mut [u8],
+}
+
+/// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
+/// 描くのは、`back` で指定した面（表か裏）の柄だけ。
+pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Option<usize>, back: bool, canvas: Canvas) {
+    let Canvas { w, h, rgba } = canvas;
+    for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back) {
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
         for piece in surface.layout(tpl, decal).iter().rev() {
@@ -139,7 +152,8 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Opt
                     if q[0].abs() > half[0] || q[1].abs() > half[1] || !inside(outline, at) || tpl.in_hole(at[0], at[1]) {
                         continue;
                     }
-                    let mut color = decal.picture.sample(q, decal.size);
+                    // 裏の柄は、裏から見て正しく読めるように、左右を逆にして描く。
+                    let mut color = decal.picture.sample(if back { [-q[0], q[1]] } else { q }, decal.size);
                     if selected == Some(index) {
                         // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。
                         let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
@@ -162,5 +176,56 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Opt
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 左半分が赤、右半分が青の画像。
+    fn red_blue() -> Picture {
+        let (w, h) = (8, 2);
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| if i % w < w / 2 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }).collect();
+        Picture::Image { w, h, rgba: Arc::new(rgba) }
+    }
+
+    /// 展開図の画像の、展開図上の位置 `at` の色。
+    fn pixel(tpl: &Template, w: usize, rgba: &[u8], at: P2) -> [u8; 4] {
+        let (x, y) = (((at[0] - tpl.min[0]) * PX_PER_MM) as usize, ((tpl.max[1] - at[1]) * PX_PER_MM) as usize);
+        let o = (y * w + x) * 4;
+        [rgba[o], rgba[o + 1], rgba[o + 2], rgba[o + 3]]
+    }
+
+    #[test]
+    fn 裏の柄は裏の画像にだけ_左右を逆にして描く() {
+        let tpl = Template::tuck_box(120.0, 60.0, 160.0, 0.5);
+        let thin = Template::tuck_box(120.0, 60.0, 160.0, 0.02);
+        let surface = Surface::new(&tpl, &thin);
+        let (w, h) = (((tpl.max[0] - tpl.min[0]) * PX_PER_MM).ceil() as usize, ((tpl.max[1] - tpl.min[1]) * PX_PER_MM).ceil() as usize);
+        let front = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.7], size: [40.0, 10.0], angle: 0.0 }, back: false };
+        let back = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.3], size: [40.0, 10.0], angle: 0.0 }, back: true };
+        let (front_at, back_at) = (front.center(&tpl), back.center(&tpl));
+        let decals = [front, back];
+        let left = |c: P2| [c[0] - 10.0, c[1]];
+        let right = |c: P2| [c[0] + 10.0, c[1]];
+
+        // 表の画像には、表の柄だけ。左が赤、右が青。
+        let mut image = vec![0u8; w * h * 4];
+        paint(&surface, &tpl, &decals, None, false, Canvas { w, h, rgba: &mut image });
+        assert_eq!(pixel(&tpl, w, &image, left(front_at)), [255, 0, 0, 255]);
+        assert_eq!(pixel(&tpl, w, &image, right(front_at)), [0, 0, 255, 255]);
+        assert_eq!(pixel(&tpl, w, &image, back_at)[3], 0, "裏の柄は、表の画像に出ない");
+
+        // 裏の画像には、裏の柄だけ。展開図の座標では左右が逆（裏返して見ると、左が赤になる）。
+        let mut image = vec![0u8; w * h * 4];
+        paint(&surface, &tpl, &decals, None, true, Canvas { w, h, rgba: &mut image });
+        assert_eq!(pixel(&tpl, w, &image, left(back_at)), [0, 0, 255, 255]);
+        assert_eq!(pixel(&tpl, w, &image, right(back_at)), [255, 0, 0, 255]);
+        assert_eq!(pixel(&tpl, w, &image, front_at)[3], 0, "表の柄は、裏の画像に出ない");
+
+        // 面ごとに取り出すと、もとの番号が付いてくる。
+        assert_eq!(spots_on(&decals, false).0, vec![0]);
+        assert_eq!(spots_on(&decals, true).0, vec![1]);
     }
 }

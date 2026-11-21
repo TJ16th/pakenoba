@@ -47,10 +47,10 @@ impl App {
                             ui.label(format!("{} {}", self.decals[index].picture.label(), index + 1));
                             ui.separator();
                             ui.label("重なり順");
-                            if ui.add_enabled(index + 1 < self.decals.len(), egui::Button::new("前面へ")).clicked() {
+                            if ui.add_enabled(self.neighbor(index, 1).is_some(), egui::Button::new("前面へ")).clicked() {
                                 self.reorder_selected(1);
                             }
-                            if ui.add_enabled(index > 0, egui::Button::new("背面へ")).clicked() {
+                            if ui.add_enabled(self.neighbor(index, -1).is_some(), egui::Button::new("背面へ")).clicked() {
                                 self.reorder_selected(-1);
                             }
                         }
@@ -140,15 +140,29 @@ impl App {
         let decal = &mut self.decals[index];
         let before = decal.decal;
         let band = matches!(decal.picture, Picture::Band);
-        // 位置は、展開図の左上からの距離（表の表示の定規と同じ向き）。
+        let was_back = decal.back;
+        let mut back = was_back;
+        // 位置は、展開図の左上からの距離（表や裏の表示の定規と同じ向き）。
+        // 裏の柄は、裏の表示（表を左右に裏返した向き）で見たときの値にする。
+        let sheet_w = template.max[0] - template.min[0];
+        let mirror = move |x: f32| if was_back { sheet_w - x } else { x };
+        let turn = if was_back { -1.0 } else { 1.0 };
         let center = decal.center(template);
-        let (mut x, mut y) = (center[0] - template.min[0], template.max[1] - center[1]);
+        let (x0, y0) = (mirror(center[0] - template.min[0]), template.max[1] - center[1]);
+        let (mut x, mut y) = (x0, y0);
         let mut width = decal.size[0];
         let mut height = decal.size[1];
-        let mut degrees = decal.angle.to_degrees();
+        // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
+        let mut degrees = decal.angle.to_degrees() * turn + 0.0;
         egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("種類");
             ui.label(decal.picture.label());
+            ui.end_row();
+            ui.label("紙の面");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut back, false, " 表 ").on_hover_text("紙の表（箱の外側）に置く");
+                ui.selectable_value(&mut back, true, " 裏 ").on_hover_text("紙の裏（箱の内側）に置く。フタの裏など");
+            });
             ui.end_row();
             ui.label("位置 X");
             number(ui, &mut x, -2000.0..=4000.0, "mm");
@@ -166,9 +180,9 @@ impl App {
             number(ui, &mut degrees, -180.0..=180.0, "度");
             ui.end_row();
         });
-        if (x, y) != (center[0] - template.min[0], template.max[1] - center[1]) {
+        if (x, y) != (x0, y0) {
             // 数値で動かすときは、置かれている面の中にとどめる（隣の面へは、ドラッグで動かす）。
-            decal.set_center(template, [template.min[0] + x, template.max[1] - y]);
+            decal.set_center(template, [template.min[0] + mirror(x), template.max[1] - y]);
             decal.at = [decal.at[0].clamp(0.0, 1.0), decal.at[1].clamp(0.0, 1.0)];
         }
         if band {
@@ -179,9 +193,20 @@ impl App {
         } else if height != decal.size[1] {
             decal.size = [decal.size[0] * height / decal.size[1], height];
         }
-        decal.angle = degrees.to_radians();
-        if before != decal.decal {
+        decal.angle = (degrees * turn).to_radians();
+        let moved_side = back != decal.back;
+        if moved_side {
+            // 表と裏を入れ替える。場所は同じ（ちょうど裏側）。見た目の向きが変わらないよう、回転は逆にする。
+            decal.back = back;
+            decal.angle = -decal.angle;
+        }
+        if before != decal.decal || moved_side {
             self.art_dirty = true;
+        }
+        if moved_side {
+            self.back_dirty = true;
+            self.grab = None;
+            self.say(if back { "紙の裏へ移しました。「裏」の表示か、箱を開けた内側で見られます。" } else { "紙の表へ移しました。" });
         }
         // どの面にかかっているか。
         let pieces = self.surface.layout(&self.template, &self.decals[index]);
@@ -204,33 +229,54 @@ impl App {
 
     fn layers(&mut self, ui: &mut egui::Ui) {
         ui.strong("レイヤー");
-        ui.weak("表");
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            // 上に重なっているものから並べる。
             if ui.checkbox(&mut self.show_guides, "ガイド（切り線、折り線、のりしろ）").changed() {
                 self.art_dirty = true;
+                self.back_dirty = true;
             }
-            for index in (0..self.decals.len()).rev() {
-                let label = format!("{} {}", self.decals[index].picture.label(), index + 1);
-                if ui.selectable_label(self.selected == Some(index), label).clicked() {
-                    self.selected = if self.selected == Some(index) { None } else { Some(index) };
-                    self.art_dirty = true;
-                }
-            }
-            if self.custom.is_some() {
-                ui.horizontal(|ui| {
-                    ui.label("展開図の絵（PSD）");
-                    if ui.small_button("外す").clicked() {
-                        self.custom = None;
-                        self.custom_source = None;
-                        self.psd_info.clear();
+            // 紙の表と裏に分けて、上に重なっているものから並べる。
+            for back in [false, true] {
+                ui.weak(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
+                let mut any = false;
+                for index in (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back) {
+                    any = true;
+                    let label = format!("{} {}", self.decals[index].picture.label(), index + 1);
+                    if ui.selectable_label(self.selected == Some(index), label).clicked() {
+                        self.selected = if self.selected == Some(index) { None } else { Some(index) };
                         self.art_dirty = true;
                     }
-                });
+                }
+                if !any && (back || self.custom.is_none()) {
+                    ui.small("　柄はありません");
+                }
+                if back {
+                    continue;
+                }
+                self.custom_layer(ui);
             }
-            ui.weak("紙");
         });
         ui.add_space(6.0);
+        self.psd_loader(ui);
+    }
+
+    /// レイヤーの欄の、展開図まるごとの絵（PSD）の行。
+    fn custom_layer(&mut self, ui: &mut egui::Ui) {
+        if self.custom.is_none() {
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.label("展開図の絵（PSD）");
+            if ui.small_button("外す").clicked() {
+                self.custom = None;
+                self.custom_source = None;
+                self.psd_info.clear();
+                self.art_dirty = true;
+            }
+        });
+    }
+
+    /// 展開図まるごとの絵（PSD）の読み込み。
+    fn psd_loader(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("展開図の絵を読み込む").default_open(!self.psd_info.is_empty()).show(ui, |ui| {
             ui.small("「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。");
             let mut load_clicked = false;
@@ -358,6 +404,9 @@ impl App {
                     }
                     Err(e) => format!("保存できませんでした: {e}"),
                 });
+            }
+            if self.decals.iter().any(|decal| decal.back) {
+                ui.small("紙の裏に置いた柄は、この PSD にはまだ入りません（紙の表の 1 枚ぶんだけを保存します）。");
             }
             ui.add_space(6.0);
             ui.small("この型紙はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");

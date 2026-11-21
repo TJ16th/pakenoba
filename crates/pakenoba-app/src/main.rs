@@ -40,6 +40,7 @@ fn main() -> ExitCode {
                 if args[i] == "--logo" { initial.logo = at } else { initial.band = at }
             }
             ("--select", Some(v)) => initial.select = Some(v as usize),
+            ("--back", Some(v)) => initial.back.push(v as usize),
             ("--views", _) if i + 1 < args.len() => {
                 // 「立体、表、裏」を出すかどうかを、1 と 0 の 3 文字で（例: 110）。
                 let on: Vec<bool> = args[i + 1].chars().map(|c| c == '1').collect();
@@ -55,7 +56,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("使い方: pakenoba [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、10: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）]");
+                println!("使い方: pakenoba [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、10: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

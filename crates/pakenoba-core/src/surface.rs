@@ -432,6 +432,12 @@ pub fn panel_at(tpl: &Template, at: P2) -> Option<usize> {
 ///
 /// 当たったのが紙の内側や断面なら None（印刷面にしか柄は置けない）。抜き穴は素通りする。
 pub fn pick(tpl: &Template, mesh: &[Vertex], origin: V3, dir: V3) -> Option<(usize, P2)> {
+    pick_side(tpl, mesh, origin, dir).filter(|&(_, _, back)| !back).map(|(panel, at, _)| (panel, at))
+}
+
+/// `pick` と同じだが、紙の裏（箱の内側の面）に当たったときも返す。3 つめが、裏かどうか。
+/// 断面に当たったときは None。
+pub fn pick_side(tpl: &Template, mesh: &[Vertex], origin: V3, dir: V3) -> Option<(usize, P2, bool)> {
     let mut hits: Vec<(f32, f32, P2)> = Vec::new();
     for tri in mesh.chunks_exact(3) {
         let (e1, e2) = (sub(tri[1].pos, tri[0].pos), sub(tri[2].pos, tri[0].pos));
@@ -457,10 +463,10 @@ pub fn pick(tpl: &Template, mesh: &[Vertex], origin: V3, dir: V3) -> Option<(usi
     }
     hits.sort_by(|a, b| a.0.total_cmp(&b.0));
     let (_, kind, at) = hits.into_iter().find(|&(_, _, at)| !tpl.in_hole(at[0], at[1]))?;
-    if kind != 0.0 {
+    if kind > 1.5 {
         return None;
     }
-    panel_at(tpl, at).map(|panel| (panel, at))
+    panel_at(tpl, at).map(|panel| (panel, at, kind > 0.5))
 }
 
 /// 視点とカメラの向きから、画面上の点（-1〜1、右と上が正）を通る視線の向きを求める。
@@ -660,5 +666,29 @@ mod tests {
         // 端のほう: 裏の貼りしろへ回り込む。持ち手へは行かない。
         let side = reached(len * 0.12);
         assert!(side.contains(&back_fin) && !side.contains(&handle), "{side:?}");
+    }
+
+    /// 紙の表から見れば表、裏から見れば裏に当たる。
+    #[test]
+    fn 当たり判定は紙の表と裏を見分ける() {
+        let tpl = Template::tuck_box(120.0, 60.0, 160.0, 0.5);
+        // 展開図（平ら）のとき。印刷面は手前（+z）を向いている。
+        let mesh = tpl.build_mesh(0.0, 1.0);
+        let front = tpl.panels.iter().position(|p| p.name == "正面").unwrap();
+        let outline = &tpl.panels[front].outline;
+        let middle = [(outline[0][0] + outline[2][0]) * 0.5, (outline[0][1] + outline[2][1]) * 0.5];
+        let on_paper = tpl.world_at(0.0).point([middle[0], middle[1], 0.0]);
+        let from = |z: f32| [on_paper[0], on_paper[1], on_paper[2] + z];
+
+        let (panel, at, back) = pick_side(&tpl, &mesh, from(500.0), [0.0, 0.0, -1.0]).unwrap();
+        assert_eq!((panel, back), (front, false));
+        assert!((at[0] - middle[0]).abs() < 0.5 && (at[1] - middle[1]).abs() < 0.5, "{at:?} と {middle:?}");
+        assert!(pick(&tpl, &mesh, from(500.0), [0.0, 0.0, -1.0]).is_some());
+
+        let (panel, at, back) = pick_side(&tpl, &mesh, from(-500.0), [0.0, 0.0, 1.0]).unwrap();
+        assert_eq!((panel, back), (front, true));
+        assert!((at[0] - middle[0]).abs() < 0.5 && (at[1] - middle[1]).abs() < 0.5, "{at:?} と {middle:?}");
+        // 表だけを返す当たり判定は、裏では当たらない。
+        assert!(pick(&tpl, &mesh, from(-500.0), [0.0, 0.0, 1.0]).is_none());
     }
 }

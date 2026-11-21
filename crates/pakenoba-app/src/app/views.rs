@@ -7,12 +7,12 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, pos2, vec2}
 use eframe::egui_wgpu;
 
 use pakenoba_core::math::{cross, look_at, mat4_mul, normalize, perspective, sub};
-use pakenoba_core::surface::{panel_at, pick, ray_through};
+use pakenoba_core::surface::{panel_at, pick_side, ray_through};
 use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown, Tool, Workspace};
 use crate::gpu::BoxRenderer;
-use crate::paint::spots;
+use crate::paint::spots_on;
 
 /// 表示と表示の間のすき間。
 const GAP: f32 = 2.0;
@@ -145,20 +145,27 @@ impl App {
         let template = &self.template;
         let under = |pos: Pos2| {
             let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
-            pick(template, &mesh, eye, ray_through(forward, side, upward, fov, aspect, x, y))
+            pick_side(template, &mesh, eye, ray_through(forward, side, upward, fov, aspect, x, y))
         };
         let pointer = response.interact_pointer_pos().or(response.hover_pos());
         let hit = pointer.and_then(under);
         if response.hovered() || response.dragged() {
-            self.hover = hit.map(|(panel, _)| panel);
+            self.hover = hit.map(|(panel, _, _)| panel);
         }
+        // 紙の表（箱の外側）に当たったら表の柄、裏（内側）に当たったら裏の柄を探す。
         // 手のひらの道具では、柄をつかまない（どこをドラッグしても箱が回る）。
-        let places = if self.tool == Tool::Hand { Vec::new() } else { spots(&self.decals) };
-        let decal_under = hit.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
+        let hand = self.tool == Tool::Hand;
+        let sides = [spots_on(&self.decals, false), spots_on(&self.decals, true)];
+        let surface = &self.surface;
+        let decal_at = |(panel, at, back): (usize, [f32; 2], bool)| {
+            let (ids, places) = &sides[back as usize];
+            surface.decal_at(template, places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab))
+        };
+        let decal_under = hit.and_then(decal_at);
         if response.drag_started() {
             // 押した場所に柄があれば、柄をつかむ。なければ、箱を回す。
             let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
-            self.grab = pressed.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
+            self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 self.selected = Some(index);
                 self.art_dirty = true;
@@ -166,8 +173,9 @@ impl App {
         }
         if response.dragged() {
             match (self.grab, hit) {
-                (Some((index, grab)), Some((panel, at))) => {
-                    if let Some(decal) = self.decals.get_mut(index) {
+                (Some((index, grab)), Some((panel, at, back))) => {
+                    // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
+                    if let Some(decal) = self.decals.get_mut(index).filter(|decal| decal.back == back) {
                         self.surface.drag(template, decal, panel, at, grab);
                         self.art_dirty = true;
                     }
@@ -255,12 +263,15 @@ impl App {
         if response.hovered() || response.dragged() {
             self.hover = hit.map(|(panel, _)| panel);
         }
-        // 柄を置けるのは、いまは表だけ。手のひらの道具では、柄をつかまない。
-        let places = if back || self.tool == Tool::Hand { Vec::new() } else { spots(&self.decals) };
-        let decal_under = hit.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
+        // 表の表示では表の柄、裏の表示では裏の柄を扱う。手のひらの道具では、柄をつかまない。
+        let hand = self.tool == Tool::Hand;
+        let (ids, places) = spots_on(&self.decals, back);
+        let surface = &self.surface;
+        let decal_at = |(panel, at): (usize, [f32; 2])| surface.decal_at(template, &places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab));
+        let decal_under = hit.and_then(decal_at);
         if response.drag_started() {
             let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
-            self.grab = pressed.and_then(|(panel, at)| self.surface.decal_at(template, &places, panel, at));
+            self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 self.selected = Some(index);
                 self.art_dirty = true;
@@ -282,7 +293,7 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() && !back && self.tool != Tool::Hand {
+        if response.clicked() && self.tool != Tool::Hand {
             self.selected = decal_under.map(|(index, _)| index);
             self.art_dirty = true;
         }
@@ -336,7 +347,7 @@ impl App {
         painter.rect_filled(Rect::from_min_max(rect.min, area.min), 0.0, ruler_fill);
         painter.text(rect.min + vec2(RULER_LEFT * 0.5, RULER_TOP * 0.5), Align2::CENTER_CENTER, "mm", font, line);
 
-        tag(ui, area.min + vec2(8.0, 6.0), if back { "裏（柄を置く機能は、これから作ります）" } else { "表" });
+        tag(ui, area.min + vec2(8.0, 6.0), if back { "裏" } else { "表" });
     }
 }
 
