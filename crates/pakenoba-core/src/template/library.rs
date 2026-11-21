@@ -1,9 +1,9 @@
 //! 型（寸法から型紙を作る関数）。
 //!
 //! 状態:
-//! - `tuck_box`（差し込み箱）: 検査（`crate::check`）を通る。
-//! - `prism`、`carry_bag`、`gable`、`pillow`: 試作から移しただけの下書き。箱として成り立たない点が残っていて、検査で指摘される
-//!   （角柱はフタが留まらない、ピロー型と手提げ型は上の端が閉じていない、ゲーブル型は左奥の三角形がつながっていない）。
+//! - `tuck_box`（差し込み箱）、`prism`（角柱）、`pillow`（ピロー型）、`gable`（ゲーブル型）: 検査（`crate::check`）を通る。
+//!   ゲーブル型は、持ち手の留めの形がまだ型紙に入っていない。
+//! - `carry_bag`（丸みのある手提げ型）: 試作から移しただけの下書き。開け口が決まっておらず、上の端も閉じていない。
 //!   直すまでは、画面の型の一覧に出さない。
 
 use super::*;
@@ -84,7 +84,8 @@ impl Template {
         let r = w.min(d).min(h) * 0.34;
         let marks = vec![([u_r, h * 0.55], r), ([u_b + w * 0.5, h + t], r * 0.8)];
         let openings = openings(&panels, &[("上のフタ", Some("上の差し込み"), Hold::Nothing), ("底のフタ", Some("底の差し込み"), Hold::Nothing)]);
-        Template { panels, thickness: t, min, max, world: upright_world([u_f + w * 0.5, h * 0.5], d, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings }
+        let glued = glued(&panels, &[("のりしろ", "背面")]);
+        Template { panels, thickness: t, min, max, world: upright_world([u_f + w * 0.5, h * 0.5], d, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued }
     }
 
     /// 正多角柱（三角柱、五角柱など）。`side` は内側の一辺の長さ、`h` は内寸の高さ（mm）。
@@ -100,8 +101,11 @@ impl Template {
         let quarter = std::f32::consts::FRAC_PI_2;
         let shift = t / exterior.sin();
         let glue = (0.3 * side).clamp(4.0, 12.0);
-        let flap = 0.2 * side * (interior * 0.5).tan();
         let inset = 0.2 * side;
+        // フラップの高さ。隣どうしが中でぶつからない高さと、展開図の上でフタの斜めの辺に当たらない高さの、低いほう
+        // （角の数が多いと、フタが隣の側面の上まで張り出す）。
+        let below_lid = if exterior < 1.5 { 0.9 * inset * exterior.tan() } else { f32::INFINITY };
+        let flap = (0.2 * side * (interior * 0.5).tan()).min(below_lid);
 
         let u0 = shift;
         let wall_start = |k: usize| u0 + k as f32 * side;
@@ -110,9 +114,13 @@ impl Template {
 
         let mut panels = vec![Panel::flat("側面 1", rect(u0 - shift, -t, u0 + side, h + t), None, Role::Face)];
         const NAMES: [&str; 12] = ["側面 1", "側面 2", "側面 3", "側面 4", "側面 5", "側面 6", "側面 7", "側面 8", "側面 9", "側面 10", "側面 11", "側面 12"];
+        // フタの差し込みが入る側面。フタのつけ根の向かい側（角の数が奇数なら、向かいの角をはさむ 2 枚）。
+        // この側面にはフラップを付けず、差し込みを受ける。フタの縁を隠すよう、上下に紙 1 枚ぶん高くする。
+        let tuck_walls: Vec<usize> = if n.is_multiple_of(2) { vec![n / 2] } else { vec![(n - 1) / 2, n.div_ceil(2)] };
         for (k, &name) in NAMES.iter().enumerate().take(n).skip(1) {
             let end = if k == n - 1 { last_end } else { wall_start(k + 1) };
-            panels.push(Panel::flat(name, rect(wall_start(k), 0.0, end, h), Some(Hinge { parent: k - 1, a: [wall_start(k), 0.0], b: [wall_start(k), h], angle: exterior, window: WALLS, motion: Motion::Fixed }), Role::Face));
+            let rise = if tuck_walls.contains(&k) { t } else { 0.0 };
+            panels.push(Panel::flat(name, rect(wall_start(k), -rise, end, h + rise), Some(Hinge { parent: k - 1, a: [wall_start(k), 0.0], b: [wall_start(k), h], angle: exterior, window: WALLS, motion: Motion::Fixed }), Role::Face));
         }
         let c = 2.0f32.min(h * 0.1);
         let k = glue * 0.35;
@@ -123,10 +131,13 @@ impl Template {
             Role::GlueTab,
         ));
 
-        for (sign, flap_name, lid_name, flap_window, lid_window) in [(-1.0f32, "底のフラップ", "底のフタ", (0.50, 0.62), (0.60, 0.74)), (1.0f32, "上のフラップ", "上のフタ", (0.74, 0.86), (0.86, 1.0))] {
+        let tuck = (0.25 * side).clamp(5.0, 15.0);
+        for (sign, flap_name, lid_name, tuck_name, flap_window, tuck_window, lid_window) in
+            [(-1.0f32, "底のフラップ", "底のフタ", "底の差し込み", (0.50, 0.60), (0.56, 0.68), (0.62, 0.76)), (1.0f32, "上のフラップ", "上のフタ", "上の差し込み", (0.74, 0.84), (0.80, 0.92), (0.86, 1.0))]
+        {
             let side_edge = if sign > 0.0 { h } else { 0.0 };
             let lid_edge = if sign > 0.0 { h + t } else { -t };
-            for wall in 1..n {
+            for wall in (1..n).filter(|wall| !tuck_walls.contains(wall)) {
                 let a = wall_start(wall) + 0.5;
                 let b = (if wall == n - 1 { last_end } else { wall_start(wall + 1) }) - 0.5;
                 panels.push(Panel::flat(
@@ -143,16 +154,32 @@ impl Template {
                 let angle = exterior * i as f32;
                 lid.push([prev[0] + side * angle.cos(), prev[1] + sign * side * angle.sin()]);
             }
-            panels.push(Panel::flat(lid_name, ccw(lid), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: Motion::Fixed }), Role::Face));
+            // 差し込みは側面の内側に入る。そのぶん、差し込みの付く辺を紙 1 枚ぶん内側へ寄せる。
+            let amount: Vec<f32> = (0..n).map(|i| if tuck_walls.contains(&i) { t } else { 0.0 }).collect();
+            let lid = inset_edges(&lid, &amount, sign);
+            let lid_index = panels.len();
+            panels.push(Panel::flat(lid_name, ccw(lid.clone()), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: Motion::Fixed }), Role::Face));
+            // 差し込み（ベロ）。フタの辺から外へ伸び、折って側面の内側に入る。
+            for &i in &tuck_walls {
+                let (a, b) = (lid[i], lid[(i + 1) % n]);
+                let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+                let dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+                // フタの外へ向かう向き。
+                let out = [dir[1] * sign, -dir[0] * sign];
+                let (a, b) = ([a[0] + dir[0] * 0.5, a[1] + dir[1] * 0.5], [b[0] - dir[0] * 0.5, b[1] - dir[1] * 0.5]);
+                let taper = (len * 0.15).min(tuck * 0.6);
+                let tip = |p: P2, along: f32| [p[0] + dir[0] * along + out[0] * tuck, p[1] + dir[1] * along + out[1] * tuck];
+                panels.push(Panel::flat(tuck_name, ccw(vec![a, b, tip(b, -taper), tip(a, taper)]), Some(Hinge { parent: lid_index, a, b, angle: quarter, window: tuck_window, motion: Motion::Fixed }), Role::Tuck));
+            }
         }
 
         let (min, max) = bounds(&panels);
         let r = side.min(h) * 0.3;
         let marks = vec![([u0 + side, h * 0.55], r), ([u0 + side * 0.5, h + t], r * 0.8)];
         let depth = side / (std::f32::consts::PI / n as f32).tan();
-        // フタは開け口のつもりだが、差し込みがなく、留まらない（未修正）。
-        let openings = openings(&panels, &[("上のフタ", None, Hold::Nothing), ("底のフタ", None, Hold::Nothing)]);
-        Template { panels, thickness: t, min, max, world: upright_world([u0 + side * 0.5, h * 0.5], depth, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings }
+        let openings = openings(&panels, &[("上のフタ", Some("上の差し込み"), Hold::Nothing), ("底のフタ", Some("底の差し込み"), Hold::Nothing)]);
+        let glued = glued(&panels, &[("のりしろ", "側面 1")]);
+        Template { panels, thickness: t, min, max, world: upright_world([u0 + side * 0.5, h * 0.5], depth, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued }
     }
 
     /// 手提げ型。底は平らな長方形で、正面と背面が丸みを持って立ち上がり、上で合わさって持ち手になる。
@@ -224,7 +251,7 @@ impl Template {
         // 展開図では印刷面を手前に向け、組み上がるにつれて 90 度倒して、底を水平に寝かせる。
         // 倒しきると、x が幅、y が高さ（底の内側が 0）、z が奥行き（正面が手前）になる。
         let world = upright_world([c, d * 0.5], 0.0, t);
-        Template { panels, thickness: t, min, max, world, tilt: std::f32::consts::FRAC_PI_2, tilt_window: (0.0, 0.5), marks, holes: vec![hole(top, 1.0), hole(-l, -1.0)], open_angle: 0.0, openings: Vec::new() }
+        Template { panels, thickness: t, min, max, world, tilt: std::f32::consts::FRAC_PI_2, tilt_window: (0.0, 0.5), marks, holes: vec![hole(top, 1.0), hole(-l, -1.0)], open_angle: 0.0, openings: Vec::new(), glued: Vec::new() }
     }
 
     /// ゲーブル型（屋根の形に閉じる手提げ箱）。寸法は内寸（mm）で、`roof` は胴の上端から屋根のてっぺんまでの高さ。
@@ -320,7 +347,26 @@ impl Template {
                 Some(Hinge { parent: wall, a: [base0, h], b: [base1, h], angle: 0.0, window: WALLS, motion: Motion::GableCenter(ratio) }),
                 Role::Face,
             ));
+            let center_index = panels.len() - 1;
             for (roof_index, edge, dir) in [(roofs[0], front_edge, front_dir), (roofs[1], back_edge, back_dir)] {
+                // 左奥の三角形は、背面の屋根とは展開図の上で離れている（間に、のりしろの合わせ目がある）。
+                // 左の三角に斜めの折り線でつなぎ、背面の屋根とは、のりしろで貼る。
+                if wall == 1 && roof_index == roofs[1] {
+                    let wing = panels.len();
+                    panels.push(Panel::flat(
+                        wing_name,
+                        ccw(vec![[base0, h], [base0, ridge], [base0 + half, ridge]]),
+                        Some(Hinge { parent: center_index, a: [base0, h], b: [base0 + half, ridge], angle: 0.0, window: WALLS, motion: Motion::GableDiagonal(ratio) }),
+                        Role::Gusset,
+                    ));
+                    panels.push(Panel::flat(
+                        "屋根ののりしろ",
+                        ccw(vec![[0.0, h + c + k], [base0, h + c], [base0, ridge - c], [0.0, ridge - c - k]]),
+                        Some(Hinge { parent: wing, a: [base0, h + c], b: [base0, ridge - c], angle: quarter, window: WALLS, motion: Motion::GableWing(ratio) }),
+                        Role::GlueTab,
+                    ));
+                    continue;
+                }
                 panels.push(Panel::flat(
                     wing_name,
                     ccw(vec![[edge, h], [edge, ridge], [edge + dir * half, ridge]]),
@@ -336,6 +382,7 @@ impl Template {
         let hole = |u0: f32| [u0 + w * 0.5, ridge + handle * 0.5, w * 0.14, handle * 0.24];
         // 屋根は、持ち手の留めで閉じた状態を保つ（留めの形は、まだ型紙に入っていない）。
         let openings = openings(&panels, &[("正面の屋根", None, Hold::Latch), ("底のフタ", Some("底の差し込み"), Hold::Nothing)]);
+        let glued = glued(&panels, &[("のりしろ", "背面"), ("屋根ののりしろ", "背面の屋根")]);
         Template {
             panels,
             thickness: t,
@@ -347,6 +394,7 @@ impl Template {
             holes: vec![hole(u_f), hole(u_b)],
             open_angle: closed,
             openings,
+            glued,
         }
     }
 
@@ -408,16 +456,26 @@ impl Template {
             role: Role::Face,
         });
 
-        // 持ち手。上で合わさった 2 枚を、山折りでまっすぐ上に立てて貼り合わせる。
+        // 貼りしろと持ち手。上で合わさった 2 枚の縁を、端から端まで山折りでまっすぐ上に立てて、背中合わせに貼る。
+        // これで上の口が閉じて、筒になる。持ち手は、貼りしろの中央から上へ続く。
+        let fin = (0.08 * height).clamp(6.0, 10.0);
         let handle_height = (0.35 * height).clamp(25.0, 50.0);
         let (h0, h1) = (len * 0.27, len * 0.73);
         let inset = (h1 - h0) * 0.09;
-        for (name, parent, sign) in [("正面の持ち手", 0usize, 1.0f32), ("背面の持ち手", 1usize, -1.0f32)] {
+        for (fin_name, name, parent, sign, shift) in [("正面の貼りしろ", "正面の持ち手", 0usize, 1.0f32, 0.0f32), ("背面の貼りしろ", "背面の持ち手", 1usize, -1.0f32, under)] {
             let edge = sign * height;
+            let base = edge + sign * fin;
+            let fin_index = panels.len();
+            panels.push(Panel::flat(
+                fin_name,
+                ccw(vec![[shift, edge], [len - shift, edge], [len - shift, base], [shift, base]]),
+                Some(Hinge { parent, a: [shift, edge], b: [len - shift, edge], angle: -half_turn, window: MAIN, motion: Motion::Fixed }),
+                Role::Fin,
+            ));
             panels.push(Panel::flat(
                 name,
-                ccw(vec![[h0, edge], [h1, edge], [h1 - inset, edge + sign * handle_height], [h0 + inset, edge + sign * handle_height]]),
-                Some(Hinge { parent, a: [h0, edge], b: [h1, edge], angle: -half_turn, window: MAIN, motion: Motion::Fixed }),
+                ccw(vec![[h0, base], [h1, base], [h1 - inset, base + sign * handle_height], [h0 + inset, base + sign * handle_height]]),
+                Some(Hinge { parent: fin_index, a: [h0, base], b: [h1, base], angle: 0.0, window: MAIN, motion: Motion::Fixed }),
                 Role::Face,
             ));
         }
@@ -433,9 +491,10 @@ impl Template {
         let (min, max) = bounds(&panels);
         let r = len.min(height) * 0.26;
         let marks = vec![([len * 0.5, height * 0.5], r), ([deepest, height * 0.5], r * 0.55)];
-        let hole = |sign: f32| [len * 0.5, sign * (height + handle_height * 0.5), (h1 - h0) * 0.3, handle_height * 0.22];
+        let hole = |sign: f32| [len * 0.5, sign * (height + fin + handle_height * 0.5), (h1 - h0) * 0.3, handle_height * 0.22];
         // 端のフラップは、紙の張りで閉じた状態を保つ。
         let openings = openings(&panels, &[("正面のフラップ", None, Hold::Tension)]);
+        let glued = glued(&panels, &[("正面の貼りしろ", "背面の貼りしろ"), ("正面の持ち手", "背面の持ち手")]);
         // 根の面は下の折り線から巻きはじめるので、そのままだと全体が後ろへ傾く。ふくらみの半分だけ手前へ起こして、まっすぐ立てる。
         Template {
             panels,
@@ -449,6 +508,7 @@ impl Template {
             holes: vec![hole(1.0), hole(-1.0)],
             open_angle: 0.0,
             openings,
+            glued,
         }
     }
 

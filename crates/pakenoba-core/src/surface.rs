@@ -71,6 +71,7 @@ fn edge(tpl: &Template, panel: usize, index: usize) -> (P2, P2) {
 /// 合わせ目。組み上がると接する、2 枚のパネルの辺の組。
 #[derive(Clone, Copy, Debug)]
 pub struct Seam {
+    /// 1 枚目のパネルと、その辺の番号（頂点の番号と同じ。その頂点から次の頂点まで）。
     pub a: usize,
     pub edge_a: usize,
     pub b: usize,
@@ -87,13 +88,14 @@ pub struct Seam {
 /// `thin` は、同じ寸法で紙の厚みをほぼ 0 にした型紙。厚みがあると、接する辺どうしが紙 1 枚ぶん離れて、
 /// 見分けにくくなるため。辺の番号は厚みを変えても同じなので、見つけた組は元の型紙にそのまま使える。
 pub fn find_seams(thin: &Template) -> Vec<Seam> {
-    find_joints(thin, |panel| !panel.hidden_when_closed())
+    find_joints(thin, 1.0, |panel| !panel.hidden_when_closed())
 }
 
 /// 組み上がった形から、`include` で選んだパネルどうしの、接する辺の組を見つける。
-pub fn find_joints(thin: &Template, include: impl Fn(&Panel) -> bool) -> Vec<Seam> {
+/// `closing` は開け閉め（0 が開いた状態、1 が閉じた状態）。
+pub fn find_joints(thin: &Template, closing: f32, include: impl Fn(&Panel) -> bool) -> Vec<Seam> {
     const NEAR: f32 = 0.4;
-    let places = thin.transforms(1.0, 1.0);
+    let places = thin.transforms(1.0, closing);
     let visible: Vec<usize> = (0..thin.panels.len()).filter(|&i| include(&thin.panels[i])).collect();
     let corners: Vec<Vec<V3>> = thin.panels.iter().zip(&places).map(|(panel, place)| panel.outline.iter().map(|p| place.point([p[0], p[1], 0.0])).collect()).collect();
     let mut seams = Vec::new();
@@ -638,22 +640,25 @@ mod tests {
 
     #[test]
     fn a_seam_is_open_only_where_the_paper_does_not_continue() {
-        // ピロー型の上の端は、中央では持ち手へ続き、その左右では背面と合わさる。
+        // ピロー型の貼りしろの上の端は、中央では持ち手へ続き、その左右では、背中合わせの貼りしろの縁を越えて裏へ回る。
         let (len, height) = (180.0f32, 110.0f32);
         let tpl = Template::pillow(len, height, 0.5, 1.2);
         let surface = Surface::new(&tpl, &Template::pillow(len, height, 0.02, 1.2));
-        let (front, back, handle) = (index(&tpl, "正面"), index(&tpl, "背面"), index(&tpl, "正面の持ち手"));
-        assert!(has_seam(&tpl, &surface, "正面", "背面"));
+        let (fin, back_fin, handle) = (index(&tpl, "正面の貼りしろ"), index(&tpl, "背面の貼りしろ"), index(&tpl, "正面の持ち手"));
+        // 正面と背面は、上の端の全長が貼りしろへ続いているので、じかには合わさらない。
+        assert!(!has_seam(&tpl, &surface, "正面", "背面"));
+        assert!(has_seam(&tpl, &surface, "正面の貼りしろ", "背面の貼りしろ"));
+        let top = tpl.panels[fin].outline.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
         let reached = |u: f32| -> Vec<usize> {
-            let mut logo = Decal { panel: front, at: [0.0, 0.0], size: [16.0, 16.0], angle: 0.0 };
-            logo.set_center(&tpl, [u, height]);
+            let mut logo = Decal { panel: fin, at: [0.0, 0.0], size: [10.0, 10.0], angle: 0.0 };
+            logo.set_center(&tpl, [u, top]);
             surface.layout(&tpl, &logo).iter().map(|p| p.panel).collect()
         };
-        // 中央: 持ち手へ続く。背面へは行かない。
+        // 中央: 持ち手へ続く。裏の貼りしろへは行かない。
         let middle = reached(len * 0.5);
-        assert!(middle.contains(&handle) && !middle.contains(&back), "{middle:?}");
-        // 端のほう: 背面へ回り込む。持ち手へは行かない。
+        assert!(middle.contains(&handle) && !middle.contains(&back_fin), "{middle:?}");
+        // 端のほう: 裏の貼りしろへ回り込む。持ち手へは行かない。
         let side = reached(len * 0.12);
-        assert!(side.contains(&back) && !side.contains(&handle), "{side:?}");
+        assert!(side.contains(&back_fin) && !side.contains(&handle), "{side:?}");
     }
 }

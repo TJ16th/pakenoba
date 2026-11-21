@@ -43,6 +43,22 @@ pub enum Motion {
     GableCenter(f32),
     /// ゲーブル型の、屋根の裏へ折り込む三角形。組み立てで折った 90 度から、さらに折れるぶんを返す。
     GableWing(f32),
+    /// ゲーブル型の、側面の三角形と折り込む三角形の間の、斜めの折り線。山折り。値は `GableCenter` と同じ。
+    GableDiagonal(f32),
+}
+
+/// ゲーブル型の角で、側面の三角形と折り込む三角形が、斜めの折り線でなす角度（0 なら同じ平面）。
+/// 屋根の傾き `theta` と、側面の三角形の倒れ `gable_center_angle` から、2 枚の面の向きを求めて測る。
+fn gable_diagonal_angle(theta: f32, k: f32) -> f32 {
+    let psi = gable_center_angle(theta, k);
+    // 角を原点、正面の上の辺を x、上を y、奥を -z に取る。側面は x = 0 の面で、外向きが +x。
+    let roof_up = [0.0, theta.cos(), -theta.sin()];
+    let center_normal = [psi.cos(), psi.sin(), 0.0];
+    // 斜めの折り線の向き（側面の三角形の、底辺の中央の上にある頂点へ）。
+    let diagonal = normalize([-psi.sin(), psi.cos(), -k]);
+    // 折り込む三角形は、屋根の横の辺と、斜めの折り線を含む面。
+    let wing_normal = normalize(cross(diagonal, roof_up));
+    dot(center_normal, wing_normal).clamp(-1.0, 1.0).acos()
 }
 
 /// ゲーブル型の角では、屋根、折り込む三角形、側面の三角形の 3 枚が 1 点を中心につながって動く。
@@ -59,13 +75,14 @@ impl Motion {
             Motion::Follow(scale) => scale * theta,
             Motion::GableCenter(k) => gable_center_angle(theta, k),
             Motion::GableWing(k) => (-gable_center_angle(theta, k).sin() / k).clamp(-1.0, 1.0).acos() - std::f32::consts::FRAC_PI_2,
+            Motion::GableDiagonal(k) => -gable_diagonal_angle(theta, k),
         }
     }
 }
 
 impl Hinge {
     fn is_mountain(&self) -> bool {
-        self.angle < 0.0 || matches!(self.motion, Motion::Follow(scale) if scale < 0.0)
+        self.angle < 0.0 || matches!(self.motion, Motion::Follow(scale) if scale < 0.0) || matches!(self.motion, Motion::GableDiagonal(_))
     }
 }
 
@@ -119,6 +136,8 @@ pub enum Role {
     Flap,
     /// 内側へ折り込まれる面（ゲーブル型の屋根の裏へ入る三角形など）。組み上がると隠れる。
     Gusset,
+    /// 貼りしろ。2 枚を背中合わせに貼って口を閉じる縁（ピロー型の上の端）。外から見える。
+    Fin,
 }
 
 /// 開け口が、閉じた状態を何で保っているか。
@@ -148,7 +167,7 @@ impl Panel {
 
     /// 組み上がると隠れる部分（のりしろ、差し込みなど）か。
     pub fn hidden_when_closed(&self) -> bool {
-        self.role != Role::Face
+        !matches!(self.role, Role::Face | Role::Fin)
     }
 }
 
@@ -172,6 +191,8 @@ pub struct Template {
     pub open_angle: f32,
     /// 開け口。空なら、開け口が決まっていない（型紙の不備）。
     pub openings: Vec<Opening>,
+    /// 貼り合わせる面の組（パネルの番号）。のりしろと貼る相手、貼りしろどうし、など。
+    pub glued: Vec<(usize, usize)>,
 }
 
 /// 多角形の内側か。点から右へ伸ばした線が辺を横切る回数で判定する（へこんだ輪郭でも使える）。
@@ -184,6 +205,40 @@ pub fn inside(outline: &[P2], p: P2) -> bool {
         }
     }
     hit
+}
+
+/// 名前でパネルを探して、貼り合わせる面の組を作る。
+fn glued(panels: &[Panel], list: &[(&str, &str)]) -> Vec<(usize, usize)> {
+    let find = |name: &str| panels.iter().position(|p| p.name == name);
+    list.iter().filter_map(|&(a, b)| Some((find(a)?, find(b)?))).collect()
+}
+
+/// 多角形の辺を、辺ごとに決めた量だけ内側へ寄せる。辺 i は、頂点 i から次の頂点まで。
+/// `inward` は、頂点の並びが反時計回りなら 1、時計回りなら -1。
+fn inset_edges(points: &[P2], amount: &[f32], inward: f32) -> Vec<P2> {
+    let n = points.len();
+    // 寄せたあとの辺が乗る線（通る点と向き）。
+    let lines: Vec<(P2, P2)> = (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt().max(1e-9);
+            let dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+            let shift = amount[i] * inward;
+            ([a[0] - dir[1] * shift, a[1] + dir[0] * shift], dir)
+        })
+        .collect();
+    // 頂点 i は、前の辺と辺 i の交点。
+    (0..n)
+        .map(|i| {
+            let ((p, d), (q, e)) = (lines[(i + n - 1) % n], lines[i]);
+            let cross = d[0] * e[1] - d[1] * e[0];
+            if cross.abs() < 1e-6 {
+                return q;
+            }
+            let s = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / cross;
+            [p[0] + d[0] * s, p[1] + d[1] * s]
+        })
+        .collect()
 }
 
 /// 名前でパネルを探して、開け口の一覧を作る。
@@ -628,6 +683,99 @@ mod tests {
             let lid_point = m[index(&tpl, "上のフタ")].point([corner[0], corner[1], t]);
             let wall_point = m[1].point([u0 + 2.0 * side, h, t]);
             close(lid_point, [wall_point[0], wall_point[1] + t, wall_point[2]]);
+        }
+    }
+
+    #[test]
+    fn prism_tucks_go_inside_the_walls() {
+        let (side, h) = (70.0f32, 120.0f32);
+        for n in [3usize, 4, 5, 6, 8] {
+            for t in [0.5f32, 2.0] {
+                let tpl = Template::prism(n, side, h, t);
+                let m = tpl.transforms(1.0, 1.0);
+                let lid = index(&tpl, "上のフタ");
+                let tucks: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name == "上の差し込み").collect();
+                assert_eq!(tucks.len(), if n % 2 == 0 { 1 } else { 2 }, "{n} 角柱");
+                for &tuck in &tucks {
+                    let hinge = tpl.panels[tuck].hinge.as_ref().unwrap();
+                    assert_eq!(hinge.parent, lid);
+                    // 差し込みの先（つけ根から遠い 2 点の中央）。
+                    let mid = [(hinge.a[0] + hinge.b[0]) * 0.5, (hinge.a[1] + hinge.b[1]) * 0.5];
+                    let dir = [hinge.b[0] - hinge.a[0], hinge.b[1] - hinge.a[1]];
+                    let len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt();
+                    let off_hinge = |p: &P2| ((p[0] - hinge.a[0]) * dir[1] - (p[1] - hinge.a[1]) * dir[0]) / len;
+                    let ends: Vec<P2> = tpl.panels[tuck].outline.iter().copied().filter(|p| off_hinge(p).abs() > 1.0).collect();
+                    assert_eq!(ends.len(), 2);
+                    let far = [(ends[0][0] + ends[1][0]) * 0.5, (ends[0][1] + ends[1][1]) * 0.5];
+                    let depth = off_hinge(&far).abs();
+                    let tip = [mid[0] + (far[0] - mid[0]) * 0.8, mid[1] + (far[1] - mid[1]) * 0.8];
+                    // 差し込みが入る側面を探す: 差し込みの外側の面が、その側面の内側の面にぴったり付く。
+                    let outer = m[tuck].point([tip[0], tip[1], 0.0]);
+                    let touching = (1..n).filter(|&wall| {
+                        let o = &tpl.panels[wall].outline;
+                        let c = [(o[0][0] + o[2][0]) * 0.5, h * 0.5];
+                        let (p0, p1) = (m[wall].point([c[0], c[1], t]), m[wall].point([c[0], c[1], t + 1.0]));
+                        let normal = sub(p1, p0);
+                        dot(sub(outer, p0), normal).abs() < 0.05
+                    }).count();
+                    assert!(touching >= 1, "{n} 角柱、厚み {t}: 差し込みが側面の内側に付いていない");
+                    // 差し込みは、フタから下へ向かう（箱の中へ入る）。
+                    let top = m[lid].point([mid[0], mid[1], t]);
+                    assert!(top[1] - outer[1] > depth * 0.5, "{n} 角柱: 差し込みが下を向いていない {top:?} {outer:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gable_far_wing_stays_on_the_back_roof() {
+        let (w, d, h, roof) = (160.0f32, 100.0f32, 110.0f32, 45.0f32);
+        for t in [0.02f32, 0.5] {
+            let tpl = Template::gable(w, d, h, roof, t);
+            let glue = (0.8 * (d - t)).clamp(4.0, 15.0);
+            let (u_l, u_f) = (glue, glue + (d - t));
+            let u_b = u_f + w + d;
+            let slope = ((d * 0.5).powi(2) + roof * roof).sqrt();
+            let ridge = h + slope;
+            let back_roof = index(&tpl, "背面の屋根");
+            let tab = index(&tpl, "屋根ののりしろ");
+            let wing = tpl.panels[tab].hinge.as_ref().unwrap().parent;
+            assert_eq!(tpl.panels[wing].name, "左の折り込み");
+            // 開け閉めのどの段階でも、左奥の折り込みの縦の辺は、背面の屋根の端の辺と重なる（紙の厚みの範囲で）。
+            for closing in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+                let m = tpl.transforms(1.0, closing);
+                for v in [h + 5.0, (h + ridge) * 0.5, ridge - 5.0] {
+                    let on_wing = m[wing].point([u_l, v, t]);
+                    let on_roof = m[back_roof].point([u_b + w, v, t]);
+                    let gap = crate::math::length(sub(on_wing, on_roof));
+                    assert!(gap < 2.5 * t + 0.3, "厚み {t}、閉じ具合 {closing}、高さ {v}: {gap} mm 離れている");
+                    // のりしろは、背面の屋根の内側の面に沿っている。
+                    let on_tab = m[tab].point([u_l - 4.0, v, 0.0]);
+                    let (p0, p1) = (m[back_roof].point([u_b + w - 4.0, v, t]), m[back_roof].point([u_b + w - 4.0, v, t + 1.0]));
+                    let off = dot(sub(on_tab, p0), sub(p1, p0));
+                    assert!(off.abs() < 2.5 * t + 0.3, "厚み {t}、閉じ具合 {closing}: のりしろが屋根から {off} mm 離れている");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pillow_fins_meet_along_the_whole_top_edge() {
+        let (len, height, t) = (180.0f32, 110.0f32, 0.5f32);
+        for bulge in [0.5f32, 1.0, 1.4] {
+            let tpl = Template::pillow(len, height, t, bulge);
+            let m = tpl.transforms(1.0, 1.0);
+            let (front, back) = (index(&tpl, "正面の貼りしろ"), index(&tpl, "背面の貼りしろ"));
+            // 貼りしろは、端から端まで、内側の面どうしが紙の厚みの範囲で重なる。まっすぐ上を向いている。
+            for u in [5.0, len * 0.5, len - 5.0] {
+                let a = m[front].point([u, height + 3.0, t]);
+                let b = m[back].point([u, -height - 3.0, t]);
+                assert!(crate::math::length(sub(a, b)) < 2.0 * t, "ふくらみ {bulge}: 貼りしろが離れている");
+                let up = sub(m[front].point([u, height + 4.0, t]), m[front].point([u, height + 1.0, t]));
+                // 巻きはじめの線から見て、2 枚が合わさる平面の向き（ふくらみの半分だけ手前へ起こした向き）。
+                let expected = [0.0, 3.0 * (bulge * 0.5).cos(), 3.0 * (bulge * 0.5).sin()];
+                close(up, expected);
+            }
         }
     }
 
