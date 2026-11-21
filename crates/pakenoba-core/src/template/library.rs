@@ -8,6 +8,10 @@
 
 use super::*;
 
+/// 差し込み箱や角柱のフタを、お客さんが開けきったときに、閉じた状態から起こす角度。
+/// 垂直（90 度）より少し先まで倒れる。
+const LID_LIFT: f32 = 110.0 * std::f32::consts::PI / 180.0;
+
 impl Template {
     /// 差し込み式の箱（キャラメル箱）。寸法は内寸（mm）。
     ///
@@ -68,14 +72,17 @@ impl Template {
             // フタ。背面につながり、奥行きより紙 1 枚ぶん短い。
             let lid_far = lid_edge + sign * (d - t);
             let lid_index = panels.len();
-            panels.push(Panel::flat(names[2], rect(u_b, lid_edge, u_b + w, lid_far), Some(Hinge { parent: 3, a: [u_b, lid_edge], b: [u_b + w, lid_edge], angle: quarter, window: lid_window, motion: Motion::Fixed }), Role::Face));
+            // お客さんが開けるのは、上のフタ。差し込みは、正面の内側に沿って抜ける。
+            let clear = (tuck / (d - t)).min(1.0).asin();
+            let (lid_motion, tuck_motion) = if sign > 0.0 { (Motion::Lift(LID_LIFT), Motion::Slide { lift: LID_LIFT, clear }) } else { (Motion::Fixed, Motion::Fixed) };
+            panels.push(Panel::flat(names[2], rect(u_b, lid_edge, u_b + w, lid_far), Some(Hinge { parent: 3, a: [u_b, lid_edge], b: [u_b + w, lid_edge], angle: quarter, window: lid_window, motion: lid_motion }), Role::Face));
 
             // 差し込み（ベロ）。フタの先につながり、正面の内側に入る。
             let (s0, s1) = (u_b + 0.5, u_b + w - 0.5);
             panels.push(Panel::flat(
                 names[3],
                 ccw(vec![[s0, lid_far], [s1, lid_far], [s1 - tuck_taper, lid_far + sign * tuck], [s0 + tuck_taper, lid_far + sign * tuck]]),
-                Some(Hinge { parent: lid_index, a: [s0, lid_far], b: [s1, lid_far], angle: quarter, window: tuck_window, motion: Motion::Fixed }),
+                Some(Hinge { parent: lid_index, a: [s0, lid_far], b: [s1, lid_far], angle: quarter, window: tuck_window, motion: tuck_motion }),
                 Role::Tuck,
             ));
         }
@@ -158,7 +165,9 @@ impl Template {
             let amount: Vec<f32> = (0..n).map(|i| if tuck_walls.contains(&i) { t } else { 0.0 }).collect();
             let lid = inset_edges(&lid, &amount, sign);
             let lid_index = panels.len();
-            panels.push(Panel::flat(lid_name, ccw(lid.clone()), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: Motion::Fixed }), Role::Face));
+            // お客さんが開けるのは、上のフタ。
+            let top = sign > 0.0;
+            panels.push(Panel::flat(lid_name, ccw(lid.clone()), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: if top { Motion::Lift(LID_LIFT) } else { Motion::Fixed } }), Role::Face));
             // 差し込み（ベロ）。フタの辺から外へ伸び、折って側面の内側に入る。
             for &i in &tuck_walls {
                 let (a, b) = (lid[i], lid[(i + 1) % n]);
@@ -169,7 +178,10 @@ impl Template {
                 let (a, b) = ([a[0] + dir[0] * 0.5, a[1] + dir[1] * 0.5], [b[0] - dir[0] * 0.5, b[1] - dir[1] * 0.5]);
                 let taper = (len * 0.15).min(tuck * 0.6);
                 let tip = |p: P2, along: f32| [p[0] + dir[0] * along + out[0] * tuck, p[1] + dir[1] * along + out[1] * tuck];
-                panels.push(Panel::flat(tuck_name, ccw(vec![a, b, tip(b, -taper), tip(a, taper)]), Some(Hinge { parent: lid_index, a, b, angle: quarter, window: tuck_window, motion: Motion::Fixed }), Role::Tuck));
+                // 差し込みが側面の内側から抜けきるのは、フタのつけ根にいちばん近い端が、差し込みの高さだけ上がったとき。
+                let nearest = (a[1] - lid_edge).abs().min((b[1] - lid_edge).abs()).max(1e-3);
+                let motion = if top { Motion::Slide { lift: LID_LIFT, clear: (tuck / nearest).min(1.0).asin() } } else { Motion::Fixed };
+                panels.push(Panel::flat(tuck_name, ccw(vec![a, b, tip(b, -taper), tip(a, taper)]), Some(Hinge { parent: lid_index, a, b, angle: quarter, window: tuck_window, motion }), Role::Tuck));
             }
         }
 

@@ -45,6 +45,12 @@ pub enum Motion {
     GableWing(f32),
     /// ゲーブル型の、側面の三角形と折り込む三角形の間の、斜めの折り線。山折り。値は `GableCenter` と同じ。
     GableDiagonal(f32),
+    /// フタ。お客さんが開けると、折りがこの角度（ラジアン）ぶん戻る。
+    Lift(f32),
+    /// フタの先の差し込み。フタが開きはじめる間は、側面の内側に沿ってまっすぐ抜ける
+    /// （フタが起きたぶんだけ余計に折れて、向きを保つ）。抜けきったあとは、もとの折りへ戻っていく。
+    /// `lift` はフタが戻る角度、`clear` は差し込みが抜けきるときのフタの角度。
+    Slide { lift: f32, clear: f32 },
 }
 
 /// ゲーブル型の角で、側面の三角形と折り込む三角形が、斜めの折り線でなす角度（0 なら同じ平面）。
@@ -69,13 +75,19 @@ fn gable_center_angle(theta: f32, k: f32) -> f32 {
 }
 
 impl Motion {
-    fn angle(self, theta: f32) -> f32 {
+    /// 開け閉めで動くぶんの角度。`theta` は主役の角度、`opened` は開いた度合い（0 が閉じた状態、1 が開いた状態）。
+    fn angle(self, theta: f32, opened: f32) -> f32 {
         match self {
             Motion::Fixed => 0.0,
             Motion::Follow(scale) => scale * theta,
             Motion::GableCenter(k) => gable_center_angle(theta, k),
             Motion::GableWing(k) => (-gable_center_angle(theta, k).sin() / k).clamp(-1.0, 1.0).acos() - std::f32::consts::FRAC_PI_2,
             Motion::GableDiagonal(k) => -gable_diagonal_angle(theta, k),
+            Motion::Lift(back) => -back * opened,
+            Motion::Slide { lift, clear } => {
+                let lifted = lift * opened;
+                if lifted <= clear { lifted } else { clear * (1.0 - (lifted - clear) / (lift - clear).max(1e-3)) }
+            }
         }
     }
 }
@@ -426,8 +438,15 @@ impl Template {
     /// 折り線の今の角度。組み立てで折るぶんと、開け閉めで動くぶんの合計。
     /// 開け閉めの動きは、組み立てが終わってから効く。
     fn hinge_angle(&self, hinge: &Hinge, fold: f32, closing: f32) -> f32 {
-        let theta = self.open_angle * closing.clamp(0.0, 1.0) * progress((0.95, 1.0), fold);
-        hinge.angle * progress(hinge.window, fold) + hinge.motion.angle(theta)
+        let assembled = progress((0.95, 1.0), fold);
+        let theta = self.open_angle * closing.clamp(0.0, 1.0) * assembled;
+        let opened = (1.0 - closing.clamp(0.0, 1.0)) * assembled;
+        hinge.angle * progress(hinge.window, fold) + hinge.motion.angle(theta, opened)
+    }
+
+    /// お客さんが開け閉めする動きを持つ型か。
+    pub fn can_open(&self) -> bool {
+        self.panels.iter().filter_map(|panel| panel.hinge.as_ref()).any(|hinge| !matches!(hinge.motion, Motion::Fixed))
     }
 
     /// 各パネルの置かれ方。`fold` は組み立ての進み具合（0 が展開図、1 が組み上がった箱）。
@@ -684,6 +703,59 @@ mod tests {
             let wall_point = m[1].point([u0 + 2.0 * side, h, t]);
             close(lid_point, [wall_point[0], wall_point[1] + t, wall_point[2]]);
         }
+    }
+
+    /// 上のフタを開ける間、差し込みは正面を突き抜けず、開けきるとフタが箱の上へ起きる。
+    #[test]
+    fn 差し込み箱のフタは_差し込みが正面を突き抜けずに開く() {
+        for (w, d, h, t) in [(W, D, H, T), (120.0, 60.0, 160.0, 0.5), (60.0, 20.0, 200.0, 0.5), (200.0, 150.0, 50.0, 1.0)] {
+            let tpl = Template::tuck_box(w, d, h, t);
+            assert!(tpl.can_open());
+            let (lid, tuck) = (index(&tpl, "上のフタ"), index(&tpl, "上の差し込み"));
+            // 閉じた状態は、開け閉めの動きを入れる前と同じ（フタは水平、差し込みは下向き）。
+            let closed = tpl.transforms(1.0, 1.0);
+            let far = tpl.panels[lid].outline.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+            let on_lid = closed[lid].point([tpl.panels[lid].outline[0][0], far, 0.0]);
+            // フタは左右のフラップの上に乗るので、外の面は、側面の上の端より紙 2 枚ぶん高い。
+            assert!((on_lid[1] - (h + 2.0 * t)).abs() < 0.05, "閉じたフタは水平: {on_lid:?}");
+            for step in 0..=40 {
+                let opened = step as f32 / 40.0;
+                let now = tpl.transforms(1.0, 1.0 - opened);
+                for &p in &tpl.panels[tuck].outline {
+                    for n in [0.0, t] {
+                        let q = now[tuck].point([p[0], p[1], n]);
+                        // 正面の上の端より下にある間は、正面の紙（n が 0 から t）の内側にいる。
+                        if q[1] < h {
+                            assert!(q[2] > t - 0.35, "開き具合 {opened} で、差し込みが正面を突き抜ける: {q:?}（厚み {t}）");
+                        }
+                    }
+                }
+            }
+            // 開けきると、フタの先は箱の上の端より上にある。底のフタは動かない。
+            let open = tpl.transforms(1.0, 0.0);
+            let tip = open[lid].point([tpl.panels[lid].outline[0][0], far, 0.0]);
+            assert!(tip[1] > h + d * 0.8, "開けたフタは起きている: {tip:?}");
+            let bottom = index(&tpl, "底のフタ");
+            let b = tpl.panels[bottom].outline[0];
+            close(open[bottom].point([b[0], b[1], 0.0]), closed[bottom].point([b[0], b[1], 0.0]));
+        }
+    }
+
+    #[test]
+    fn 角柱のフタも開く() {
+        for n in [3, 5, 6, 8] {
+            let tpl = Template::prism(n, 70.0, 160.0, 0.5);
+            assert!(tpl.can_open(), "{n} 角柱");
+            let lid = index(&tpl, "上のフタ");
+            let top = |closing: f32| {
+                let now = tpl.transforms(1.0, closing);
+                tpl.panels[lid].outline.iter().map(|p| now[lid].point([p[0], p[1], 0.0])[1]).fold(f32::NEG_INFINITY, f32::max)
+            };
+            assert!(top(0.0) > top(1.0) + 30.0, "{n} 角柱のフタが起きない: {} → {}", top(1.0), top(0.0));
+        }
+        // 開け閉めの動きを持たない型は、そう答える。
+        assert!(!Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians()).can_open());
+        assert!(Template::gable(160.0, 100.0, 110.0, 45.0, 0.5).can_open());
     }
 
     #[test]
