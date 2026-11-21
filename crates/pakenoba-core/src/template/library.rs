@@ -12,6 +12,10 @@ use super::*;
 /// 垂直（90 度）より少し先まで倒れる。
 const LID_LIFT: f32 = 110.0 * std::f32::consts::PI / 180.0;
 
+/// フタの下の内側のフラップを、お客さんが開けきったときに、閉じた状態から起こす角度。
+/// 垂直より少し外へ開く。フタの倒れ（垂直から 20 度）より小さくしておくと、フタにぶつからない。
+const FLAP_LIFT: f32 = 100.0 * std::f32::consts::PI / 180.0;
+
 impl Template {
     /// 差し込み式の箱（キャラメル箱）。寸法は内寸（mm）。
     ///
@@ -64,7 +68,8 @@ impl Template {
                 panels.push(Panel::flat(
                     name,
                     ccw(vec![[u0, side_edge], [u1, side_edge], [u1 - taper, side_edge + sign * dust], [u0 + taper, side_edge + sign * dust]]),
-                    Some(Hinge { parent, a: [u0, side_edge], b: [u1, side_edge], angle: quarter, window: dust_window, motion: Motion::Fixed }),
+                    // お客さんが開けるのは、上だけ。フタを起こしたあとで、左右のフラップを外へ起こす。
+                    Some(Hinge { parent, a: [u0, side_edge], b: [u1, side_edge], angle: quarter, window: dust_window, motion: if sign > 0.0 { Motion::Flap(FLAP_LIFT) } else { Motion::Fixed } }),
                     Role::Flap,
                 ));
             }
@@ -150,7 +155,7 @@ impl Template {
                 panels.push(Panel::flat(
                     flap_name,
                     ccw(vec![[a, side_edge], [b, side_edge], [b - inset, side_edge + sign * flap], [a + inset, side_edge + sign * flap]]),
-                    Some(Hinge { parent: wall, a: [a, side_edge], b: [b, side_edge], angle: quarter, window: flap_window, motion: Motion::Fixed }),
+                    Some(Hinge { parent: wall, a: [a, side_edge], b: [b, side_edge], angle: quarter, window: flap_window, motion: if sign > 0.0 { Motion::Flap(FLAP_LIFT) } else { Motion::Fixed } }),
                     Role::Flap,
                 ));
             }

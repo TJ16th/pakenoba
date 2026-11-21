@@ -825,9 +825,9 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // お客さんが開け閉めするアニメーション。約 0.45 秒。
+        // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         if let Some(target) = self.open_to {
-            let step = ui.input(|i| i.stable_dt).min(0.05) / 0.45;
+            let step = ui.input(|i| i.stable_dt).min(0.05) / 0.6;
             if (target - self.open).abs() <= step {
                 self.open = target;
                 self.open_to = None;

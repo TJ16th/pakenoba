@@ -51,6 +51,18 @@ pub enum Motion {
     /// （フタが起きたぶんだけ余計に折れて、向きを保つ）。抜けきったあとは、もとの折りへ戻っていく。
     /// `lift` はフタが戻る角度、`clear` は差し込みが抜けきるときのフタの角度。
     Slide { lift: f32, clear: f32 },
+    /// フタの下の、内側のフラップ。フタが起ききったあとに開く。折りがこの角度（ラジアン）ぶん戻る。
+    Flap(f32),
+}
+
+/// 開け閉めの前半で、フタが開ききる。`opened` がこの値になったとき、フタは開ききっている。
+const LID_DONE: f32 = 0.62;
+/// 開け閉めの後半で、内側のフラップが開く。フタが垂直を過ぎてから動きはじめる（それより前だと、フタにぶつかる）。
+const FLAP_STAGE: (f32, f32) = (0.52, 1.0);
+
+/// フタの開き具合（0 が閉じた状態、1 が開ききった状態）。
+fn lid_stage(opened: f32) -> f32 {
+    (opened / LID_DONE).clamp(0.0, 1.0)
 }
 
 /// ゲーブル型の角で、側面の三角形と折り込む三角形が、斜めの折り線でなす角度（0 なら同じ平面）。
@@ -83,11 +95,12 @@ impl Motion {
             Motion::GableCenter(k) => gable_center_angle(theta, k),
             Motion::GableWing(k) => (-gable_center_angle(theta, k).sin() / k).clamp(-1.0, 1.0).acos() - std::f32::consts::FRAC_PI_2,
             Motion::GableDiagonal(k) => -gable_diagonal_angle(theta, k),
-            Motion::Lift(back) => -back * opened,
+            Motion::Lift(back) => -back * lid_stage(opened),
             Motion::Slide { lift, clear } => {
-                let lifted = lift * opened;
+                let lifted = lift * lid_stage(opened);
                 if lifted <= clear { lifted } else { clear * (1.0 - (lifted - clear) / (lift - clear).max(1e-3)) }
             }
+            Motion::Flap(back) => -back * progress(FLAP_STAGE, opened),
         }
     }
 }
@@ -738,6 +751,55 @@ mod tests {
             let bottom = index(&tpl, "底のフタ");
             let b = tpl.panels[bottom].outline[0];
             close(open[bottom].point([b[0], b[1], 0.0]), closed[bottom].point([b[0], b[1], 0.0]));
+        }
+    }
+
+    /// 開け閉めのどの途中でも、内側のフラップが、フタを突き抜けないことを確かめる。開けきったときに、フラップが起きていることも見る。
+    fn flaps_open_after_the_lid(tpl: &Template, label: &str) {
+        let t = tpl.thickness;
+        let lid = index(tpl, "上のフタ");
+        let flaps: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with("上の") && tpl.panels[i].name.ends_with("フラップ")).collect();
+        assert!(!flaps.is_empty(), "{label}");
+        let top = |now: &[Placement], i: usize| tpl.panels[i].outline.iter().map(|p| now[i].point([p[0], p[1], 0.0])[1]).fold(f32::NEG_INFINITY, f32::max);
+        let closed = tpl.transforms(1.0, 1.0);
+        for step in 0..=60 {
+            let opened = step as f32 / 60.0;
+            let now = tpl.transforms(1.0, 1.0 - opened);
+            // フタの内側の面（紙の座標で、厚みの向きが t の側）の、つけ根の上の 1 点。内側へ向かう向きと、つけ根から先へ向かう向き。
+            let root = tpl.panels[lid].outline.iter().copied().fold([0.0, f32::INFINITY], |m, p| if p[1] < m[1] { p } else { m });
+            let origin = now[lid].point([root[0], root[1], t]);
+            let inward = sub(now[lid].point([root[0], root[1], t + 1.0]), origin);
+            let outward_along = sub(now[lid].point([root[0], root[1] + 1.0, t]), origin);
+            for &flap in &flaps {
+                for &p in &tpl.panels[flap].outline {
+                    for n in [0.0, t] {
+                        let q = now[flap].point([p[0], p[1], n]);
+                        // フタがあるのは、つけ根から先だけ。
+                        if dot(sub(q, origin), outward_along) > 0.0 {
+                            assert!(dot(sub(q, origin), inward) > -0.35, "{label}: 開き具合 {opened} で、{} がフタを突き抜ける", tpl.panels[flap].name);
+                        }
+                    }
+                }
+            }
+        }
+        let open = tpl.transforms(1.0, 0.0);
+        for &flap in &flaps {
+            assert!(top(&open, flap) > top(&closed, flap) + 2.0, "{label}: {} が起きない", tpl.panels[flap].name);
+        }
+        // 底のフラップは動かない。
+        for i in (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with("底の")) {
+            let p = tpl.panels[i].outline[0];
+            close(open[i].point([p[0], p[1], 0.0]), closed[i].point([p[0], p[1], 0.0]));
+        }
+    }
+
+    #[test]
+    fn 内側のフラップは_フタが起きたあとに開く() {
+        for (w, d, h, t) in [(W, D, H, T), (200.0, 160.0, 85.0, 0.5), (60.0, 20.0, 200.0, 0.5), (200.0, 150.0, 50.0, 2.0)] {
+            flaps_open_after_the_lid(&Template::tuck_box(w, d, h, t), &format!("差し込み箱 {w}×{d}×{h}"));
+        }
+        for n in [5, 6, 8] {
+            flaps_open_after_the_lid(&Template::prism(n, 70.0, 160.0, 0.5), &format!("{n} 角柱"));
         }
     }
 
