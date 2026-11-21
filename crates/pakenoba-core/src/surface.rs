@@ -222,17 +222,20 @@ pub struct Surface {
     links: Vec<Vec<Link>>,
     pub seams: Vec<Seam>,
     /// パネルごとの「上」の向き（`Decal::angle` と同じ測り方。この角度の柄は、その面でまっすぐ立って見える）。
-    up: Vec<f32>,
+    /// 1 つめが紙の表（箱の外側）、2 つめが紙の裏（箱の内側）。
+    up: Vec<[f32; 2]>,
 }
 
-/// 組み上がった箱での、パネルごとの「上」の向き。
+/// 組み上がった箱での、パネルごとの「上」の向き。紙の表（箱の外側）と、裏（箱の内側）のそれぞれ。
 ///
-/// - 立っている面と、斜めの面（屋根など）: 箱の上へ向かう向き。
-/// - 上を向いた面（天面）: 奥へ向かう向き。正面から見下ろして、まっすぐ読める。
-/// - 下を向いた面（底面）: 手前へ向かう向き。箱を手前へ起こして、まっすぐ読める。
+/// - 立っている面と、斜めの面（屋根など）: 箱の上へ向かう向き。表も裏も同じ。
+/// - 上を向いた面（天面の外側、底の内側）: 奥へ向かう向き。正面から見下ろして、まっすぐ読める。
+/// - 下を向いた面（底面の外側、フタの裏）: 手前へ向かう向き。箱を手前へ起こして、まっすぐ読める。
+///   フタの裏では、フタを奥へ開けて立てたときに、上になる向きでもある。
 ///
+/// 水平な面では、表と裏で、向いている側が逆になる。だから「上」も逆になる。
 /// 丸めたパネルでは、パネルの中央での向きで決める。
-fn face_ups(tpl: &Template) -> Vec<f32> {
+fn face_ups(tpl: &Template) -> Vec<[f32; 2]> {
     let world = tpl.world_at(1.0);
     let frames: Vec<Affine> = tpl
         .transforms(1.0, 1.0)
@@ -253,13 +256,15 @@ fn face_ups(tpl: &Template) -> Vec<f32> {
         .zip(&centers)
         .map(|(frame, center)| {
             let (ex, ey) = (frame.vector([1.0, 0.0, 0.0]), frame.vector([0.0, 1.0, 0.0]));
+            let angle = |u: P2| if len2(u) < 1e-3 { 0.0 } else { (-u[0]).atan2(u[1]) };
             // 箱の上（Y）を、面の中へ映す。ほぼ水平な面では向きが決まらないので、奥か手前を使う。
-            let mut u = [ex[1], ey[1]];
-            if len2(u) < 0.35 {
-                let depth = if center[1] >= middle { -1.0 } else { 1.0 };
-                u = [ex[2] * depth, ey[2] * depth];
+            let u = [ex[1], ey[1]];
+            if len2(u) >= 0.35 {
+                return [angle(u); 2];
             }
-            if len2(u) < 1e-3 { 0.0 } else { (-u[0]).atan2(u[1]) }
+            // 箱の上半分にある水平な面は、外側が上を向き、内側が下を向いている。下半分は、その逆。
+            let depth = if center[1] >= middle { -1.0 } else { 1.0 };
+            [angle([ex[2] * depth, ey[2] * depth]), angle([-ex[2] * depth, -ey[2] * depth])]
         })
         .collect()
 }
@@ -364,9 +369,9 @@ impl Surface {
         })
     }
 
-    /// そのパネルの「上」の向き（`Decal::angle` と同じ測り方）。
-    pub fn up(&self, panel: usize) -> f32 {
-        self.up.get(panel).copied().unwrap_or(0.0)
+    /// そのパネルの「上」の向き（`Decal::angle` と同じ測り方）。`back` が真なら、紙の裏（箱の内側の面）での向き。
+    pub fn up(&self, panel: usize, back: bool) -> f32 {
+        self.up.get(panel).map_or(0.0, |up| up[back as usize])
     }
 
     /// つかんだ柄を、立体の上の別の点へ動かす。`grab` は、柄の座標でのつかんだ位置。
@@ -377,11 +382,13 @@ impl Surface {
     /// 3 つの面が集まる角のまわりでは、絵をどの辺でも途切れさせずに運ぶと、一周で 90 度回ってしまう
     /// （平らに開けない角だから）。それを避けるかわりに、側面から天面へ移るときのように、
     /// 面の「上」どうしが続いていない辺では、またいだところで向きが切り替わる。
-    pub fn drag_on_solid(&self, tpl: &Template, decal: &mut Decal, panel: usize, at: P2, grab: P2) {
+    ///
+    /// `back` が真なら、紙の裏（箱の内側の面）に置いた柄。内側の面の「上」を使う。
+    pub fn drag_on_solid(&self, tpl: &Template, decal: &mut Decal, back: bool, panel: usize, at: P2, grab: P2) {
         if tpl.panels[panel].hidden_when_closed() {
             return;
         }
-        let angle = decal.angle - self.up(decal.panel) + self.up(panel);
+        let angle = decal.angle - self.up(decal.panel, back) + self.up(panel, back);
         // 行ったり来たりしても値が少しずつずれないように、-180〜180 度に収める。
         let angle = (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         let angle = if panel == decal.panel { decal.angle } else { angle };
@@ -676,10 +683,14 @@ mod tests {
         }
     }
 
-    /// 柄の「上」が、組み上がった箱の中で向いている向き。
-    fn up_in_box(tpl: &Template, decal: &Decal) -> V3 {
-        let frame = tpl.world_at(1.0).then_after(&tpl.transforms(1.0, 1.0)[decal.panel].at(decal.center(tpl)));
+    /// 柄の「上」が、組み上がった箱の中で向いている向き。`closing` は開け閉め（1 が閉じた状態、0 が開けた状態）。
+    fn up_when(tpl: &Template, decal: &Decal, closing: f32) -> V3 {
+        let frame = tpl.world_at(1.0).then_after(&tpl.transforms(1.0, closing)[decal.panel].at(decal.center(tpl)));
         frame.vector([-decal.angle.sin(), decal.angle.cos(), 0.0])
+    }
+
+    fn up_in_box(tpl: &Template, decal: &Decal) -> V3 {
+        up_when(tpl, decal, 1.0)
     }
 
     /// 角度の差（-π〜π）。
@@ -696,7 +707,7 @@ mod tests {
         for (name, direction) in expected {
             let panel = index(&tpl, name);
             let at = Decal { panel, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
-            surface.drag_on_solid(&tpl, &mut logo, panel, at, [0.0, 0.0]);
+            surface.drag_on_solid(&tpl, &mut logo, false, panel, at, [0.0, 0.0]);
             assert_eq!(logo.panel, panel);
             assert!(dot(up_in_box(&tpl, &logo), direction) > 0.999, "{name}: {:?}", up_in_box(&tpl, &logo));
         }
@@ -707,22 +718,52 @@ mod tests {
         for (tpl, thin) in [(Template::tuck_box(200.0, 160.0, 85.0, 0.5), Template::tuck_box(200.0, 160.0, 85.0, 0.02)), (Template::prism(6, 70.0, 160.0, 0.5), Template::prism(6, 70.0, 160.0, 0.02)), (Template::gable(160.0, 100.0, 110.0, 45.0, 0.5), Template::gable(160.0, 100.0, 110.0, 45.0, 0.02))] {
             let surface = Surface::new(&tpl, &thin);
             let visible: Vec<usize> = (0..tpl.panels.len()).filter(|&i| !tpl.panels[i].hidden_when_closed()).collect();
-            // 斜めに回した柄で、見えている面をでたらめな順に 400 回たどる。
-            let mut logo = Decal { panel: visible[0], at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.3 };
-            let mut seen: Vec<Option<f32>> = vec![None; tpl.panels.len()];
-            seen[logo.panel] = Some(logo.angle);
-            let mut state = 99u32;
-            for _ in 0..400 {
-                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                let panel = visible[(state >> 16) as usize % visible.len()];
-                let at = Decal { panel, at: [0.3, 0.6], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
-                surface.drag_on_solid(&tpl, &mut logo, panel, at, [4.0, -3.0]);
-                match seen[panel] {
-                    Some(first) => assert!(turn(logo.angle, first).abs() < 1e-3, "{} で向きが変わった", tpl.panels[panel].name),
-                    None => seen[panel] = Some(logo.angle),
+            // 斜めに回した柄で、見えている面をでたらめな順に 400 回たどる。表の柄でも、裏の柄でも。
+            for back in [false, true] {
+                let mut logo = Decal { panel: visible[0], at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.3 };
+                let mut seen: Vec<Option<f32>> = vec![None; tpl.panels.len()];
+                seen[logo.panel] = Some(logo.angle);
+                let mut state = 99u32;
+                for _ in 0..400 {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let panel = visible[(state >> 16) as usize % visible.len()];
+                    let at = Decal { panel, at: [0.3, 0.6], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+                    surface.drag_on_solid(&tpl, &mut logo, back, panel, at, [4.0, -3.0]);
+                    match seen[panel] {
+                        Some(first) => assert!(turn(logo.angle, first).abs() < 1e-3, "{} で向きが変わった", tpl.panels[panel].name),
+                        None => seen[panel] = Some(logo.angle),
+                    }
                 }
             }
         }
+    }
+
+    #[test]
+    fn 箱の内側でも_開けて見える向きにそろって立つ() {
+        let (tpl, surface) = tuck(0.5);
+        // 背面の内側に、まっすぐ立てた柄。
+        let mut logo = Decal { panel: index(&tpl, "背面"), at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.0 };
+        assert!(dot(up_in_box(&tpl, &logo), [0.0, 1.0, 0.0]) > 0.999);
+        let center = |name: &str| Decal { panel: index(&tpl, name), at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+
+        // フタの裏へ運ぶ。フタを開けて立てたとき、上を向いている（閉じた状態では、手前を向いている）。
+        surface.drag_on_solid(&tpl, &mut logo, true, index(&tpl, "上のフタ"), center("上のフタ"), [0.0, 0.0]);
+        assert!(dot(up_when(&tpl, &logo, 0.0), [0.0, 1.0, 0.0]) > 0.9, "開けたフタの裏: {:?}", up_when(&tpl, &logo, 0.0));
+        assert!(dot(up_in_box(&tpl, &logo), [0.0, 0.0, 1.0]) > 0.999);
+        // 表の柄なら、同じフタで逆（奥が上）。
+        assert!(turn(surface.up(logo.panel, true), surface.up(logo.panel, false)).abs() > 3.0);
+
+        // 底の内側へ運ぶ。上からのぞき込んで読めるように、奥が上。
+        surface.drag_on_solid(&tpl, &mut logo, true, index(&tpl, "底のフタ"), center("底のフタ"), [0.0, 0.0]);
+        assert!(dot(up_in_box(&tpl, &logo), [0.0, 0.0, -1.0]) > 0.999);
+
+        // 立っている面の内側は、表と同じで、箱の上が上。背面へ戻れば、はじめの向きに戻る。
+        for name in ["正面", "左側面", "右側面", "背面"] {
+            surface.drag_on_solid(&tpl, &mut logo, true, index(&tpl, name), center(name), [0.0, 0.0]);
+            assert!(dot(up_in_box(&tpl, &logo), [0.0, 1.0, 0.0]) > 0.999, "{name}");
+            assert!(turn(surface.up(logo.panel, true), surface.up(logo.panel, false)).abs() < 1e-4);
+        }
+        assert!(turn(logo.angle, 0.0).abs() < 1e-4);
     }
 
     #[test]
@@ -734,7 +775,7 @@ mod tests {
             for name in ["上のフタ", "右側面", "正面"] {
                 let panel = index(&tpl, name);
                 let at = Decal { panel, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
-                surface.drag_on_solid(&tpl, &mut logo, panel, at, [0.0, 0.0]);
+                surface.drag_on_solid(&tpl, &mut logo, false, panel, at, [0.0, 0.0]);
             }
             assert!(turn(logo.angle, 0.0).abs() < 1e-4, "{}", logo.angle);
         }
@@ -747,7 +788,7 @@ mod tests {
         let mut logo = Decal { panel: front, at: [0.5, 0.97], size: [40.0, 40.0], angle: 0.0 };
         let before = surface.layout(&tpl, &logo);
         let on_lid = *before.iter().find(|p| p.panel == lid).expect("フタにかかっていない");
-        surface.drag_on_solid(&tpl, &mut logo, lid, on_lid.place.point([0.0, 5.0]), [0.0, 5.0]);
+        surface.drag_on_solid(&tpl, &mut logo, false, lid, on_lid.place.point([0.0, 5.0]), [0.0, 5.0]);
         assert_eq!(logo.panel, lid);
         let after = surface.layout(&tpl, &logo);
         for piece in &before {
