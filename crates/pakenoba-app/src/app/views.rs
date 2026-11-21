@@ -10,7 +10,7 @@ use pakenoba_core::math::{cross, look_at, mat4_mul, normalize, perspective, sub}
 use pakenoba_core::surface::{panel_at, pick_side, ray_through};
 use pakenoba_core::template::bounding_sphere;
 
-use super::{App, Shown, Tool, Workspace};
+use super::{App, Shown, Snapshot, Tool, Workspace};
 use crate::gpu::BoxRenderer;
 use crate::paint::spots_on;
 
@@ -174,6 +174,8 @@ impl App {
             let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
+                // 動かす前の場所へ戻せるように、覚えておく。
+                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
                 self.selected = Some(index);
                 self.art_dirty = true;
             }
@@ -285,6 +287,8 @@ impl App {
             let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
+                // 動かす前の場所へ戻せるように、覚えておく。
+                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
                 self.selected = Some(index);
                 self.art_dirty = true;
             }

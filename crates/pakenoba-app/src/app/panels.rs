@@ -31,6 +31,16 @@ impl App {
                 for (workspace, label) in [(Workspace::Shape, "型"), (Workspace::Design, "デザイン"), (Workspace::Output, "出力")] {
                     ui.selectable_value(&mut self.workspace, workspace, format!("  {label}  "));
                 }
+                // メニューバーを作るまでの、元に戻すとやり直すの置き場。
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    if ui.add_enabled(self.history.can_redo(), egui::Button::new("やり直す")).on_hover_text("Ctrl+Shift+Z").clicked() {
+                        self.redo();
+                    }
+                    if ui.add_enabled(self.history.can_undo(), egui::Button::new("元に戻す")).on_hover_text("Ctrl+Z").clicked() {
+                        self.undo();
+                    }
+                });
             });
         });
     }
@@ -141,6 +151,8 @@ impl App {
             ui.weak("柄を選ぶと、ここに設定が出ます。");
             return;
         };
+        // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
+        let earlier = self.snapshot();
         let template = &self.template;
         let decal = &mut self.decals[index];
         let before = decal.decal;
@@ -207,6 +219,11 @@ impl App {
         }
         if before != decal.decal || moved_side {
             self.art_dirty = true;
+            // スライドや入力のひと続きは、1 回ぶんにまとめる。面の入れ替えは、いつも 1 回ぶん。
+            if !self.editing || moved_side {
+                self.history.record(earlier);
+            }
+            self.editing = !moved_side;
         }
         if moved_side {
             self.back_dirty = true;
@@ -224,11 +241,8 @@ impl App {
             ui.small(format!("合わせ目を {seams} 回またいでいます。"));
         }
         ui.add_space(2.0);
-        if ui.button("この柄を消す").clicked() {
-            self.decals.remove(index);
-            self.selected = None;
-            self.grab = None;
-            self.art_dirty = true;
+        if ui.button("この柄を消す").on_hover_text("Delete").clicked() {
+            self.delete_selected();
         }
     }
 

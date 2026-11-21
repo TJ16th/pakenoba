@@ -5,6 +5,7 @@
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
 mod assets;
+mod history;
 mod icons;
 mod panels;
 mod views;
@@ -289,6 +290,14 @@ impl Default for FlatCam {
     }
 }
 
+/// 元に戻すときに取っておく状態。柄の並びと、選んでいる柄。
+/// 絵のデータは共有しているので、取っておいても軽い。
+#[derive(Clone)]
+struct Snapshot {
+    decals: Vec<Placed>,
+    selected: Option<usize>,
+}
+
 struct App {
     dims: Dims,
     built_dims: Option<Dims>,
@@ -313,6 +322,10 @@ struct App {
     assets_inside: bool,
     /// 素材の欄から箱へ運んでいる途中の素材。
     carry: Option<usize>,
+    /// 柄の操作の履歴（元に戻す、やり直す）。
+    history: history::History<Snapshot>,
+    /// 数値の欄で値を変えている途中か。ひと続きの変更を、1 回ぶんの「元に戻す」にまとめる。
+    editing: bool,
     /// 立体の上で置いた柄。後ろのものほど上に重なる。
     decals: Vec<Placed>,
     selected: Option<usize>,
@@ -399,6 +412,8 @@ impl App {
             assets_open: initial.assets.is_some(),
             assets_inside: initial.assets.unwrap_or(true),
             carry: None,
+            history: history::History::default(),
+            editing: false,
             decals,
             selected: None,
             grab: None,
@@ -462,6 +477,7 @@ impl App {
             // 型を変えたら、パネルの並びが変わるので、置いた柄は外す。
             // 寸法だけを変えたときは、柄はパネルの中での位置で持っているので、そのまま付いてくる。
             self.decals.clear();
+            self.history.clear();
             self.selected = None;
             self.grab = None;
             self.flat = [FlatCam::default(); 2];
@@ -499,8 +515,53 @@ impl App {
         }
     }
 
+    /// いまの、柄の状態。
+    fn snapshot(&self) -> Snapshot {
+        Snapshot { decals: self.decals.clone(), selected: self.selected }
+    }
+
+    /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
+    fn checkpoint(&mut self) {
+        self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected });
+    }
+
+    fn restore(&mut self, state: Snapshot) {
+        self.decals = state.decals;
+        self.selected = state.selected.filter(|&i| i < self.decals.len());
+        self.grab = None;
+        self.art_dirty = true;
+        self.back_dirty = true;
+    }
+
+    fn undo(&mut self) {
+        let current = Snapshot { decals: self.decals.clone(), selected: self.selected };
+        if let Some(state) = self.history.undo(|| current) {
+            self.restore(state);
+        }
+    }
+
+    fn redo(&mut self) {
+        let current = Snapshot { decals: self.decals.clone(), selected: self.selected };
+        if let Some(state) = self.history.redo(|| current) {
+            self.restore(state);
+        }
+    }
+
+    /// 選んでいる柄を消す。確認は出さない（元に戻せる）。
+    fn delete_selected(&mut self) {
+        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        self.checkpoint();
+        self.decals.remove(index);
+        self.selected = None;
+        self.grab = None;
+        self.art_dirty = true;
+        self.back_dirty = true;
+        self.say("柄を消しました。Ctrl+Z で戻せます。");
+    }
+
     /// 柄を 1 つ足して、選ぶ。正面（なければ最初のパネル）の中央に置く。
     fn add_decal(&mut self, picture: Picture, size: P2) {
+        self.checkpoint();
         let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
         self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false });
         self.selected = Some(self.decals.len() - 1);
@@ -570,6 +631,7 @@ impl App {
     fn reorder_selected(&mut self, step: isize) {
         let Some(index) = self.selected else { return };
         let Some(other) = self.neighbor(index, step) else { return };
+        self.checkpoint();
         self.decals.swap(index, other);
         self.selected = Some(other);
         self.grab = None;
@@ -633,15 +695,24 @@ impl App {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let (plain, command, pressed) = ctx.input(|i| {
-            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0].map(|key| i.key_pressed(key));
-            (i.modifiers.is_none(), i.modifiers.command, pressed)
+        let (plain, command, shift, pressed) = ctx.input(|i| {
+            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace].map(|key| i.key_pressed(key));
+            (i.modifiers.is_none(), i.modifiers.command, i.modifiers.shift, pressed)
         });
-        let [v, h, one, two, three, zero] = pressed;
+        let [v, h, one, two, three, zero, z, y, delete, backspace] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
             self.zoom = 1.0;
             self.flat = [FlatCam::default(); 2];
+        }
+        // Ctrl+Z で元に戻す。Ctrl+Shift+Z か Ctrl+Y で、やり直す。
+        if command && ((z && shift) || y) {
+            self.redo();
+        } else if command && z {
+            self.undo();
+        }
+        if plain && (delete || backspace) && self.workspace == Workspace::Design {
+            self.delete_selected();
         }
         if !plain || self.workspace != Workspace::Design {
             return;
@@ -710,6 +781,10 @@ impl eframe::App for App {
             }
         }
 
+        // 数値の欄から手を離したら、ひと続きの変更は終わり。
+        if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() {
+            self.editing = false;
+        }
         self.shortcuts(ui.ctx());
         self.top_bar(ui);
         self.status_bar(ui);

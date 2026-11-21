@@ -77,7 +77,9 @@ impl App {
         let size = if matches!(source.picture, Picture::Band) { [self.dims.front_and_around(&self.template).1, source.size[1]] } else { source.size };
         let mut decal = Decal { panel, at: [0.5, 0.5], size, angle: 0.0 };
         decal.set_center(&self.template, at);
-        self.decals.push(Placed { picture: source.picture.clone(), decal, back });
+        let picture = source.picture.clone();
+        self.checkpoint();
+        self.decals.push(Placed { picture, decal, back });
         self.selected = Some(self.decals.len() - 1);
         self.tool = Tool::Select;
         self.art_dirty = true;
