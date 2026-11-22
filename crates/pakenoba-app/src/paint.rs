@@ -11,6 +11,17 @@ use pakenoba_core::template::{P2, Template, inside};
 
 use crate::art::PX_PER_MM;
 
+/// 柄に重ねて描く印。選んでいる柄には点線の枠、カーソルの下の柄には色の枠。
+#[derive(Clone, Copy, Default)]
+pub struct Marks<'a> {
+    pub selected: &'a [usize],
+    /// カーソルの下の柄（どの表示でも、同じ柄を光らせる）。
+    pub hover: Option<usize>,
+}
+
+/// カーソルの下の柄の枠の色（パケノバの色）。
+const HOVER: [f32; 4] = [38.0, 178.0, 170.0, 1.0];
+
 /// 立体の上に置いた柄。場所と大きさ（`Decal`）に、絵を添えたもの。
 #[derive(Clone)]
 pub struct Placed {
@@ -126,10 +137,12 @@ pub struct Canvas<'a> {
 
 /// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
 /// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。
-pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Option<usize>, back: bool, canvas: Canvas) {
+pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks, back: bool, canvas: Canvas) {
     let Canvas { w, h, rgba } = canvas;
     for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back && !decal.layer.hidden) {
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
+        let picked = marks.selected.contains(&index);
+        let hovered = marks.hover == Some(index) && !picked;
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
         for piece in surface.layout(tpl, decal).iter().rev() {
             let outline = &tpl.panels[piece.panel].outline;
@@ -156,13 +169,14 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Opt
                     }
                     // 裏の柄は、裏から見て正しく読めるように、左右を逆にして描く。
                     let mut color = decal.picture.sample(if back { [-q[0], q[1]] } else { q }, decal.size);
-                    if selected == Some(index) {
+                    let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
+                    if picked && from_edge < 0.6 {
                         // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。
-                        let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
                         let dash = ((q[0] + q[1]) / 3.0).rem_euclid(2.0) < 1.0;
-                        if from_edge < 0.6 {
-                            color = if dash { [255.0, 255.0, 255.0, 1.0] } else { [20.0, 30.0, 40.0, 1.0] };
-                        }
+                        color = if dash { [255.0, 255.0, 255.0, 1.0] } else { [20.0, 30.0, 40.0, 1.0] };
+                    } else if hovered && from_edge < 1.2 {
+                        // カーソルの下の柄の枠。
+                        color = HOVER;
                     }
                     let o = (y * w + x) * 4;
                     let a = color[3];
@@ -214,14 +228,14 @@ mod tests {
 
         // 表の画像には、表の柄だけ。左が赤、右が青。
         let mut image = vec![0u8; w * h * 4];
-        paint(&surface, &tpl, &decals, None, false, Canvas { w, h, rgba: &mut image });
+        paint(&surface, &tpl, &decals, Marks::default(), false, Canvas { w, h, rgba: &mut image });
         assert_eq!(pixel(&tpl, w, &image, left(front_at)), [255, 0, 0, 255]);
         assert_eq!(pixel(&tpl, w, &image, right(front_at)), [0, 0, 255, 255]);
         assert_eq!(pixel(&tpl, w, &image, back_at)[3], 0, "裏の柄は、表の画像に出ない");
 
         // 裏の画像には、裏の柄だけ。展開図の座標では左右が逆（裏返して見ると、左が赤になる）。
         let mut image = vec![0u8; w * h * 4];
-        paint(&surface, &tpl, &decals, None, true, Canvas { w, h, rgba: &mut image });
+        paint(&surface, &tpl, &decals, Marks::default(), true, Canvas { w, h, rgba: &mut image });
         assert_eq!(pixel(&tpl, w, &image, left(back_at)), [0, 0, 255, 255]);
         assert_eq!(pixel(&tpl, w, &image, right(back_at)), [255, 0, 0, 255]);
         assert_eq!(pixel(&tpl, w, &image, front_at)[3], 0, "表の柄は、裏の画像に出ない");

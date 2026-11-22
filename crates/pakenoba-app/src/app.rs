@@ -13,10 +13,12 @@ mod icons;
 mod library;
 mod panels;
 mod recovery;
+mod select;
 mod settings;
 mod views;
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use eframe::egui;
 use eframe::egui_wgpu;
@@ -28,7 +30,7 @@ use pakenoba_core::template::{P2, Template};
 
 use crate::art::{SheetArt, compose, compose_back, make_sheet_art};
 use crate::gpu::BoxRenderer;
-use crate::paint::{Canvas, Picture, Placed, paint};
+use crate::paint::{Canvas, Marks, Picture, Placed, paint};
 
 /// 起動時の状態。画面を撮って確かめるときに、コマンドラインから指定できる。
 #[derive(Clone)]
@@ -195,12 +197,12 @@ impl Dims {
 
     /// 型紙と、柄がたどれる面のつながりと、検査の結果。
     /// 合わせ目と検査には、厚みをほぼ 0 にした同じ寸法の型紙を使う。
-    fn build(&self) -> (Template, Surface, Vec<(bool, String)>) {
+    fn build(&self) -> (Rc<Template>, Surface, Vec<(bool, String)>) {
         let template = self.template();
         let thin = Dims { t: 0.02, ..*self }.template();
         let surface = Surface::new(&template, &thin);
         let problems = check(&template, &thin).iter().map(|p| (p.is_blocking(), p.describe(&template))).collect();
-        (template, surface, problems)
+        (Rc::new(template), surface, problems)
     }
 
     /// 柄を置く、最初のパネル（正面。なければ最初のパネル）と、箱を一周する帯の長さ。
@@ -394,6 +396,8 @@ impl Default for FlatCam {
 struct Snapshot {
     decals: Vec<Placed>,
     selected: Option<usize>,
+    /// いっしょに選んでいた柄。
+    extra: Vec<usize>,
     /// 型と寸法。戻すときに使うのは、型の種類が違うときだけ（寸法だけの変更は、履歴の対象外）。
     dims: Dims,
     /// この案件の素材（付属の見本は除く）。差し替えを元に戻すため。
@@ -405,7 +409,8 @@ struct Snapshot {
 struct App {
     dims: Dims,
     built_dims: Option<Dims>,
-    template: Template,
+    /// 型紙。共有して持つ（表示の中で、App を書き換えながら読むため）。
+    template: Rc<Template>,
     /// 柄がたどれる面のつながり（折り線と合わせ目）。
     surface: Surface,
     /// 型紙の検査の結果。（箱として成り立たない問題か、説明）。
@@ -448,6 +453,11 @@ struct App {
     /// 立体の上で置いた柄。後ろのものほど上に重なる。
     decals: Vec<Placed>,
     selected: Option<usize>,
+    /// いっしょに選んでいる柄（`selected` のほか）。
+    extra: Vec<usize>,
+    /// カーソルの下の柄。描いてある強調（`hover_decal`）と、この画面で見つけたもの（`hover_now`）。
+    hover_decal: Option<usize>,
+    hover_now: Option<usize>,
     /// つかんでいる柄の番号と、柄の座標でのつかんだ位置。
     grab: Option<(usize, P2)>,
     /// カーソルの下のパネル。
@@ -556,6 +566,9 @@ impl App {
             debug: initial.debug,
             decals,
             selected: None,
+            extra: Vec::new(),
+            hover_decal: None,
+            hover_now: None,
             grab: None,
             hover: None,
             sheet,
@@ -633,7 +646,7 @@ impl App {
             // 寸法だけを変えたときは、柄はパネルの中での位置で持っているので、そのまま付いてくる。
             if !std::mem::take(&mut self.keep_decals) {
                 self.decals.clear();
-                self.selected = None;
+                self.select_only(None);
             }
             self.grab = None;
             self.preview = None;
@@ -652,7 +665,7 @@ impl App {
 
     /// いまの、柄の状態。
     fn snapshot(&self) -> Snapshot {
-        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims, library: self.library(), bases: self.bases.clone() }
+        Snapshot { decals: self.decals.clone(), selected: self.selected, extra: self.extra.clone(), dims: self.dims, library: self.library(), bases: self.bases.clone() }
     }
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
@@ -675,6 +688,8 @@ impl App {
         }
         self.decals = state.decals;
         self.selected = state.selected.filter(|&i| i < self.decals.len());
+        self.extra = state.extra.into_iter().filter(|&i| i < self.decals.len()).collect();
+        self.hover_decal = None;
         self.grab = None;
         (self.renaming, self.layer_drag) = (None, None);
         self.art_dirty = true;
@@ -711,20 +726,29 @@ impl App {
         }
     }
 
-    /// 選んでいる柄を消す。確認は出さない（元に戻せる）。
+    /// 選んでいる柄を消す（いくつ選んでいても）。確認は出さない（元に戻せる）。ロックした柄は残す。
     fn delete_selected(&mut self) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
-        if self.decals[index].layer.locked {
+        let chosen = self.selection();
+        if chosen.is_empty() {
+            return;
+        }
+        let mut gone: Vec<usize> = chosen.iter().copied().filter(|&i| !self.decals[i].layer.locked).collect();
+        if gone.is_empty() {
             self.say("ロックしている柄は消せません。レイヤーの欄で、鍵を外してください。");
             return;
         }
+        let kept = chosen.len() - gone.len();
         self.checkpoint();
-        self.decals.remove(index);
-        self.selected = None;
+        gone.sort_unstable();
+        for &index in gone.iter().rev() {
+            self.decals.remove(index);
+        }
+        self.select_only(None);
         self.grab = None;
-        self.art_dirty = true;
-        self.back_dirty = true;
-        self.say("柄を消しました。Ctrl+Z で戻せます。");
+        self.hover_decal = None;
+        let what = if gone.len() == 1 { "柄を消しました".to_owned() } else { format!("柄を {} 個消しました", gone.len()) };
+        let locked = if kept > 0 { format!("（ロックしている {kept} 個は残しました）") } else { String::new() };
+        self.say(format!("{what}{locked}。Ctrl+Z で戻せます。"));
     }
 
     /// 柄を 1 つ足して、選ぶ。正面（なければ最初のパネル）の中央に置く。
@@ -732,8 +756,7 @@ impl App {
         self.checkpoint();
         let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
         self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false, layer: Default::default() });
-        self.selected = Some(self.decals.len() - 1);
-        self.art_dirty = true;
+        self.select_only(Some(self.decals.len() - 1));
     }
 
     /// 画像（PNG）を、この案件の素材に取り込んで、柄として置く。元のファイルの中身も、そのまま持つ（案件のファイルに入れるため）。
@@ -799,7 +822,7 @@ impl App {
                 let mut image = vec![0u8; self.sheet.w * self.sheet.h * 4];
                 let mut shown = decal.clone();
                 shown.layer.hidden = false;
-                paint(&self.surface, &self.template, std::slice::from_ref(&shown), None, back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
+                paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
                 let name = match &decal.layer.name {
                     Some(name) => format!("{}（{name}）", index + 1),
                     None => format!("{}（{}）", index + 1, decal.picture.label()),
@@ -844,7 +867,7 @@ impl App {
         let Some(other) = self.neighbor(index, step) else { return };
         self.checkpoint();
         self.decals.swap(index, other);
-        self.selected = Some(other);
+        self.select_only(Some(other));
         self.grab = None;
         self.art_dirty = true;
     }
@@ -868,16 +891,21 @@ impl App {
     fn refresh_art(&mut self, ctx: &egui::Context, rs: Option<&egui_wgpu::RenderState>, shown: Shown) {
         // 素材を運んでいる間は、放したら置かれる柄を、仮に足して描く。
         let with_preview: Vec<Placed>;
-        let (decals, selected): (&[Placed], Option<usize>) = match &self.preview {
+        let chosen: Vec<usize>;
+        let (decals, marks): (&[Placed], Marks) = match &self.preview {
             Some(preview) => {
                 with_preview = self.decals.iter().cloned().chain([preview.clone()]).collect();
-                (&with_preview, Some(with_preview.len() - 1))
+                chosen = vec![with_preview.len() - 1];
+                (&with_preview, Marks { selected: &chosen, hover: None })
             }
-            None => (&self.decals, self.selected),
+            None => {
+                chosen = self.selection();
+                (&self.decals, Marks { selected: &chosen, hover: self.hover_decal })
+            }
         };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, false, Canvas { w, h, rgba: art }));
+            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
             }
@@ -891,7 +919,7 @@ impl App {
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, true, Canvas { w, h, rgba: art }));
+            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
             }
@@ -931,10 +959,10 @@ impl App {
             return;
         }
         let (plain, command, shift, pressed) = ctx.input(|i| {
-            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace].map(|key| i.key_pressed(key));
+            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
             (i.modifiers.is_none(), i.modifiers.command, i.modifiers.shift, pressed)
         });
-        let [v, h, one, two, three, zero, z, y, delete, backspace] = pressed;
+        let [v, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
             self.zoom = 1.0;
@@ -948,6 +976,13 @@ impl App {
         }
         if plain && (delete || backspace) && self.workspace == Workspace::Design {
             self.delete_selected();
+        }
+        // Ctrl+A ですべての柄を選び、Esc で選ぶのをやめる。
+        if command && a && self.workspace == Workspace::Design {
+            self.select_all();
+        }
+        if plain && escape && self.workspace == Workspace::Design && self.carry.is_none() {
+            self.select_only(None);
         }
         if !plain || self.workspace != Workspace::Design {
             return;
@@ -1051,6 +1086,7 @@ impl eframe::App for App {
         if self.library.open {
             self.library_screen(ui);
             self.rebuild_if_needed();
+            self.settle_hover(ui.ctx());
             return;
         }
         match self.workspace {
@@ -1077,5 +1113,6 @@ impl eframe::App for App {
         }
         self.rebuild_if_needed();
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.views(ui, frame));
+        self.settle_hover(ui.ctx());
     }
 }

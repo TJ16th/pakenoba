@@ -175,7 +175,9 @@ impl App {
         let forward = normalize(sub(center, eye));
         let side = normalize(cross(forward, [0.0, 1.0, 0.0]));
         let upward = cross(side, forward);
-        let template = &self.template;
+        // 型紙は写しを使う（つかんだ柄といっしょに選んだ柄を動かすときに、App を書き換えるため）。
+        let shared = std::rc::Rc::clone(&self.template);
+        let template = &*shared;
         let under = |pos: Pos2| {
             let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
             pick_side(template, &mesh, eye, ray_through(forward, side, upward, fov, aspect, x, y))
@@ -202,7 +204,16 @@ impl App {
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
                 self.history.record(self.snapshot());
-                self.selected = Some(index);
+                // 選んでいる柄をつかんだら、選んだものをまとめて動かす。選んでいない柄なら、その柄だけを選ぶ。
+                if self.is_selected(index) {
+                    if let Some(old) = self.selected.filter(|&old| old != index) {
+                        self.extra.retain(|&i| i != index);
+                        self.extra.push(old);
+                    }
+                    self.selected = Some(index);
+                } else {
+                    self.select_only(Some(index));
+                }
                 self.art_dirty = true;
             }
         }
@@ -212,7 +223,9 @@ impl App {
                     // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
                     if let Some(decal) = self.decals.get_mut(index).filter(|decal| decal.back == back) {
                         // 立体の上では、向きを面ごとの「上」にそろえて保つ（同じ面に戻れば、同じ向きに戻る）。
+                        let before = decal.center(template);
                         self.surface.drag_on_solid(template, decal, back, panel, at, grab);
+                        self.move_along(index, before);
                         self.art_dirty = true;
                     }
                 }
@@ -229,9 +242,17 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if (response.clicked() || response.secondary_clicked()) && self.tool != Tool::Hand {
-            self.selected = decal_under.map(|(index, _)| index);
-            self.art_dirty = true;
+        if response.clicked() && self.tool != Tool::Hand {
+            let shift = ui.input(|i| i.modifiers.shift);
+            self.select_click(decal_under.map(|(index, _)| index), shift);
+        }
+        // 右クリックは、選んでいる柄の上なら選んだものを保つ（まとめて消す、など）。
+        if response.secondary_clicked() && self.tool != Tool::Hand && !decal_under.is_some_and(|(index, _)| self.is_selected(index)) {
+            self.select_only(decal_under.map(|(index, _)| index));
+        }
+        // カーソルの下の柄は、ほかの表示でも光らせる。
+        if response.hovered() && self.grab.is_none() {
+            self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
         if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -295,7 +316,8 @@ impl App {
         let visuals = ui.visuals().clone();
         painter.rect_filled(rect, 0.0, BACKDROP);
 
-        let template = &self.template;
+        let shared = std::rc::Rc::clone(&self.template);
+        let template = &*shared;
         let (sheet_w, sheet_h) = (template.max[0] - template.min[0], template.max[1] - template.min[1]);
         let area = Rect::from_min_max(rect.min + vec2(RULER_LEFT, RULER_TOP), rect.max);
         let fit = (area.width() / sheet_w).min(area.height() / sheet_h) * 0.9;
@@ -342,7 +364,16 @@ impl App {
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
                 self.history.record(self.snapshot());
-                self.selected = Some(index);
+                // 選んでいる柄をつかんだら、選んだものをまとめて動かす。選んでいない柄なら、その柄だけを選ぶ。
+                if self.is_selected(index) {
+                    if let Some(old) = self.selected.filter(|&old| old != index) {
+                        self.extra.retain(|&i| i != index);
+                        self.extra.push(old);
+                    }
+                    self.selected = Some(index);
+                } else {
+                    self.select_only(Some(index));
+                }
                 self.art_dirty = true;
             }
         }
@@ -350,7 +381,9 @@ impl App {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at))) => {
                     if let Some(decal) = self.decals.get_mut(index) {
+                        let before = decal.center(template);
                         self.surface.drag(template, decal, panel, at, grab);
+                        self.move_along(index, before);
                         self.art_dirty = true;
                     }
                 }
@@ -362,9 +395,17 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if (response.clicked() || response.secondary_clicked()) && self.tool != Tool::Hand {
-            self.selected = decal_under.map(|(index, _)| index);
-            self.art_dirty = true;
+        if response.clicked() && self.tool != Tool::Hand {
+            let shift = ui.input(|i| i.modifiers.shift);
+            self.select_click(decal_under.map(|(index, _)| index), shift);
+        }
+        // 右クリックは、選んでいる柄の上なら選んだものを保つ（まとめて消す、など）。
+        if response.secondary_clicked() && self.tool != Tool::Hand && !decal_under.is_some_and(|(index, _)| self.is_selected(index)) {
+            self.select_only(decal_under.map(|(index, _)| index));
+        }
+        // カーソルの下の柄は、ほかの表示でも光らせる。
+        if response.hovered() && self.grab.is_none() {
+            self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
         if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

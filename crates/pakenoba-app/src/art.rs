@@ -475,19 +475,19 @@ mod tests {
 
     #[test]
     fn decal_layer_is_saved_and_left_out_on_load() {
-        use crate::paint::{Canvas, Picture, Placed, paint};
+        use crate::paint::{Canvas, Marks, Picture, Placed, paint};
         use pakenoba_core::surface::{Decal, Surface};
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let surface = Surface::new(&tpl, &Template::tuck_box(120.0, 60.0, 160.0, 0.02));
         let sheet = make_sheet_art(&tpl);
         let mut layer = vec![0u8; sheet.w * sheet.h * 4];
         let logo = Placed { picture: Picture::Logo, decal: Decal { panel: 0, at: [0.5, 0.5], size: [40.0, 40.0], angle: 0.0 }, back: false, layer: Default::default() };
-        paint(&surface, &tpl, &[logo], None, false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut layer });
+        paint(&surface, &tpl, &[logo], Marks::default(), false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut layer });
         let painted: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| layer[i * 4 + 3] == 255).collect();
         assert!(painted.len() > 10_000);
         let mut band_layer = vec![0u8; sheet.w * sheet.h * 4];
         let band = Placed { picture: Picture::Band, decal: Decal { panel: 0, at: [0.5, 0.2], size: [360.0, 14.0], angle: 0.0 }, back: false, layer: Default::default() };
-        paint(&surface, &tpl, &[band], None, false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut band_layer });
+        paint(&surface, &tpl, &[band], Marks::default(), false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut band_layer });
 
         // 柄 1 つにつき 1 レイヤー。何も描かれていない柄は入れない。
         // 隠した柄（帯）は、隠したレイヤーとして入れる。

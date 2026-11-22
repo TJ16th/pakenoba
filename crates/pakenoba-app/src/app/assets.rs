@@ -111,7 +111,7 @@ impl App {
     pub(super) fn place(&mut self, placed: Placed) {
         self.checkpoint();
         self.decals.push(placed);
-        self.selected = Some(self.decals.len() - 1);
+        self.select_only(Some(self.decals.len() - 1));
         self.tool = Tool::Select;
         self.art_dirty = true;
         self.back_dirty = true;

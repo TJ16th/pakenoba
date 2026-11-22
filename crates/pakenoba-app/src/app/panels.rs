@@ -70,6 +70,17 @@ impl App {
                 ui.add_space(4.0);
                 match self.tool {
                     Tool::Select => match self.selected.filter(|&i| i < self.decals.len()) {
+                        Some(_) if self.selection().len() > 1 => {
+                            // いくつも選んでいるとき: 整列と、まとめて消す。
+                            ui.label(format!("{} 個の柄", self.selection().len()));
+                            ui.separator();
+                            ui.label("そろえる");
+                            self.align_buttons(ui);
+                            ui.separator();
+                            if ui.button("消す").on_hover_text("Delete").clicked() {
+                                self.delete_selected();
+                            }
+                        }
                         Some(index) => {
                             ui.label(self.layer_label(index));
                             ui.separator();
@@ -89,9 +100,12 @@ impl App {
                                 self.art_dirty = true;
                                 self.back_dirty = true;
                             }
+                            ui.separator();
+                            ui.label("パネルに");
+                            self.align_buttons(ui);
                         }
                         None => {
-                            ui.weak("柄をクリックして選びます。素材は、左の素材の欄から、箱や展開図へドラッグして置きます");
+                            ui.weak("柄をクリックして選びます。Shift を押しながらで、いくつも選べます（Ctrl+A ですべて）。素材は、左の素材の欄から、箱や展開図へドラッグして置きます");
                         }
                     },
                     Tool::Hand => {
@@ -164,6 +178,10 @@ impl App {
             return;
         };
         // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
+        let others = self.selection().len() - 1;
+        if others > 0 {
+            ui.weak(format!("ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。"));
+        }
         let earlier = self.snapshot();
         let locked = self.decals[index].layer.locked;
         if locked {
@@ -316,22 +334,25 @@ impl App {
                         }
                         let label = self.layer_label(index);
                         let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
-                        let selected = self.selected == Some(index);
+                        let selected = self.is_selected(index);
                         let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag());
                         Some(response)
                     });
                     rows_at.push((index, row.response.rect));
                     let Some(response) = row.inner else { continue };
+                    if response.hovered() {
+                        self.hover_now = Some(index);
+                    }
                     if response.double_clicked() {
                         self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
                     } else if response.clicked() {
-                        // 選ぶだけ（もう一度押しても外さない。ダブルクリックで名前を変えるときに、表示がずれないように）。
-                        self.selected = Some(index);
-                        self.art_dirty = true;
+                        // Shift を押していれば、足すか外す。押していなければ、その柄だけを選ぶ（もう一度押しても外さない。
+                        // ダブルクリックで名前を変えるときに、表示がずれないように）。
+                        let shift = ui.input(|i| i.modifiers.shift);
+                        self.select_click(Some(index), shift);
                     }
-                    if response.secondary_clicked() {
-                        self.selected = Some(index);
-                        self.art_dirty = true;
+                    if response.secondary_clicked() && !self.is_selected(index) {
+                        self.select_only(Some(index));
                     }
                     if response.drag_started() {
                         self.layer_drag = Some(index);
@@ -391,7 +412,7 @@ impl App {
         self.checkpoint();
         let item = self.decals.remove(dragged);
         self.decals.insert(to, item);
-        self.selected = Some(to);
+        self.select_only(Some(to));
         self.grab = None;
         (self.art_dirty, self.back_dirty) = (true, true);
     }
