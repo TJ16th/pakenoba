@@ -24,7 +24,7 @@ fn with_psd(path: PathBuf) -> PathBuf {
 impl App {
     /// 裏に置いた柄があるか。
     pub(super) fn has_back_decals(&self) -> bool {
-        self.decals.iter().any(|decal| decal.back)
+        self.decals.iter().any(|decal| decal.back) || self.bases[1].is_some()
     }
 
     /// 保存先を選んでもらう。はじめの名前は「案件の名前_型紙.psd」。
@@ -48,7 +48,7 @@ impl App {
 
     /// 型紙の PSD を書く（ダイアログのあと）。
     pub(super) fn write_psds(&mut self, path: &Path) {
-        let front = save_psd(&self.sheet, &self.decal_layers(false)).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
+        let front = save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false)).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
         if let Err(e) = front {
             return self.say(format!("保存できませんでした: {e}"));
         }
@@ -56,7 +56,7 @@ impl App {
             return self.say(format!("保存しました: {}", path.display()));
         }
         let back = back_path(path);
-        match save_back_psd(&self.sheet, &self.decal_layers(true)).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())) {
+        match save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true)).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())) {
             Ok(()) => self.say(format!("表と裏の 2 つを保存しました: {}、{}", path.display(), back.file_name().unwrap_or_default().to_string_lossy())),
             Err(e) => self.say(format!("表は保存しましたが、裏を保存できませんでした: {e}")),
         }

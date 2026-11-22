@@ -5,6 +5,7 @@
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
 mod assets;
+mod base;
 mod export;
 mod file;
 mod history;
@@ -25,7 +26,7 @@ use pakenoba_core::project;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template};
 
-use crate::art::{GuideHandling, SheetArt, compose, compose_back, fit, load_psd, make_sheet_art};
+use crate::art::{SheetArt, compose, compose_back, make_sheet_art};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Canvas, Picture, Placed, paint};
 
@@ -397,6 +398,8 @@ struct Snapshot {
     dims: Dims,
     /// この案件の素材（付属の見本は除く）。差し替えを元に戻すため。
     library: Vec<assets::Stash>,
+    /// 展開図まるごとの絵（表と裏）。差し替えと外すを元に戻すため（中身は共有しているので、軽い）。
+    bases: [Option<base::BaseArt>; 2],
 }
 
 struct App {
@@ -450,11 +453,10 @@ struct App {
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
-    /// 読み込んだ PSD の絵（合わせる前の画像と、その大きさ）。寸法を変えたら、展開図の大きさに合わせ直す。
-    custom_source: Option<(Vec<u8>, [usize; 2])>,
-    custom: Option<Vec<u8>>,
-    /// 展開図まるごとの絵の、元のファイル。案件のファイルに、そのまま入れる。
-    base_file: Option<project::Asset>,
+    /// 展開図まるごとの絵（表と裏）。元のファイルと、読んだ絵。
+    bases: [Option<base::BaseArt>; 2],
+    /// 展開図の大きさに合わせた、表と裏の絵。寸法を変えたら、合わせ直す。
+    custom: [Option<Vec<u8>>; 2],
     /// 案件のファイルにかかわる状態（場所、保存していない変更、保存の進み具合）。
     file: file::FileState,
     /// 右クリックのメニューなどで頼まれた、素材の差し替え。画面を描き終えてから行う。
@@ -557,9 +559,8 @@ impl App {
             grab: None,
             hover: None,
             sheet,
-            custom_source: None,
-            custom: None,
-            base_file: None,
+            bases: [None, None],
+            custom: [None, None],
             file: file::FileState::new(initial.answer_open.clone(), initial.answer_save.clone()),
             replace_request: None,
             answer_replace: initial.answer_replace.clone(),
@@ -645,47 +646,13 @@ impl App {
                 self.view_before_flat = None;
             }
         }
-        if let Some((source, size)) = &self.custom_source {
-            // 読み込んだ絵は、読み直さずに、展開図の新しい大きさへ合わせ直すだけにする。
-            self.custom = Some(fit(source, *size, self.sheet.w, self.sheet.h));
-        }
-        self.art_dirty = true;
-    }
-
-    /// 展開図まるごとの絵（PSD）を読んで、柄の下に敷く。読めたら真。
-    fn apply_psd(&mut self, bytes: &[u8], source: &str) -> bool {
-        match load_psd(bytes, self.sheet.w, self.sheet.h) {
-            Ok(loaded) => {
-                let merged = if loaded.has_real_merged == Some(false) { "\n注意: この PSD には統合画像が入っていません。" } else { "" };
-                let ratio_src = loaded.source_size[0] as f32 / loaded.source_size[1] as f32;
-                let ratio_sheet = self.sheet.w as f32 / self.sheet.h as f32;
-                let stretch = if (ratio_src / ratio_sheet - 1.0).abs() > 0.01 { "\n注意: 縦横比が今の展開図と違うので、引き伸ばして貼っています。" } else { "" };
-                let guides = match loaded.guides {
-                    GuideHandling::NotPresent => "",
-                    GuideHandling::Removed => "\nガイドのレイヤー（と、立体の上で置いた柄のレイヤー）は除いて読み込みました。",
-                    GuideHandling::Baked => "\n注意: ガイドのレイヤーを除けませんでした（グループ、マスク、通常以外の合成モードがあります）。ガイドを非表示にしてから書き出してください。",
-                };
-                self.psd_info = format!(
-                    "{source}\n大きさ: {} x {} px\nレイヤー: {}{merged}{stretch}{guides}",
-                    loaded.source_size[0],
-                    loaded.source_size[1],
-                    if loaded.layer_names.is_empty() { "なし".to_owned() } else { loaded.layer_names.join("、") }
-                );
-                self.custom = Some(loaded.rgba);
-                self.custom_source = Some((loaded.source, loaded.source_size));
-                self.art_dirty = true;
-                true
-            }
-            Err(e) => {
-                self.psd_info = format!("{source}\n{e}");
-                false
-            }
-        }
+        // 読み込んだ絵は、読み直さずに、展開図の新しい大きさへ合わせ直すだけにする。
+        self.refit_bases();
     }
 
     /// いまの、柄の状態。
     fn snapshot(&self) -> Snapshot {
-        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims, library: self.library() }
+        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims, library: self.library(), bases: self.bases.clone() }
     }
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
@@ -701,6 +668,11 @@ impl App {
             self.rebuild_if_needed();
         }
         self.restore_library(state.library);
+        if !(base::same_base(&state.bases[0], &self.bases[0]) && base::same_base(&state.bases[1], &self.bases[1])) {
+            self.psd_info.clear();
+            self.bases = state.bases;
+            self.refit_bases();
+        }
         self.decals = state.decals;
         self.selected = state.selected.filter(|&i| i < self.decals.len());
         self.grab = None;
@@ -843,19 +815,6 @@ impl App {
         decal.layer.name.clone().unwrap_or_else(|| format!("{} {}", decal.picture.label(), index + 1))
     }
 
-    fn open_psd(&mut self, path: &Path) {
-        match std::fs::read(path) {
-            Ok(bytes) => {
-                if self.apply_psd(&bytes, &path.display().to_string()) {
-                    // 元のファイルの中身も持つ（案件のファイルに入れるため）。
-                    let name = path.file_name().map_or_else(|| "展開図の絵".to_owned(), |n| n.to_string_lossy().into_owned());
-                    self.base_file = Some(project::Asset::new(name, bytes, [0.0, 0.0], file::now_local()));
-                }
-            }
-            Err(e) => self.psd_info = format!("{} を読めませんでした: {e}", path.display()),
-        }
-    }
-
     /// 下の帯に、知らせを 1 行出す。
     fn say(&mut self, text: impl Into<String>) {
         self.message = Some((text.into(), None));
@@ -918,7 +877,7 @@ impl App {
         };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom.as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, false, Canvas { w, h, rgba: art }));
+            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, false, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
             }
@@ -932,7 +891,7 @@ impl App {
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.back_rgba = compose_back(&self.sheet, self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, true, Canvas { w, h, rgba: art }));
+            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, selected, true, Canvas { w, h, rgba: art }));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
             }

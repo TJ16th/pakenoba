@@ -18,6 +18,7 @@ use eframe::egui;
 
 use pakenoba_core::project::{self, Placement, Project, Source};
 
+use super::base::BaseArt;
 use super::{App, Dims, FlatCam, SHAPE_VIEW, Workspace, assets, history};
 use crate::art::make_sheet_art;
 use crate::paint::{Picture, Placed};
@@ -165,7 +166,7 @@ impl App {
                 Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.base_file.clone() })
+        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()) })
     }
 
     /// 状態の印。案件のファイルに入るもの（型、寸法、柄、素材、展開図の絵）から作る。
@@ -179,7 +180,9 @@ impl App {
                 (&asset.name, asset.size.map(f32::to_bits), stored.id()).hash(&mut hasher);
             }
         }
-        self.base_file.as_ref().map(|base| (base.id(), &base.name)).hash(&mut hasher);
+        for base in &self.bases {
+            base.as_ref().map(|base| (base.file.id(), &base.file.name)).hash(&mut hasher);
+        }
         for placed in &self.decals {
             let decal = &placed.decal;
             (decal.panel, decal.at.map(f32::to_bits), decal.size.map(f32::to_bits), decal.angle.to_bits(), placed.back, &placed.layer).hash(&mut hasher);
@@ -254,16 +257,16 @@ impl App {
         }
 
         // 展開図まるごとの絵。
-        (self.custom, self.custom_source, self.base_file) = (None, None, None);
         self.psd_info.clear();
         self.psd_path.clear();
-        if let Some(base) = project.base {
-            if self.apply_psd(base.bytes(), &base.name) {
-                self.base_file = Some(base);
-            } else {
-                problems.push(format!("展開図の絵「{}」を読めなかったので、外しました", base.name));
-            }
+        let sheet = [self.sheet.w, self.sheet.h];
+        for (side, base) in [project.base, project.back_base].into_iter().enumerate() {
+            self.bases[side] = base.and_then(|file| {
+                let name = file.name.clone();
+                BaseArt::read(file, side == 1, sheet).map_err(|_| problems.push(format!("{}の展開図の絵「{name}」を読めなかったので、外しました", if side == 1 { "紙の裏" } else { "紙の表" }))).ok()
+            });
         }
+        self.refit_bases();
 
         // 前の案件の、途中の操作や履歴は持ち越さない。
         self.history = history::History::default();
@@ -453,7 +456,7 @@ impl App {
     /// 起動したときと同じ、まっさらな案件にする（差し込み箱、柄も素材もなし）。型を選ぶところから始める。
     pub(super) fn new_now(&mut self) {
         let shape = Dims::for_shape(0, self.dims.t).shape();
-        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None });
+        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None });
         self.file.path = None;
         self.file.suggest = UNTITLED.to_owned();
         self.mark_saved();

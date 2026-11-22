@@ -196,6 +196,8 @@ pub struct Project {
     pub decals: Vec<Placement>,
     /// 展開図まるごとの絵（外のアプリで描いた PSD など）。柄の下に敷く。`size` は使わない。
     pub base: Option<Asset>,
+    /// 紙の裏の、展開図まるごとの絵（裏の型紙の PSD に描いたもの）。裏から見た向きのまま持つ。`size` は使わない。
+    pub back_base: Option<Asset>,
 }
 
 /// 開いた結果。
@@ -258,6 +260,9 @@ struct Manifest {
     /// 展開図まるごとの絵。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base: Option<BaseEntry>,
+    /// 紙の裏の、展開図まるごとの絵。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    back_base: Option<BaseEntry>,
     #[serde(rename = "asset", default, skip_serializing_if = "Vec::is_empty")]
     assets: Vec<AssetEntry>,
     #[serde(rename = "decal", default, skip_serializing_if = "Vec::is_empty")]
@@ -406,6 +411,7 @@ impl Project {
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
             shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof) },
             base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
+            back_base: self.back_base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size) }).collect(),
             decals: self
                 .decals
@@ -432,7 +438,7 @@ impl Project {
         zip.start_file(MANIFEST, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
         zip.write_all(text.as_bytes())?;
         let mut written: Vec<String> = Vec::new();
-        for asset in self.assets.iter().chain(&self.base) {
+        for asset in self.assets.iter().chain(&self.base).chain(&self.back_base) {
             let file = asset.file();
             if written.contains(&file) {
                 continue;
@@ -559,13 +565,17 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         }
     }
     // 展開図まるごとの絵。
-    let base = manifest.base.as_ref().and_then(|entry| match load(zip, &entry.file, [0.0, 0.0]) {
-        Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], id, bytes }),
-        Err(why) => {
-            problems.push(format!("展開図の絵「{}」を読めなかったので、外しました（{why}）", entry.name));
-            None
-        }
-    });
+    let mut base_of = |entry: &Option<BaseEntry>, what: &str| {
+        entry.as_ref().and_then(|entry| match load(zip, &entry.file, [0.0, 0.0]) {
+            Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], id, bytes }),
+            Err(why) => {
+                problems.push(format!("{what}「{}」を読めなかったので、外しました（{why}）", entry.name));
+                None
+            }
+        })
+    };
+    let base = base_of(&manifest.base, "展開図の絵");
+    let back_base = base_of(&manifest.back_base, "紙の裏の展開図の絵");
 
     // 柄。
     let mut decals = Vec::new();
@@ -602,7 +612,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked } });
     }
 
-    Ok(Opened { project: Project { shape, assets, decals, base }, problems })
+    Ok(Opened { project: Project { shape, assets, decals, base, back_base }, problems })
 }
 
 /// ZIP の中のファイルを 1 つ、全部読む。中身の傷（CRC の不一致）も、ここで見つかる。
@@ -693,7 +703,8 @@ mod tests {
             Kind::Gable => Some(Asset::new("同じ中身.psd", fake_file(2, 9000), [0.0, 0.0], "")),
             _ => None,
         };
-        Project { shape, assets, decals, base }
+        let back_base = matches!(kind, Kind::Prism(_)).then(|| Asset::new("裏に描いた絵.psd", fake_file(5, 4000), [0.0, 0.0], "2026-11-22T09:01:00Z"));
+        Project { shape, assets, decals, base, back_base }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -738,7 +749,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None };
+        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -1026,7 +1037,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None };
+        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -1094,6 +1105,7 @@ mod tests {
                 Placement { decal: Decal { panel: panel("側面 2", 1), at: [0.5, 0.1], size: [420.0, 14.0], angle: 0.0 }, back: false, source: Source::Builtin("band".to_owned()), layer: Layer::default() },
             ],
             base: Some(Asset::new("型紙に描いた絵.psd", fake_file(13, 1500), [0.0, 0.0], "2026-11-22T00:32:00+09:00")),
+            back_base: None,
         }
     }
 

@@ -188,9 +188,12 @@ fn alpha_over(base: &mut [u8], over: &[u8]) {
 const BACK_PAPER: [u8; 3] = [231, 226, 215];
 
 /// 紙の裏（箱の内側の面）の画像を作る。紙の地、裏に置いた柄（`decals` で描く）、切り線と折り線。
-pub fn compose_back(sheet: &SheetArt, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {
-    // 形は表と同じで、色だけが裏の色。
-    let mut out: Vec<u8> = sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect();
+pub fn compose_back(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    // 形は表と同じで、色だけが裏の色。裏の絵を読み込んであれば、それを敷く（表の向きに直したもの）。
+    let mut out: Vec<u8> = match custom {
+        Some(custom) => custom.to_vec(),
+        None => back_paper(sheet),
+    };
     decals(&mut out);
     if show_guides {
         alpha_over(&mut out, &sheet.lines);
@@ -232,19 +235,37 @@ impl DecalLayer {
     }
 }
 
-pub fn save_psd(sheet: &SheetArt, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
-    build_psd(sheet.w, sheet.h, ("絵柄", sheet.art.clone()), decals.to_vec(), (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線、のりしろ）"), sheet.guides.clone()))
+/// 紙の裏の、何も描いていない絵（形は表と同じで、裏の色）。
+fn back_paper(sheet: &SheetArt) -> Vec<u8> {
+    sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect()
+}
+
+/// 裏の型紙の、いちばん下のレイヤーの名前。読み込むときに、この名前で裏の型紙だと見分ける。
+pub const BACK_PAPER_LAYER: &str = "紙の裏";
+
+/// パケノバが書き出した、裏の型紙の PSD か。
+pub fn psd_is_back(bytes: &[u8]) -> bool {
+    PsdFile::from_bytes(bytes).is_ok_and(|file| {
+        let names: Vec<String> = file.iter_layers().map(|layer| layer.name()).collect();
+        names.iter().any(|n| n == BACK_PAPER_LAYER) && names.iter().any(|n| is_generated(n))
+    })
+}
+
+/// 型紙を PSD にする。`custom` は、読み込んである展開図の絵（あれば「絵柄」のレイヤーにする）。
+pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
+    build_psd(sheet.w, sheet.h, ("絵柄", custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線、のりしろ）"), sheet.guides.clone()))
 }
 
 /// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
 ///
 /// レイヤーは下から「紙の裏」、裏に置いた柄、「ガイド（切り線、折り線）」。のりしろの斜線は入れない（のりを付けるのは表の面）。
 /// `decals` は、表と同じ展開図の向きで描いた、裏の柄の画像（`paint` で裏を描いたもの）。ここで左右を裏返す。
-pub fn save_back_psd(sheet: &SheetArt, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
-    let paper: Vec<u8> = sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect();
+/// `custom` は、読み込んである裏の絵（表の向きに直したもの）。あれば「紙の裏」のレイヤーにする。
+pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
+    let paper: Vec<u8> = custom.map_or_else(|| back_paper(sheet), <[u8]>::to_vec);
     let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
     let decals = decals.iter().map(|layer| DecalLayer { image: flip(&layer.image), ..layer.clone() }).collect();
-    build_psd(sheet.w, sheet.h, ("紙の裏", flip(&paper)), decals, (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線）"), flip(&sheet.lines)))
+    build_psd(sheet.w, sheet.h, (BACK_PAPER_LAYER, flip(&paper)), decals, (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線）"), flip(&sheet.lines)))
 }
 
 /// 画像を左右に裏返す。
@@ -312,10 +333,8 @@ pub enum GuideHandling {
     Baked,
 }
 
-/// 読み込んだ PSD。画像は展開図の大きさに合わせてある。
+/// 読み込んだ PSD。画像は、PSD の大きさのまま（展開図に合わせるのは `fit`）。
 pub struct LoadedPsd {
-    /// 展開図の大きさに合わせた画像。
-    pub rgba: Vec<u8>,
     /// 合わせる前の画像（大きさは `source_size`）。寸法を変えたときに、ここから合わせ直す。
     pub source: Vec<u8>,
     pub source_size: [usize; 2],
@@ -376,7 +395,7 @@ fn composite_without_guides(file: &PsdFile, w: usize, h: usize) -> Option<Vec<u8
 ///
 /// ガイドのレイヤーが入っていれば、それを除いた絵にする。外部アプリでそのまま書き出すと、
 /// 統合画像にはガイドの線が焼き込まれているため。
-pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
+pub fn load_psd(bytes: &[u8]) -> Result<LoadedPsd, String> {
     let file = PsdFile::from_bytes(bytes).map_err(|e| format!("PSD を読めませんでした: {e}"))?;
     let image = file.composite_rgba8().map_err(|e| format!("統合画像を取り出せませんでした: {e}"))?;
     let (sw, sh) = (image.width as usize, image.height as usize);
@@ -390,7 +409,7 @@ pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
         (true, Some(clean)) => (clean, GuideHandling::Removed),
         (true, None) => (image.data, GuideHandling::Baked),
     };
-    Ok(LoadedPsd { rgba: fit(&source, [sw, sh], w, h), source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
+    Ok(LoadedPsd { source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
 }
 
 /// 柄の素材にする PSD の、統合した絵（RGBA）と大きさ。
@@ -444,13 +463,14 @@ mod tests {
         assert!(sheet.art.chunks_exact(4).any(|p| p[3] == 255));
         assert!(sheet.guides.chunks_exact(4).any(|p| p[3] == 255));
 
-        let bytes = save_psd(&sheet, &[]).unwrap();
-        let loaded = load_psd(&bytes, sheet.w, sheet.h).unwrap();
+        let bytes = save_psd(&sheet, None, &[]).unwrap();
+        let loaded = load_psd(&bytes).unwrap();
+        let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.source_size, [sheet.w, sheet.h]);
         assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "ガイド（切り線、折り線、のりしろ）".to_owned()]);
-        assert_eq!(loaded.rgba.len(), sheet.w * sheet.h * 4);
+        assert_eq!(fitted.len(), sheet.w * sheet.h * 4);
         // 貼る画像は、絵柄とガイドを重ねたものと同じ大きさになる。
-        assert_eq!(compose(&sheet, Some(&loaded.rgba), true, |_| {}).len(), sheet.art.len());
+        assert_eq!(compose(&sheet, Some(&fitted), true, |_| {}).len(), sheet.art.len());
     }
 
     #[test]
@@ -473,7 +493,7 @@ mod tests {
         // 隠した柄（帯）は、隠したレイヤーとして入れる。
         let band_pixels: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| band_layer[i * 4 + 3] == 255 && layer[i * 4 + 3] == 0 && sheet.guides[i * 4 + 3] == 0).collect();
         let decals = [DecalLayer { name: "1（帯）".to_owned(), image: band_layer, visible: false }, DecalLayer::shown("2（ロゴ）", layer.clone()), DecalLayer::shown("3（空）", vec![0u8; sheet.w * sheet.h * 4])];
-        let bytes = save_psd(&sheet, &decals).unwrap();
+        let bytes = save_psd(&sheet, None, &decals).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let hidden: Vec<String> = file.iter_layers().filter(|l| !l.record.is_visible()).map(|l| l.name()).collect();
         assert_eq!(hidden, vec!["立体の柄 1（帯）".to_owned()]);
@@ -491,12 +511,13 @@ mod tests {
             let o = ((y - top) * width + (x - left)) * 4;
             assert_eq!(&saved.data[o..o + 4], &layer[i * 4..i * 4 + 4]);
         }
-        let loaded = load_psd(&bytes, sheet.w, sheet.h).unwrap();
+        let loaded = load_psd(&bytes).unwrap();
+        let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "立体の柄 1（帯）".to_owned(), "立体の柄 2（ロゴ）".to_owned(), "ガイド（切り線、折り線、のりしろ）".to_owned()]);
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // 柄のあった画素でも、読み込んだ絵は元の絵柄のまま（柄が絵として焼き込まれていない）。
         for &i in painted.iter().step_by(97) {
-            assert_eq!(&loaded.rgba[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
+            assert_eq!(&fitted[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
         }
     }
 
@@ -536,7 +557,7 @@ mod tests {
         let mut mark = vec![0u8; sheet.w * sheet.h * 4];
         let (x, y) = (sheet.w / 5, sheet.h / 2);
         mark[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4].copy_from_slice(&[255, 0, 0, 255]);
-        let bytes = save_back_psd(&sheet, &[DecalLayer::shown("1（ロゴ）", mark)]).unwrap();
+        let bytes = save_back_psd(&sheet, None, &[DecalLayer::shown("1（ロゴ）", mark)]).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
         assert_eq!(names, ["紙の裏", "立体の柄 1（ロゴ）", "ガイド（切り線、折り線）"]);
@@ -546,7 +567,7 @@ mod tests {
         assert_eq!(at(sheet.w - 1 - x), &[255, 0, 0, 255]);
         assert_ne!(at(x), &[255, 0, 0, 255]);
         // 読み込むときは、ガイドと柄のレイヤーを除く（表と同じ決まり）。
-        assert_eq!(load_psd(&bytes, sheet.w, sheet.h).unwrap().guides, GuideHandling::Removed);
+        assert_eq!(load_psd(&bytes).unwrap().guides, GuideHandling::Removed);
         // 左右を 2 回裏返すと、元に戻る。
         assert_eq!(mirror(&mirror(&sheet.lines, sheet.w, sheet.h), sheet.w, sheet.h), sheet.lines);
     }
@@ -555,13 +576,14 @@ mod tests {
     fn guides_are_removed_on_load() {
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let sheet = make_sheet_art(&tpl);
-        let loaded = load_psd(&save_psd(&sheet, &[]).unwrap(), sheet.w, sheet.h).unwrap();
+        let loaded = load_psd(&save_psd(&sheet, None, &[]).unwrap()).unwrap();
+        let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // ガイドの線があった画素でも、読み込んだ絵は元の絵柄と同じになる（線が焼き込まれていない）。
         let mut on_guides = 0;
         for i in 0..sheet.w * sheet.h {
             if sheet.guides[i * 4 + 3] == 255 && sheet.art[i * 4 + 3] == 255 {
-                assert_eq!(&loaded.rgba[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
+                assert_eq!(&fitted[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
                 on_guides += 1;
             }
         }

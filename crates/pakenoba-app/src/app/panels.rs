@@ -275,7 +275,7 @@ impl App {
             for back in [false, true] {
                 ui.label(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
                 let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
-                if rows.is_empty() && (back || self.custom.is_none()) {
+                if rows.is_empty() && self.bases[back as usize].is_none() {
                     ui.small("　柄はありません");
                 }
                 for index in rows {
@@ -346,10 +346,7 @@ impl App {
                         self.decal_menu(ui);
                     });
                 }
-                if back {
-                    continue;
-                }
-                self.custom_layer(ui);
+                self.base_layer(ui, back as usize);
             }
             self.drag_layer(ui, &rows_at);
         });
@@ -399,27 +396,10 @@ impl App {
         (self.art_dirty, self.back_dirty) = (true, true);
     }
 
-    /// レイヤーの欄の、展開図まるごとの絵（PSD）の行。
-    fn custom_layer(&mut self, ui: &mut egui::Ui) {
-        if self.custom.is_none() {
-            return;
-        }
-        ui.horizontal(|ui| {
-            ui.label("展開図の絵（PSD）");
-            if ui.small_button("外す").clicked() {
-                self.custom = None;
-                self.custom_source = None;
-                self.base_file = None;
-                self.psd_info.clear();
-                self.art_dirty = true;
-            }
-        });
-    }
-
     /// 展開図まるごとの絵（PSD）の読み込み。
     fn psd_loader(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("展開図の絵を読み込む").default_open(!self.psd_info.is_empty()).show(ui, |ui| {
-            ui.small("「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。");
+            ui.small("「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。裏の型紙（名前に「_裏」が付くもの）に描いた絵は、紙の裏に敷きます。");
             let mut load_clicked = false;
             let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
             ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
