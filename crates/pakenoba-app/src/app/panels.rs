@@ -7,10 +7,8 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{App, PILLOW, SHAPES, Tool, View, Workspace, icons};
-use crate::art::save_psd;
 use crate::paint::Picture;
 
-const PSD_NAME: &str = "pakenoba-dieline.psd";
 
 /// 出力の種類。（名前、もう使えるか）。
 const OUTPUTS: [(&str, bool); 5] = [("型紙（PSD）", true), ("16:9 の画像（スライド用）", false), ("箱開け動画", false), ("店の棚に並べた絵", false), ("実寸の型紙（A4 や A3 に分けて印刷）", false)];
@@ -435,18 +433,11 @@ impl App {
             ui.add_space(4.0);
             ui.strong(OUTPUTS[self.output_kind].0);
             ui.label("切り線、折り線、のりしろと、置いた柄を、レイヤーに分けた PSD で保存します。");
-            if ui.button("型紙を PSD で保存").clicked() {
-                let saved = save_psd(&self.sheet, &self.decal_layers()).and_then(|b| std::fs::write(PSD_NAME, b).map_err(|e| e.to_string()));
-                self.say(match saved {
-                    Ok(()) => {
-                        let full = std::env::current_dir().map(|dir| dir.join(PSD_NAME)).unwrap_or_else(|_| PathBuf::from(PSD_NAME));
-                        format!("保存しました: {}", full.display())
-                    }
-                    Err(e) => format!("保存できませんでした: {e}"),
-                });
+            if ui.button("型紙を PSD で保存…").clicked() {
+                self.export_psd();
             }
-            if self.decals.iter().any(|decal| decal.back) {
-                ui.small("紙の裏に置いた柄は、この PSD にはまだ入りません（紙の表の 1 枚ぶんだけを保存します）。");
+            if self.has_back_decals() {
+                ui.small("紙の裏にも柄があるので、裏の型紙も、同じ場所に「_裏」を付けた名前で保存します。裏の型紙は、裏から見た向き（左右を裏返した向き）です。");
             }
             ui.add_space(6.0);
             ui.small("この型紙はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");

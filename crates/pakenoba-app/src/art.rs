@@ -217,21 +217,48 @@ pub const DECAL_LAYER_PREFIX: &str = "立体の柄";
 /// `decals` は、柄ごとの名前と、展開図の大きさの透明な画像。合わせ目をまたぐ柄は、1 枚のレイヤーの中で分かれて描かれている。
 /// レイヤーは、描かれている範囲だけに切り詰めて入れる。
 pub fn save_psd(sheet: &SheetArt, decals: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
-    let (w, h) = (sheet.w as u32, sheet.h as u32);
-    let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(sheet.w * sheet.h);
-    alpha_over(&mut composite, &sheet.art);
-    for (_, image) in decals {
+    build_psd(sheet.w, sheet.h, ("絵柄", sheet.art.clone()), decals.to_vec(), (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線、のりしろ）"), sheet.guides.clone()))
+}
+
+/// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
+///
+/// レイヤーは下から「紙の裏」、裏に置いた柄、「ガイド（切り線、折り線）」。のりしろの斜線は入れない（のりを付けるのは表の面）。
+/// `decals` は、表と同じ展開図の向きで描いた、裏の柄の画像（`paint` で裏を描いたもの）。ここで左右を裏返す。
+pub fn save_back_psd(sheet: &SheetArt, decals: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
+    let paper: Vec<u8> = sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect();
+    let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
+    let decals = decals.iter().map(|(name, image)| (name.clone(), flip(image))).collect();
+    build_psd(sheet.w, sheet.h, ("紙の裏", flip(&paper)), decals, (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線）"), flip(&sheet.lines)))
+}
+
+/// 画像を左右に裏返す。
+pub fn mirror(image: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let mut out = vec![0u8; image.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let (from, to) = ((y * w + x) * 4, (y * w + (w - 1 - x)) * 4);
+            out[to..to + 4].copy_from_slice(&image[from..from + 4]);
+        }
+    }
+    out
+}
+
+/// PSD を組み立てる。いちばん下に `base`、その上に柄、いちばん上に `guides`。
+fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<(String, Vec<u8>)>, guides: (String, Vec<u8>)) -> Result<Vec<u8>, String> {
+    let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(w * h);
+    alpha_over(&mut composite, &base.1);
+    for (_, image) in &decals {
         alpha_over(&mut composite, image);
     }
-    alpha_over(&mut composite, &sheet.guides);
-    let mut builder = PsdBuilder::new(w, h);
-    builder.push_layer(LayerSpec::new("絵柄", 0, 0, w, h, PixelData::Rgba8(sheet.art.clone())));
+    alpha_over(&mut composite, &guides.1);
+    let mut builder = PsdBuilder::new(w as u32, h as u32);
+    builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
     for (name, image) in decals {
         // 何か描かれている範囲。
-        let (mut x0, mut y0, mut x1, mut y1) = (sheet.w, sheet.h, 0usize, 0usize);
-        for y in 0..sheet.h {
-            for x in 0..sheet.w {
-                if image[(y * sheet.w + x) * 4 + 3] > 0 {
+        let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
+        for y in 0..h {
+            for x in 0..w {
+                if image[(y * w + x) * 4 + 3] > 0 {
                     (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
                 }
             }
@@ -239,10 +266,10 @@ pub fn save_psd(sheet: &SheetArt, decals: &[(String, Vec<u8>)]) -> Result<Vec<u8
         if x0 >= x1 || y0 >= y1 {
             continue;
         }
-        let cropped: Vec<u8> = (y0..y1).flat_map(|y| image[(y * sheet.w + x0) * 4..(y * sheet.w + x1) * 4].iter().copied()).collect();
+        let cropped: Vec<u8> = (y0..y1).flat_map(|y| image[(y * w + x0) * 4..(y * w + x1) * 4].iter().copied()).collect();
         builder.push_layer(LayerSpec::new(format!("{DECAL_LAYER_PREFIX} {name}"), x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32, PixelData::Rgba8(cropped)));
     }
-    builder.push_layer(LayerSpec::new(format!("{GUIDE_LAYER_PREFIX}（切り線、折り線、のりしろ）"), 0, 0, w, h, PixelData::Rgba8(sheet.guides.clone())));
+    builder.push_layer(LayerSpec::new(guides.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(guides.1)));
     builder.composite(PixelData::Rgba8(composite));
     builder.to_bytes().map_err(|e| format!("PSD を書けませんでした: {e}"))
 }
@@ -448,6 +475,29 @@ mod tests {
         let mid = to_px(&tpl, [(base[0] + apex[0]) * 0.5, (base[1] + apex[1]) * 0.5]);
         let o = (mid[1] as usize * sheet.w + mid[0] as usize) * 4;
         assert_eq!(&sheet.guides[o..o + 4], &[0, 150, 220, 255]);
+    }
+
+    #[test]
+    fn 裏の型紙は_左右を裏返して書く() {
+        let tpl = Template::tuck_box(120.0, 60.0, 160.0, 0.5);
+        let sheet = make_sheet_art(&tpl);
+        // 左上の隅に、印の画素を 1 つだけ描いた柄。
+        let mut mark = vec![0u8; sheet.w * sheet.h * 4];
+        let (x, y) = (sheet.w / 5, sheet.h / 2);
+        mark[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4].copy_from_slice(&[255, 0, 0, 255]);
+        let bytes = save_back_psd(&sheet, &[("1（ロゴ）".to_owned(), mark)]).unwrap();
+        let file = PsdFile::from_bytes(&bytes).unwrap();
+        let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
+        assert_eq!(names, ["紙の裏", "立体の柄 1（ロゴ）", "ガイド（切り線、折り線）"]);
+        // 印は、左右が入れ替わった場所にある。
+        let image = file.composite_rgba8().unwrap();
+        let at = |x: usize| &image.data[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4];
+        assert_eq!(at(sheet.w - 1 - x), &[255, 0, 0, 255]);
+        assert_ne!(at(x), &[255, 0, 0, 255]);
+        // 読み込むときは、ガイドと柄のレイヤーを除く（表と同じ決まり）。
+        assert_eq!(load_psd(&bytes, sheet.w, sheet.h).unwrap().guides, GuideHandling::Removed);
+        // 左右を 2 回裏返すと、元に戻る。
+        assert_eq!(mirror(&mirror(&sheet.lines, sheet.w, sheet.h), sheet.w, sheet.h), sheet.lines);
     }
 
     #[test]

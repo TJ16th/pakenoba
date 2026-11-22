@@ -5,6 +5,7 @@
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
 mod assets;
+mod export;
 mod file;
 mod history;
 mod icons;
@@ -71,6 +72,8 @@ pub struct Initial {
     pub answer_save: Option<PathBuf>,
     /// 同じく、差し替える画像を選ぶダイアログの答え。
     pub answer_replace: Option<PathBuf>,
+    /// 同じく、型紙の PSD の保存先を選ぶダイアログの答え。
+    pub answer_export: Option<PathBuf>,
     /// 落ちたときの控えを置くフォルダ。指定がなければ、使う人のデータのフォルダの中。
     pub recovery_dir: Option<PathBuf>,
     /// 控えを書く間隔（秒）。
@@ -79,7 +82,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, recovery_dir: None, backup_seconds: 30.0 }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0 }
     }
 }
 
@@ -415,6 +418,8 @@ struct App {
     replace_request: Option<assets::Replace>,
     /// 画面を撮って確かめるとき用。差し替える画像を選ぶダイアログの答え。
     answer_replace: Option<PathBuf>,
+    /// 同じく、型紙の PSD の保存先を選ぶダイアログの答え。
+    answer_export: Option<PathBuf>,
     /// 落ちたときの控え。
     recovery: recovery::Recovery,
     show_guides: bool,
@@ -507,6 +512,7 @@ impl App {
             file: file::FileState::new(initial.answer_open.clone(), initial.answer_save.clone()),
             replace_request: None,
             answer_replace: initial.answer_replace.clone(),
+            answer_export: initial.answer_export.clone(),
             // 自動のテストでは、使う人のフォルダに控えを書かない。
             recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
             show_guides: initial.guides,
@@ -727,16 +733,16 @@ impl App {
         }
     }
 
-    /// 表の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
-    /// 裏の柄は入れない（型紙の PSD は、紙の表の 1 枚ぶん）。
-    fn decal_layers(&self) -> Vec<(String, Vec<u8>)> {
+    /// 表か裏の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
+    /// 向きは、どちらも表の展開図の向き（裏の型紙では、書くときに左右を裏返す）。
+    fn decal_layers(&self, back: bool) -> Vec<(String, Vec<u8>)> {
         self.decals
             .iter()
             .enumerate()
-            .filter(|(_, decal)| !decal.back)
+            .filter(|(_, decal)| decal.back == back)
             .map(|(index, decal)| {
                 let mut layer = vec![0u8; self.sheet.w * self.sheet.h * 4];
-                paint(&self.surface, &self.template, std::slice::from_ref(decal), None, false, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut layer });
+                paint(&self.surface, &self.template, std::slice::from_ref(decal), None, back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut layer });
                 (format!("{}（{}）", index + 1, decal.picture.label()), layer)
             })
             .collect()
