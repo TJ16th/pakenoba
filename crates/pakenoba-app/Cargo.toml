@@ -22,3 +22,5 @@ png = "0.18"
 craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
 # ファイルを開く、保存するときの、OS のダイアログ。
 rfd = "0.18"
+# 素材を取り込んだ日時（その土地の時刻）。
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

@@ -68,11 +68,13 @@ pub struct Initial {
     /// 画面を撮って確かめるとき用。ファイルを選ぶダイアログを出さずに、この場所を答えにする（開く、保存する）。
     pub answer_open: Option<PathBuf>,
     pub answer_save: Option<PathBuf>,
+    /// 同じく、差し替える画像を選ぶダイアログの答え。
+    pub answer_replace: Option<PathBuf>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None }
     }
 }
 
@@ -342,6 +344,8 @@ struct Snapshot {
     selected: Option<usize>,
     /// 型と寸法。戻すときに使うのは、型の種類が違うときだけ（寸法だけの変更は、履歴の対象外）。
     dims: Dims,
+    /// この案件の素材（付属の見本は除く）。差し替えを元に戻すため。
+    library: Vec<assets::Stash>,
 }
 
 struct App {
@@ -402,6 +406,10 @@ struct App {
     base_file: Option<project::Asset>,
     /// 案件のファイルにかかわる状態（場所、保存していない変更、保存の進み具合）。
     file: file::FileState,
+    /// 右クリックのメニューなどで頼まれた、素材の差し替え。画面を描き終えてから行う。
+    replace_request: Option<assets::Replace>,
+    /// 画面を撮って確かめるとき用。差し替える画像を選ぶダイアログの答え。
+    answer_replace: Option<PathBuf>,
     show_guides: bool,
     /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
@@ -490,6 +498,8 @@ impl App {
             custom: None,
             base_file: None,
             file: file::FileState::new(initial.answer_open.clone(), initial.answer_save.clone()),
+            replace_request: None,
+            answer_replace: initial.answer_replace.clone(),
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -605,7 +615,7 @@ impl App {
 
     /// いまの、柄の状態。
     fn snapshot(&self) -> Snapshot {
-        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims }
+        Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims, library: self.library() }
     }
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
@@ -620,6 +630,7 @@ impl App {
             self.keep_decals = true;
             self.rebuild_if_needed();
         }
+        self.restore_library(state.library);
         self.decals = state.decals;
         self.selected = state.selected.filter(|&i| i < self.decals.len());
         self.grab = None;
@@ -691,7 +702,7 @@ impl App {
         let Picture::Image { w, h, .. } = &picture else { return };
         let size = [50.0, 50.0 * *h as f32 / *w as f32];
         let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
-        let stored = project::Asset::new(name.clone(), bytes, size, file::now_utc());
+        let stored = project::Asset::new(name.clone(), bytes, size, file::now_local());
         // 同じ中身の素材がすでにあれば、増やさずに、それを使う。
         let known = self.assets.iter().find(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())).map(|asset| (asset.picture.clone(), asset.size));
         match known {
@@ -728,7 +739,7 @@ impl App {
                 if self.apply_psd(&bytes, &path.display().to_string()) {
                     // 元のファイルの中身も持つ（案件のファイルに入れるため）。
                     let name = path.file_name().map_or_else(|| "展開図の絵".to_owned(), |n| n.to_string_lossy().into_owned());
-                    self.base_file = Some(project::Asset::new(name, bytes, [0.0, 0.0], file::now_utc()));
+                    self.base_file = Some(project::Asset::new(name, bytes, [0.0, 0.0], file::now_local()));
                 }
             }
             Err(e) => self.psd_info = format!("{} を読めませんでした: {e}", path.display()),
@@ -948,6 +959,7 @@ impl eframe::App for App {
         self.shortcuts(ui.ctx());
         self.top_bar(ui);
         self.run_file_action(ui.ctx());
+        self.run_replace();
         self.switch_camera();
         self.status_bar(ui);
         self.confirm_shape(ui.ctx());

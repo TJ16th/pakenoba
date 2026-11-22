@@ -10,7 +10,7 @@ use pakenoba_core::math::{cross, look_at, mat4_mul, normalize, perspective, sub}
 use pakenoba_core::surface::{panel_at, pick_side, ray_through};
 use pakenoba_core::template::bounding_sphere;
 
-use super::{App, Shown, Snapshot, Tool, Workspace};
+use super::{App, Shown, Tool, Workspace};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Placed, spots_on};
 
@@ -201,7 +201,7 @@ impl App {
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
-                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims });
+                self.history.record(self.snapshot());
                 self.selected = Some(index);
                 self.art_dirty = true;
             }
@@ -229,7 +229,7 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() && self.tool != Tool::Hand {
+        if (response.clicked() || response.secondary_clicked()) && self.tool != Tool::Hand {
             self.selected = decal_under.map(|(index, _)| index);
             self.art_dirty = true;
         }
@@ -279,6 +279,10 @@ impl App {
             let tip = origin + vec2(view[axis][0], -view[axis][1]) * 24.0;
             painter.line_segment([origin, tip], (2.0, color));
             painter.text(origin + (tip - origin) * 1.38, Align2::CENTER_CENTER, name, FontId::proportional(12.0), color);
+        }
+        // 柄を右クリックしたら、その場で使える操作（差し替え、消す）。
+        if self.selected.is_some() && self.tool != Tool::Hand {
+            response.context_menu(|ui| self.decal_menu(ui));
         }
         candidate
     }
@@ -337,7 +341,7 @@ impl App {
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
-                self.history.record(Snapshot { decals: self.decals.clone(), selected: self.selected, dims: self.dims });
+                self.history.record(self.snapshot());
                 self.selected = Some(index);
                 self.art_dirty = true;
             }
@@ -358,7 +362,7 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() && self.tool != Tool::Hand {
+        if (response.clicked() || response.secondary_clicked()) && self.tool != Tool::Hand {
             self.selected = decal_under.map(|(index, _)| index);
             self.art_dirty = true;
         }
@@ -419,6 +423,10 @@ impl App {
         painter.text(rect.min + vec2(RULER_LEFT * 0.5, RULER_TOP * 0.5), Align2::CENTER_CENTER, "mm", font, line);
 
         tag(ui, area.min + vec2(8.0, 6.0), if back { "裏" } else { "表" });
+        // 柄を右クリックしたら、その場で使える操作（差し替え、消す）。
+        if self.selected.is_some() && self.tool != Tool::Hand {
+            response.context_menu(|ui| self.decal_menu(ui));
+        }
         candidate
     }
 }

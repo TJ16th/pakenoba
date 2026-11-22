@@ -13,7 +13,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 
@@ -87,26 +86,15 @@ impl FileState {
 
 const UNTITLED: &str = "名前なし";
 
-/// いまの日時（協定世界時）を、`2026-11-22T00:10:00Z` の形で。素材を取り込んだ日時として覚える。
-pub(super) fn now_utc() -> String {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    stamp(seconds)
+/// いまの日時を、その土地の時刻と時差つきで（`2026-11-22T09:46:42+09:00`）。素材を取り込んだ日時として覚える。
+pub(super) fn now_local() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string()
 }
 
-/// 1970 年からの秒数を、日時の文字にする。
-fn stamp(seconds: u64) -> String {
-    let (days, rest) = (seconds / 86_400, seconds % 86_400);
-    // 日数から年月日へ（グレゴリオ暦。400 年の周期で数える）。
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 { shifted_month + 3 } else { shifted_month - 9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+/// 覚えている日時を、画面に出す形（その土地の時刻、`2026-11-22 09:46`）にする。読めなければ None。
+pub(super) fn show_time(stamp: &str) -> Option<String> {
+    let time = chrono::DateTime::parse_from_rfc3339(stamp).ok()?;
+    Some(time.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 }
 
 /// ファイルの名前（場所は含まない）。
@@ -216,6 +204,7 @@ impl App {
 
         // 素材。付属の見本のあとに、案件の素材を並べる。
         self.assets = assets::bundled();
+        self.replace_request = None;
         let first = self.assets.len();
         for stored in project.assets {
             let picture = match super::decode_png(stored.bytes()) {
@@ -576,11 +565,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 日時を_文字にできる() {
-        assert_eq!(stamp(0), "1970-01-01T00:00:00Z");
-        assert_eq!(stamp(951_782_400), "2000-02-29T00:00:00Z");
-        assert_eq!(stamp(1_795_305_600 + 9 * 3600 + 62), "2026-11-22T09:01:02Z");
-        assert_eq!(stamp(4_102_444_799), "2099-12-31T23:59:59Z");
+    fn 日時を_読み書きできる() {
+        let now = now_local();
+        assert!(show_time(&now).is_some(), "{now}");
+        assert_eq!(show_time("2026-11-22T00:10:00Z").map(|t| t.len()), Some(16));
+        assert_eq!(show_time(""), None);
+        assert_eq!(show_time("きのう"), None);
     }
 
     #[test]

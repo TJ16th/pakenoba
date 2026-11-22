@@ -263,13 +263,20 @@ impl App {
             for back in [false, true] {
                 ui.label(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
                 let mut any = false;
-                for index in (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back) {
+                let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
+                for index in rows {
                     any = true;
                     let label = format!("{} {}", self.decals[index].picture.label(), index + 1);
-                    if ui.selectable_label(self.selected == Some(index), label).clicked() {
+                    let row = ui.selectable_label(self.selected == Some(index), label);
+                    if row.clicked() {
                         self.selected = if self.selected == Some(index) { None } else { Some(index) };
                         self.art_dirty = true;
                     }
+                    if row.secondary_clicked() {
+                        self.selected = Some(index);
+                        self.art_dirty = true;
+                    }
+                    row.context_menu(|ui| self.decal_menu(ui));
                 }
                 if !any && (back || self.custom.is_none()) {
                     ui.small("　柄はありません");
