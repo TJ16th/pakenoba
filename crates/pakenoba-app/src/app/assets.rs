@@ -23,13 +23,15 @@ pub(super) struct Asset {
     pub thumb: Option<egui::TextureHandle>,
     /// 付属の見本か（そうでなければ、この案件に取り込んだ素材）。
     pub bundled: bool,
+    /// 取り込んだ元のファイル（中身、取り込んだ日時、中身の印）。案件のファイルに、そのまま入れる。付属の見本にはない。
+    pub stored: Option<pakenoba_core::project::Asset>,
 }
 
 /// 付属の見本。
 pub(super) fn bundled() -> Vec<Asset> {
     vec![
-        Asset { name: "ロゴ（見本）".to_owned(), picture: Picture::Logo, size: [46.0, 46.0], thumb: None, bundled: true },
-        Asset { name: "一周する帯（見本）".to_owned(), picture: Picture::Band, size: [120.0, 14.0], thumb: None, bundled: true },
+        Asset { name: "ロゴ（見本）".to_owned(), picture: Picture::Logo, size: [46.0, 46.0], thumb: None, bundled: true, stored: None },
+        Asset { name: "一周する帯（見本）".to_owned(), picture: Picture::Band, size: [120.0, 14.0], thumb: None, bundled: true, stored: None },
     ]
 }
 

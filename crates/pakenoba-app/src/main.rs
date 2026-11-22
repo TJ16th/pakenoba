@@ -15,6 +15,12 @@ fn main() -> ExitCode {
     let mut initial = app::Initial::default();
     let mut i = 0;
     while i < args.len() {
+        // 「--」で始まらないものは、開く案件のファイル（ファイルをアプリに関連付けて、ダブルクリックで開くときの渡し方）。
+        if !args[i].starts_with("--") {
+            initial.project = Some(std::path::PathBuf::from(&args[i]));
+            i += 1;
+            continue;
+        }
         let value = args.get(i + 1).and_then(|v| v.parse::<f32>().ok());
         match (args[i].as_str(), value) {
             ("--fold", Some(v)) => initial.fold = v,
@@ -28,6 +34,8 @@ fn main() -> ExitCode {
             ("--width", Some(v)) => initial.width = Some(v.clamp(40.0, 300.0)),
             ("--height", Some(v)) => initial.height = Some(v.clamp(40.0, 300.0)),
             ("--thickness", Some(v)) => initial.thickness = v.clamp(0.3, 6.0),
+            ("--answer-open", _) if i + 1 < args.len() => initial.answer_open = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--answer-save", _) if i + 1 < args.len() => initial.answer_save = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--psd", _) if i + 1 < args.len() => initial.psd = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--png", _) if i + 1 < args.len() => initial.png = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--logo" | "--band", _) if i + 1 < args.len() => {
@@ -63,7 +71,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("使い方: pakenoba [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、10: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号] [--assets 素材の欄を開く（1: 道具の右、2: 道具の左）]");
+                println!("使い方: pakenoba [開く案件のファイル（.pknb）] [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、100: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号] [--assets 素材の欄を開く（1: 道具の右、2: 道具の左）]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

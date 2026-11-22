@@ -2,8 +2,8 @@
 //!
 //! 案件 1 つは、1 つのファイル。中身は ZIP で、次のものが入る。
 //!
-//! - `project.toml`: 設定のテキスト。型と寸法、素材の一覧、置いた柄。
-//! - `assets/<中身の印>.<拡張子>`: 素材のファイル。取り込んだ元のファイルのまま。
+//! - `project.toml`: 設定のテキスト。型と寸法、素材の一覧、置いた柄、展開図まるごとの絵。
+//! - `assets/<中身の印>.<拡張子>`: 素材と、展開図まるごとの絵のファイル。取り込んだ元のファイルのまま。
 //!
 //! 決まり（くわしくは `docs/project-file.md`）。
 //!
@@ -181,6 +181,8 @@ pub struct Project {
     pub assets: Vec<Asset>,
     /// 置いた柄。並びは重なりの順（後ろのものが上）。
     pub decals: Vec<Placement>,
+    /// 展開図まるごとの絵（外のアプリで描いた PSD など）。柄の下に敷く。`size` は使わない。
+    pub base: Option<Asset>,
 }
 
 /// 開いた結果。
@@ -240,6 +242,9 @@ struct Manifest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     written_by: String,
     shape: ShapeEntry,
+    /// 展開図まるごとの絵。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<BaseEntry>,
     #[serde(rename = "asset", default, skip_serializing_if = "Vec::is_empty")]
     assets: Vec<AssetEntry>,
     #[serde(rename = "decal", default, skip_serializing_if = "Vec::is_empty")]
@@ -269,6 +274,15 @@ struct AssetEntry {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     imported: String,
     size: [f64; 2],
+}
+
+#[derive(Serialize, Deserialize)]
+struct BaseEntry {
+    name: String,
+    /// 案件のファイルの中での名前。
+    file: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    imported: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -367,6 +381,7 @@ impl Project {
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
             shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof) },
+            base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size) }).collect(),
             decals: self
                 .decals
@@ -393,7 +408,7 @@ impl Project {
         zip.start_file(MANIFEST, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
         zip.write_all(text.as_bytes())?;
         let mut written: Vec<String> = Vec::new();
-        for asset in &self.assets {
+        for asset in self.assets.iter().chain(&self.base) {
             let file = asset.file();
             if written.contains(&file) {
                 continue;
@@ -491,23 +506,25 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     let mut assets: Vec<Asset> = Vec::new();
     let mut kept: Vec<Option<usize>> = Vec::new();
     let mut loaded: HashMap<String, Arc<Vec<u8>>> = HashMap::new();
+    // 中身は、同じファイルなら 1 回だけ読む。中身の印は、ファイルの名前から取る（中身の傷は、ZIP の検査で見つかる）。
+    let mut load = |zip: &mut ZipArchive<R>, file: &str, size: P2| -> Result<(String, Arc<Vec<u8>>), String> {
+        if !is_asset_file(file) || !size.iter().all(|v| v.is_finite()) {
+            return Err("書かれている内容が正しくありません".to_owned());
+        }
+        let bytes = match loaded.get(file) {
+            Some(bytes) => bytes.clone(),
+            None => {
+                let bytes = Arc::new(read_entry(zip, file)?);
+                loaded.insert(file.to_owned(), bytes.clone());
+                bytes
+            }
+        };
+        Ok((file["assets/".len()..].split('.').next().unwrap_or_default().to_owned(), bytes))
+    };
     for entry in &manifest.assets {
         let size = [entry.size[0] as f32, entry.size[1] as f32];
-        let bytes = if !is_asset_file(&entry.file) || !size.iter().all(|v| v.is_finite()) {
-            Err("書かれている内容が正しくありません".to_owned())
-        } else if let Some(bytes) = loaded.get(&entry.file) {
-            Ok(bytes.clone())
-        } else {
-            read_entry(zip, &entry.file).map(|bytes| {
-                let bytes = Arc::new(bytes);
-                loaded.insert(entry.file.clone(), bytes.clone());
-                bytes
-            })
-        };
-        match bytes {
-            Ok(bytes) => {
-                // 中身の印は、ファイルの名前から取る（中身の傷は、ZIP の検査で見つかる）。
-                let id = entry.file["assets/".len()..].split('.').next().unwrap_or_default().to_owned();
+        match load(zip, &entry.file, size) {
+            Ok((id, bytes)) => {
                 kept.push(Some(assets.len()));
                 assets.push(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size, id, bytes });
             }
@@ -517,6 +534,14 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             }
         }
     }
+    // 展開図まるごとの絵。
+    let base = manifest.base.as_ref().and_then(|entry| match load(zip, &entry.file, [0.0, 0.0]) {
+        Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], id, bytes }),
+        Err(why) => {
+            problems.push(format!("展開図の絵「{}」を読めなかったので、外しました（{why}）", entry.name));
+            None
+        }
+    });
 
     // 柄。
     let mut decals = Vec::new();
@@ -553,7 +578,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         decals.push(Placement { decal, back: entry.back, source });
     }
 
-    Ok(Opened { project: Project { shape, assets, decals }, problems })
+    Ok(Opened { project: Project { shape, assets, decals, base }, problems })
 }
 
 /// ZIP の中のファイルを 1 つ、全部読む。中身の傷（CRC の不一致）も、ここで見つかる。
@@ -638,7 +663,13 @@ mod tests {
                 Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source }
             })
             .collect();
-        Project { shape, assets, decals }
+        // 展開図まるごとの絵は、型によって、あるものとないもの。素材と同じ中身のこともある。
+        let base = match kind {
+            Kind::TuckBox => Some(Asset::new("型紙に描いた絵.psd", fake_file(4, 5000), [0.0, 0.0], "2026-11-22T09:00:00Z")),
+            Kind::Gable => Some(Asset::new("同じ中身.psd", fake_file(2, 9000), [0.0, 0.0], "")),
+            _ => None,
+        };
+        Project { shape, assets, decals, base }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -683,7 +714,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new() };
+        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -735,8 +766,8 @@ mod tests {
         assert_eq!(project.assets[0].id(), project.assets[3].id());
         let bytes = bytes_of(&project);
         let zip = ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        // 設定のテキストと、中身の違う素材 3 つ。
-        assert_eq!(zip.len(), 4);
+        // 設定のテキストと、中身の違う素材 3 つと、展開図の絵。
+        assert_eq!(zip.len(), 5);
         let opened = Project::read(Cursor::new(bytes)).unwrap();
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -860,6 +891,37 @@ mod tests {
     }
 
     #[test]
+    fn 展開図の絵も_保存して開ける() {
+        // 素材と同じ中身の絵は、ファイルの中に 1 つだけ入り、開くと両方に戻る。
+        let project = sample(Kind::Gable);
+        let bytes = bytes_of(&project);
+        assert_eq!(ZipArchive::new(Cursor::new(&bytes)).unwrap().len(), 4);
+        let opened = Project::read(Cursor::new(bytes)).unwrap();
+        assert!(opened.problems.is_empty());
+        assert_eq!(opened.project.base, project.base);
+        assert!(Arc::ptr_eq(opened.project.base.as_ref().unwrap().bytes(), opened.project.assets[1].bytes()));
+
+        // 絵のファイルが欠けていたら、絵だけを外して開く。柄と素材は残る。
+        let project = sample(Kind::TuckBox);
+        let gone = project.base.as_ref().unwrap().file();
+        let mut zip = ZipArchive::new(Cursor::new(bytes_of(&project))).unwrap();
+        let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).filter(|n| *n != gone).collect();
+        let mut out = ZipWriter::new(Cursor::new(Vec::new()));
+        for name in names {
+            let mut bytes = Vec::new();
+            zip.by_name(&name).unwrap().read_to_end(&mut bytes).unwrap();
+            out.start_file(name, SimpleFileOptions::default()).unwrap();
+            out.write_all(&bytes).unwrap();
+        }
+        let opened = Project::read(Cursor::new(out.finish().unwrap().into_inner())).unwrap();
+        assert_eq!(opened.problems.len(), 1, "{:?}", opened.problems);
+        assert!(opened.problems[0].contains("型紙に描いた絵.psd"));
+        assert_eq!(opened.project.base, None);
+        assert_eq!(opened.project.decals, project.decals);
+        assert_eq!(opened.project.assets, project.assets);
+    }
+
+    #[test]
     fn 素材の中身が傷んでいたら_その素材を外して開く() {
         let project = sample(Kind::TuckBox);
         let mut bytes = bytes_of(&project);
@@ -940,7 +1002,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new() };
+        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -1007,6 +1069,7 @@ mod tests {
                 Placement { decal: Decal { panel: panel("上のフラップ", 3), at: [0.5, 0.4], size: [20.0, 20.0], angle: -0.3 }, back: false, source: Source::Builtin("logo".to_owned()) },
                 Placement { decal: Decal { panel: panel("側面 2", 1), at: [0.5, 0.1], size: [420.0, 14.0], angle: 0.0 }, back: false, source: Source::Builtin("band".to_owned()) },
             ],
+            base: Some(Asset::new("型紙に描いた絵.psd", fake_file(13, 1500), [0.0, 0.0], "2026-11-22T00:32:00+09:00")),
         }
     }
 

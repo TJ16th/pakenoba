@@ -27,9 +27,20 @@ impl App {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 ui.strong("パケノバ");
-                ui.add_space(16.0);
+                ui.add_space(8.0);
+                self.file_menu(ui);
+                ui.add_space(8.0);
                 for (workspace, label) in [(Workspace::Shape, "型"), (Workspace::Design, "デザイン"), (Workspace::Output, "出力")] {
                     ui.selectable_value(&mut self.workspace, workspace, format!("  {label}  "));
+                }
+                // 案件の名前と、保存していない変更の印。
+                ui.add_space(16.0);
+                let unsaved = self.unsaved();
+                let name = ui.label(format!("{}{}", self.project_name(), if unsaved { " *" } else { "" }));
+                if self.is_saving() {
+                    ui.weak("保存しています…");
+                } else if unsaved {
+                    name.on_hover_text("保存していない変更があります（Ctrl+S で保存）");
                 }
                 // メニューバーを作るまでの、元に戻すとやり直すの置き場。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -283,6 +294,7 @@ impl App {
             if ui.small_button("外す").clicked() {
                 self.custom = None;
                 self.custom_source = None;
+                self.base_file = None;
                 self.psd_info.clear();
                 self.art_dirty = true;
             }

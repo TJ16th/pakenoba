@@ -5,6 +5,7 @@
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
 mod assets;
+mod file;
 mod history;
 mod icons;
 mod panels;
@@ -16,6 +17,7 @@ use eframe::egui;
 use eframe::egui_wgpu;
 
 use pakenoba_core::check::check;
+use pakenoba_core::project;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template};
 
@@ -33,7 +35,7 @@ pub struct Initial {
     pub guides: bool,
     /// 起動時に読み込む PSD。
     pub psd: Option<PathBuf>,
-    /// 箱の型。0 は差し込み箱、2 はゲーブル型、10 はピロー型、それ以外の 3 以上は正多角柱の角の数。
+    /// 箱の型。0 は差し込み箱、2 はゲーブル型、100 はピロー型、それ以外の 3 以上は正多角柱の角の数。
     pub sides: usize,
     /// 起動時に開くワークスペース（0: 型、1: デザイン、2: 出力）。
     pub workspace: usize,
@@ -61,11 +63,16 @@ pub struct Initial {
     pub assets: Option<bool>,
     /// 開発用の情報（パネルの数、描画の方式など）を、下の帯に出す。
     pub debug: bool,
+    /// 起動時に開く案件のファイル（`.pknb`）。
+    pub project: Option<PathBuf>,
+    /// 画面を撮って確かめるとき用。ファイルを選ぶダイアログを出さずに、この場所を答えにする（開く、保存する）。
+    pub answer_open: Option<PathBuf>,
+    pub answer_save: Option<PathBuf>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None }
     }
 }
 
@@ -110,12 +117,12 @@ fn setup_style(ctx: &egui::Context) {
     });
 }
 
-/// ピロー型を表す番号。角柱の角の数と重ならない値にしてある。
-pub const PILLOW: usize = 10;
+/// ピロー型を表す番号。角柱の角の数（3〜12）と重ならない値にしてある。
+pub const PILLOW: usize = 100;
 
 #[derive(Clone, Copy, PartialEq)]
 struct Dims {
-    /// 0 は差し込み箱、1 は丸みのある手提げ型、2 はゲーブル型、10 はピロー型、それ以外の 3 以上は正多角柱の角の数。
+    /// 0 は差し込み箱、1 は丸みのある手提げ型、2 はゲーブル型、100 はピロー型、それ以外の 3 以上は正多角柱の角の数。
     sides: usize,
     /// 差し込み箱と手提げ型では幅、角柱では一辺の長さ、ピロー型では横の長さ。
     w: f32,
@@ -141,13 +148,30 @@ impl Dims {
         Dims { sides, w, d, h, t, bulge: if sides == PILLOW { 70.0 } else { 40.0 }, roof: 45.0 }
     }
 
+    /// 案件のファイルに書く形の、型と寸法。
+    fn shape(&self) -> project::Shape {
+        let kind = match self.sides {
+            2 => project::Kind::Gable,
+            PILLOW => project::Kind::Pillow,
+            n if n >= 3 => project::Kind::Prism(n),
+            _ => project::Kind::TuckBox,
+        };
+        project::Shape { kind, w: self.w, d: self.d, h: self.h, t: self.t, bulge: self.bulge, roof: self.roof }
+    }
+
+    fn from_shape(shape: &project::Shape) -> Dims {
+        let sides = match shape.kind {
+            project::Kind::TuckBox => 0,
+            project::Kind::Gable => 2,
+            project::Kind::Pillow => PILLOW,
+            project::Kind::Prism(n) => n,
+        };
+        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof }
+    }
+
+    /// 型紙。案件のファイルを開いたときと同じ作り方にする（パネルの並びがずれないように）。
     fn template(&self) -> Template {
-        match self.sides {
-            2 => Template::gable(self.w, self.d, self.h, self.roof, self.t),
-            PILLOW => Template::pillow(self.w, self.h, self.t, self.bulge.to_radians()),
-            n if n >= 3 => Template::prism(n, self.w, self.h, self.t),
-            _ => Template::tuck_box(self.w, self.d, self.h, self.t),
-        }
+        self.shape().template()
     }
 
     /// 型紙と、柄がたどれる面のつながりと、検査の結果。
@@ -173,10 +197,9 @@ impl Dims {
     }
 }
 
-/// PNG を読んで、RGBA（アルファは乗算なし）にする。
-fn load_png(path: &Path) -> Result<Picture, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("{} を開けませんでした: {e}", path.display()))?;
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+/// PNG のファイルの中身を、RGBA（アルファは乗算なし）にする。
+fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().map_err(|e| format!("PNG を読めませんでした: {e}"))?;
     let mut buf = vec![0u8; reader.output_buffer_size().ok_or("画像が大きすぎます")?];
@@ -375,6 +398,10 @@ struct App {
     /// 読み込んだ PSD の絵（合わせる前の画像と、その大きさ）。寸法を変えたら、展開図の大きさに合わせ直す。
     custom_source: Option<(Vec<u8>, [usize; 2])>,
     custom: Option<Vec<u8>>,
+    /// 展開図まるごとの絵の、元のファイル。案件のファイルに、そのまま入れる。
+    base_file: Option<project::Asset>,
+    /// 案件のファイルにかかわる状態（場所、保存していない変更、保存の進み具合）。
+    file: file::FileState,
     show_guides: bool,
     /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
@@ -461,6 +488,8 @@ impl App {
             sheet,
             custom_source: None,
             custom: None,
+            base_file: None,
+            file: file::FileState::new(initial.answer_open.clone(), initial.answer_save.clone()),
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -500,6 +529,11 @@ impl App {
             }
         }
         app.selected = initial.select.filter(|&i| i < app.decals.len());
+        // 起動したときの状態は、保存してある状態として扱う（何もしていないのに「未保存」と出さない）。
+        app.mark_saved();
+        if let Some(path) = &initial.project {
+            app.open_path(path);
+        }
         app
     }
 
@@ -538,7 +572,8 @@ impl App {
         self.art_dirty = true;
     }
 
-    fn apply_psd(&mut self, bytes: &[u8], source: &str) {
+    /// 展開図まるごとの絵（PSD）を読んで、柄の下に敷く。読めたら真。
+    fn apply_psd(&mut self, bytes: &[u8], source: &str) -> bool {
         match load_psd(bytes, self.sheet.w, self.sheet.h) {
             Ok(loaded) => {
                 let merged = if loaded.has_real_merged == Some(false) { "\n注意: この PSD には統合画像が入っていません。" } else { "" };
@@ -559,8 +594,12 @@ impl App {
                 self.custom = Some(loaded.rgba);
                 self.custom_source = Some((loaded.source, loaded.source_size));
                 self.art_dirty = true;
+                true
             }
-            Err(e) => self.psd_info = format!("{source}\n{e}"),
+            Err(e) => {
+                self.psd_info = format!("{source}\n{e}");
+                false
+            }
         }
     }
 
@@ -639,17 +678,32 @@ impl App {
         self.art_dirty = true;
     }
 
+    /// 画像（PNG）を、この案件の素材に取り込んで、柄として置く。元のファイルの中身も、そのまま持つ（案件のファイルに入れるため）。
     fn add_png(&mut self, path: &Path) {
-        match load_png(path) {
-            Ok(picture) => {
-                let Picture::Image { w, h, .. } = &picture else { return };
-                let size = [50.0, 50.0 * *h as f32 / *w as f32];
-                self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
-                let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
-                self.assets.push(assets::Asset { name, picture: picture.clone(), size, thumb: None, bundled: false });
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) => return self.say(format!("{} を開けませんでした: {e}", path.display())),
+        };
+        let picture = match decode_png(&bytes) {
+            Ok(picture) => picture,
+            Err(e) => return self.say(e),
+        };
+        let Picture::Image { w, h, .. } = &picture else { return };
+        let size = [50.0, 50.0 * *h as f32 / *w as f32];
+        let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
+        let stored = project::Asset::new(name.clone(), bytes, size, file::now_utc());
+        // 同じ中身の素材がすでにあれば、増やさずに、それを使う。
+        let known = self.assets.iter().find(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())).map(|asset| (asset.picture.clone(), asset.size));
+        match known {
+            Some((picture, size)) => {
+                self.say(format!("{name} は、すでに素材の欄にあります。柄として置きました。"));
                 self.add_decal(picture, size);
             }
-            Err(e) => self.say(e),
+            None => {
+                self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
+                self.assets.push(assets::Asset { name, picture: picture.clone(), size, thumb: None, bundled: false, stored: Some(stored) });
+                self.add_decal(picture, size);
+            }
         }
     }
 
@@ -670,7 +724,13 @@ impl App {
 
     fn open_psd(&mut self, path: &Path) {
         match std::fs::read(path) {
-            Ok(bytes) => self.apply_psd(&bytes, &path.display().to_string()),
+            Ok(bytes) => {
+                if self.apply_psd(&bytes, &path.display().to_string()) {
+                    // 元のファイルの中身も持つ（案件のファイルに入れるため）。
+                    let name = path.file_name().map_or_else(|| "展開図の絵".to_owned(), |n| n.to_string_lossy().into_owned());
+                    self.base_file = Some(project::Asset::new(name, bytes, [0.0, 0.0], file::now_utc()));
+                }
+            }
             Err(e) => self.psd_info = format!("{} を読めませんでした: {e}", path.display()),
         }
     }
@@ -868,8 +928,10 @@ impl eframe::App for App {
 
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         for path in &dropped {
-            // PNG は柄として置く。それ以外は、展開図まるごとの絵（PSD）として読む。
-            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
+            // 案件のファイルは開く。PNG は柄として置く。それ以外は、展開図まるごとの絵（PSD）として読む。
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(project::EXTENSION)) {
+                self.request_open(Some(path.clone()));
+            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
                 self.add_png(path);
             } else {
                 self.psd_path = path.display().to_string();
@@ -881,11 +943,15 @@ impl eframe::App for App {
         if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() {
             self.editing = false;
         }
+        self.file_frame(ui.ctx());
+        self.file_shortcuts(ui.ctx());
         self.shortcuts(ui.ctx());
         self.top_bar(ui);
+        self.run_file_action(ui.ctx());
         self.switch_camera();
         self.status_bar(ui);
         self.confirm_shape(ui.ctx());
+        self.file_dialogs(ui.ctx());
         match self.workspace {
             Workspace::Shape => {
                 self.shape_list(ui);
