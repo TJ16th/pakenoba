@@ -11,7 +11,7 @@ use crate::paint::Picture;
 
 
 /// 出力の種類。（名前、もう使えるか）。
-const OUTPUTS: [(&str, bool); 5] = [("型紙（PSD）", true), ("16:9 の画像（スライド用）", false), ("箱開け動画", false), ("店の棚に並べた絵", false), ("実寸の型紙（A4 や A3 に分けて印刷）", false)];
+use super::outputs::OUTPUTS;
 
 /// 数値の欄。右にそろえ、単位を必ず添える。
 fn number(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str) -> egui::Response {
@@ -537,23 +537,6 @@ impl App {
                     }
                 }
             });
-        });
-    }
-
-    /// 右（出力）: 選んだ出力の設定。
-    pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("output-settings").resizable(false).exact_size(300.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.strong(OUTPUTS[self.output_kind].0);
-            ui.label("切り線、折り線、のりしろと、置いた柄を、レイヤーに分けた PSD で保存します。");
-            if ui.button("型紙を PSD で保存…").clicked() {
-                self.export_psd();
-            }
-            if self.has_back_decals() {
-                ui.small("紙の裏にも柄があるので、裏の型紙も、同じ場所に「_裏」を付けた名前で保存します。裏の型紙は、裏から見た向き（左右を裏返した向き）です。");
-            }
-            ui.add_space(6.0);
-            ui.small("この型紙はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");
         });
     }
 

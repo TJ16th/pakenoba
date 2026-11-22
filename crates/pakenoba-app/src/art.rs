@@ -69,6 +69,31 @@ fn fill_band(tpl: &Template, w: usize, h: usize, first_row: usize, band: &mut [u
 }
 
 /// 何も描いていない紙と、ガイド線（切り線、折り線、のりを付ける面）を作る。
+/// 線分（両端）。
+pub type Segment = (P2, P2);
+
+/// 展開図の切り線と折り線（展開図の mm）。
+/// 2 枚のパネルが展開図の上で同じ辺を共有しているところは、紙がつながっているので、切り線ではなく折り線。
+pub fn sheet_lines(tpl: &Template) -> (Vec<Segment>, Vec<Segment>) {
+    let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
+    let edges: Vec<Vec<(P2, P2)>> = tpl.panels.iter().map(|panel| (0..panel.outline.len()).map(|i| (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()])).collect()).collect();
+    let (mut cuts, mut folds) = (Vec::new(), Vec::new());
+    for (index, own) in edges.iter().enumerate() {
+        for &(a, b) in own {
+            let other = edges.iter().enumerate().any(|(j, theirs)| j != index && theirs.iter().any(|&(c, d)| same(a, d) && same(b, c)));
+            if other {
+                // 共有している辺は、両方のパネルに 1 回ずつ出てくるので、片方だけ取る。
+                if !folds.iter().any(|&(c, d): &(P2, P2)| same(a, d) && same(b, c)) {
+                    folds.push((a, b));
+                }
+            } else {
+                cuts.push((a, b));
+            }
+        }
+    }
+    (cuts, folds)
+}
+
 pub fn make_sheet_art(tpl: &Template) -> SheetArt {
     let (w, h) = sheet_size(tpl);
     // 透明な部分にも紙の色を入れておく（拡大縮小したときに縁が黒ずまないように）。
@@ -88,22 +113,13 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
     // （ゲーブル型の側面の上の、斜めの線。データの上では親子になっていないが、1 枚の紙に入った折り線。）
     const CUT: [u8; 4] = [30, 30, 34, 255];
     const FOLD: [u8; 4] = [0, 150, 220, 255];
-    let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
-    let edges: Vec<Vec<(P2, P2)>> = tpl.panels.iter().map(|panel| (0..panel.outline.len()).map(|i| (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()])).collect()).collect();
     let mut lines = vec![0u8; w * h * 4];
     let mut glue = vec![0u8; w * h * 4];
-    let mut shared: Vec<(P2, P2)> = Vec::new();
-    for (index, own) in edges.iter().enumerate() {
-        for &(a, b) in own {
-            let other = edges.iter().enumerate().any(|(j, theirs)| j != index && theirs.iter().any(|&(c, d)| same(a, d) && same(b, c)));
-            if other {
-                shared.push((a, b));
-            } else {
-                draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
-            }
-        }
+    let (cuts, folds) = sheet_lines(tpl);
+    for (a, b) in cuts {
+        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
     }
-    for (a, b) in shared {
+    for (a, b) in folds {
         draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, FOLD);
     }
     // のりしろには、のりを付ける面だと分かるよう、斜めの細い線を入れる。

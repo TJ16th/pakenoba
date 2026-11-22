@@ -11,6 +11,7 @@ mod file;
 mod history;
 mod icons;
 mod library;
+mod outputs;
 mod panels;
 mod recovery;
 mod select;
@@ -482,6 +483,13 @@ struct App {
     settings: settings::Settings,
     /// 「素材」の画面。
     library: library::Library,
+    /// 箱を描く仕組み（書き出しで、画面とは別に箱を描くため）。
+    render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// 出力の設定と、書き出している途中の動画。
+    output: outputs::OutputSettings,
+    /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
+    solid_aspect: f32,
+    movie: Option<outputs::MovieJob>,
     /// OS のフォント（文字の柄を描く）。
     fonts: crate::text::Fonts,
     /// 次に置く文字の書式。
@@ -591,6 +599,10 @@ impl App {
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,
             layer_drag: None,
+            render_state: None,
+            output: Default::default(),
+            solid_aspect: 16.0 / 9.0,
+            movie: None,
             fonts: Default::default(),
             text_style: typing::default_style(),
             focus_text: false,
@@ -1106,6 +1118,7 @@ impl eframe::App for App {
         self.confirm_shape(ui.ctx());
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
+        self.movie_frame(ui.ctx());
         if self.library.open {
             self.library_screen(ui);
             self.rebuild_if_needed();

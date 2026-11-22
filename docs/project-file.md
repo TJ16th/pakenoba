@@ -351,7 +351,7 @@ back = false
 | rfd（OS のダイアログ） | 0.18.0 | MIT |
 | chrono（その土地の時刻） | 0.4.45 | MIT または Apache-2.0 |
 
-画面のほうにも、設定（コレクションの登録）を書くために、serde と toml を足した。中核と同じ版で、ライセンスも同じ。JPEG を読むために、zune-jpeg 0.5.15（と、それが使う zune-core 0.5.3）を足した。どちらも MIT、Apache-2.0、Zlib のどれかを選べる。
+画面のほうにも、設定（コレクションの登録）を書くために、serde と toml を足した。中核と同じ版で、ライセンスも同じ。JPEG を読むために、zune-jpeg 0.5.15（と、それが使う zune-core 0.5.3）を足した。どちらも MIT、Apache-2.0、Zlib のどれかを選べる。書き出しのために、gif 0.14.2（MIT か Apache-2.0）、pdf-writer 0.15.0（MIT か Apache-2.0）、flate2 1.1.11（MIT か Apache-2.0。すでに zip が使っていた版）を足した。
 
 これらが連れてくる部品は、ほとんどが MIT または Apache-2.0。それ以外は、winnow（MIT）、zlib-rs（Zlib）、memchr（Unlicense または MIT）、constant_time_eq（CC0-1.0、MIT-0、Apache-2.0 のどれか）で、どれも「MIT または Apache-2.0」での公開と両立する。zip は、圧縮（deflate）だけを有効にした。暗号化と、ほかの圧縮形式は入れていない。
 

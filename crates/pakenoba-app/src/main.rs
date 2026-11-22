@@ -7,6 +7,7 @@ mod app;
 mod art;
 mod gpu;
 mod paint;
+mod print;
 mod text;
 
 use std::process::ExitCode;

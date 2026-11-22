@@ -1,0 +1,463 @@
+//! 出力の工程の、型紙の PSD 以外の書き出し。
+//!
+//! - 16:9 の画像（スライド用）: いまの視点の箱を、PNG で。背景は、明るい灰色、白、透明から選ぶ。
+//! - 箱開けの動画: 閉じた箱が開く動きを、GIF で。少しずつ回り込む動きも付けられる。
+//!   1 回の画面の更新で 1 コマずつ描き、別のスレッドで GIF にまとめる（書き出しの間も、画面は止まらない）。
+//! - 実寸の型紙: 展開図を実寸で、A4 か A3 に分けた PDF に（print.rs）。
+//!
+//! どれも、選んでいる柄の枠、カーソルの下の枠、ガイドの線を消した絵で描く。
+
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread::JoinHandle;
+
+use eframe::egui;
+use eframe::egui_wgpu;
+
+use pakenoba_core::math::{Mat4, V3, look_at, mat4_mul, normalize, perspective};
+use pakenoba_core::template::bounding_sphere;
+
+use super::{App, Shown};
+use crate::art::{compose, sheet_lines};
+use crate::gpu::BoxRenderer;
+use crate::paint::{Canvas, Marks, paint};
+use crate::print::{Paper, PrintSettings, SheetPrint, print_pdf, tile};
+
+/// 出力の種類（左の一覧の順）。
+pub(super) const OUTPUTS: [(&str, bool); 5] = [("型紙（PSD）", true), ("16:9 の画像（スライド用）", true), ("箱開け動画", true), ("店の棚に並べた絵", false), ("実寸の型紙（A4 や A3 に分けて印刷）", true)];
+
+/// 画像の大きさ（16:9）。
+const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160（4K）", [3840, 2160])];
+/// 背景の色。最後は透明。
+const BACKGROUNDS: [(&str, [f32; 4]); 3] = [("明るい灰色", [0.93, 0.93, 0.92, 1.0]), ("白", [1.0, 1.0, 1.0, 1.0]), ("透明", [0.0, 0.0, 0.0, 0.0])];
+/// 動画の大きさと、1 秒のコマ数。
+const MOVIE_SIZES: [(&str, [u32; 2]); 2] = [("960 x 540", [960, 540]), ("1280 x 720", [1280, 720])];
+const MOVIE_FPS: u32 = 20;
+
+/// 出力の設定。
+pub(super) struct OutputSettings {
+    pub shot_size: usize,
+    pub background: usize,
+    pub movie_size: usize,
+    pub movie_seconds: f32,
+    /// 開けながら、少し回り込む。
+    pub movie_turn: bool,
+    pub print: PrintSettings,
+}
+
+impl Default for OutputSettings {
+    fn default() -> Self {
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default() }
+    }
+}
+
+/// 書き出している途中の動画。
+pub(super) struct MovieJob {
+    frame: u32,
+    total: u32,
+    yaw: f32,
+    send: Option<mpsc::SyncSender<Vec<u8>>>,
+    writer: Option<JoinHandle<Result<(), String>>>,
+    path: PathBuf,
+}
+
+/// 動画のコマ `frame` の、開け具合（0〜1）と、回り込む角度（ラジアン）。
+/// はじめの 1 割は閉じたまま、そのあと 6 割で開け、残りは開けたまま。
+pub(super) fn movie_pose(frame: u32, total: u32, turn: bool) -> (f32, f32) {
+    let t = frame as f32 / (total.max(2) - 1) as f32;
+    let open = ((t - 0.1) / 0.6).clamp(0.0, 1.0);
+    let eased = open * open * (3.0 - 2.0 * open);
+    let swing = if turn { (t - 0.5) * 30f32.to_radians() } else { 0.0 };
+    (eased, swing)
+}
+
+/// 箱の視点（立体の表示と同じ計算）。返すのは、投影と視点をかけたものと、光の向き。
+/// `view_aspect` は立体の表示の縦横比。画像は、立体の表示の中央を `aspect` の縦横比で切り抜いた範囲にする
+/// （出力の工程で、立体の表示の上に描いた枠の中と同じになる）。
+fn camera(mesh: &[pakenoba_core::template::Vertex], aspect: f32, view_aspect: f32, yaw: f32, pitch: f32, zoom: f32) -> (Mat4, V3) {
+    let (center, radius) = bounding_sphere(mesh);
+    let fov = 30f32.to_radians();
+    let dist = radius / (fov * 0.5).sin() * 1.1 / zoom / view_aspect.min(1.0);
+    // 枠の高さが、立体の表示の高さのどれだけか。そのぶん、縦の画角を狭める。
+    let share = if view_aspect > aspect { 1.0 } else { view_aspect / aspect };
+    let fov_out = 2.0 * ((fov * 0.5).tan() * share).atan();
+    let dir = [pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos()];
+    let eye = [center[0] + dir[0] * dist, center[1] + dir[1] * dist, center[2] + dir[2] * dist];
+    let view = look_at(eye, center, [0.0, 1.0, 0.0]);
+    let proj = perspective(fov_out, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
+    let right = normalize([view[0][0], view[1][0], view[2][0]]);
+    let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
+    (mat4_mul(&proj, &view), light)
+}
+
+/// 名前の拡張子をそろえる。
+fn with_extension(path: PathBuf, ext: &str) -> PathBuf {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
+        return path;
+    }
+    let mut name = path.file_name().map(|n| n.to_owned()).unwrap_or_default();
+    name.push(format!(".{ext}"));
+    path.with_file_name(name)
+}
+
+/// RGBA を PNG にする。
+fn png_bytes(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+impl App {
+    /// 保存先を選んでもらう。`what` はダイアログの題、`ext` は拡張子、`suffix` ははじめの名前に足す言葉。
+    fn ask_output(&mut self, what: &str, filter: &str, ext: &str, suffix: &str) -> Option<PathBuf> {
+        if let Some(answer) = self.answer_export.take() {
+            return Some(with_extension(answer, ext));
+        }
+        let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| "パケノバ".to_owned(), |s| s.to_string_lossy().into_owned());
+        let mut dialog = rfd::FileDialog::new().set_title(what).add_filter(filter, &[ext]).set_file_name(format!("{project}_{suffix}.{ext}"));
+        if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
+            dialog = dialog.set_directory(dir);
+        }
+        dialog.save_file().map(|p| with_extension(p, ext))
+    }
+
+    /// 書き出し用に、枠とガイドのない絵を、箱に貼り直す。戻すときは `restore_marks`。
+    fn clean_art(&mut self, ctx: &egui::Context, rs: &egui_wgpu::RenderState) -> (Option<usize>, Vec<usize>, bool) {
+        let kept = (self.selected.take(), std::mem::take(&mut self.extra), self.show_guides);
+        self.show_guides = false;
+        self.hover_decal = None;
+        (self.art_dirty, self.back_dirty) = (true, true);
+        self.refresh_art(ctx, Some(rs), Shown::SOLID_ONLY);
+        kept
+    }
+
+    fn restore_marks(&mut self, kept: (Option<usize>, Vec<usize>, bool)) {
+        (self.selected, self.extra, self.show_guides) = kept;
+        (self.art_dirty, self.back_dirty) = (true, true);
+    }
+
+    /// いまの視点の箱を、`size` の画像に描く。`frame` が真なら、開けきった箱が収まる視点にする（動画で、コマごとに大きさが変わらないように）。
+    fn render_box(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], open: [f32; 2], yaw: f32, background: [f32; 4], frame: bool) -> Result<Vec<u8>, String> {
+        let mesh = self.template.build_mesh_at(self.fold, [1.0 - open[0], 1.0 - open[1]]);
+        let fit = if frame { self.template.build_mesh_at(self.fold, [0.0, 1.0 - open[1]]) } else { mesh.clone() };
+        let aspect = size[0] as f32 / size[1] as f32;
+        // 動画は、開けきった箱が画面いっぱいに収まる視点（向きだけ、いまの視点から取る）。
+        let (view_aspect, zoom) = if frame { (aspect, 1.25) } else { (self.solid_aspect, self.zoom) };
+        let (view_proj, light) = camera(&fit, aspect, view_aspect, yaw, self.pitch, zoom);
+        let holes = self.holes();
+        self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).capture(rs, size, &mesh, view_proj, light, holes, background)
+    }
+
+    /// 抜き穴を、絵柄の座標（0〜1）に直したもの。
+    pub(super) fn holes(&self) -> [[f32; 4]; 2] {
+        let t = &self.template;
+        let (sheet_w, sheet_h) = (t.max[0] - t.min[0], t.max[1] - t.min[1]);
+        let mut holes = [[0.0f32; 4]; 2];
+        for (slot, h) in holes.iter_mut().zip(&t.holes) {
+            *slot = [(h[0] - t.min[0]) / sheet_w, (t.max[1] - h[1]) / sheet_h, h[2] / sheet_w, h[3] / sheet_h];
+        }
+        holes
+    }
+
+    /// 16:9 の画像を書き出す。
+    pub(super) fn export_image(&mut self, ctx: &egui::Context) {
+        let Some(rs) = self.render_state.clone() else { return self.say("この PC では箱を描けないので、画像を書き出せません。") };
+        let Some(path) = self.ask_output("16:9 の画像を保存", "PNG", "png", "画像") else { return };
+        let size = SHOT_SIZES[self.output.shot_size].1;
+        let background = BACKGROUNDS[self.output.background].1;
+        let kept = self.clean_art(ctx, &rs);
+        let result = self.render_box(&rs, size, self.open, self.yaw, background, false).and_then(|rgba| png_bytes(size[0], size[1], &rgba));
+        self.restore_marks(kept);
+        match result.and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+            Ok(()) => self.say(format!("{} を保存しました（{} x {} px）", path.display(), size[0], size[1])),
+            Err(e) => self.say(format!("画像を保存できませんでした: {e}")),
+        }
+    }
+
+    /// 箱開けの動画を書き出しはじめる。コマは `movie_frame` で 1 つずつ描く。
+    pub(super) fn export_movie(&mut self) {
+        if self.movie.is_some() {
+            return;
+        }
+        if self.render_state.is_none() {
+            return self.say("この PC では箱を描けないので、動画を書き出せません。");
+        }
+        if !self.template.can_open_at(0) {
+            return self.say("この型には、開け閉めの動きがありません。");
+        }
+        let Some(path) = self.ask_output("箱開け動画を保存", "GIF アニメーション", "gif", "箱開け") else { return };
+        let size = MOVIE_SIZES[self.output.movie_size].1;
+        let total = ((self.output.movie_seconds * MOVIE_FPS as f32).round() as u32).max(10);
+        // コマを受け取って GIF にまとめるスレッド。描く側を待たせすぎないよう、4 コマまでためる。
+        let (send, receive) = mpsc::sync_channel::<Vec<u8>>(4);
+        let file_path = path.clone();
+        let writer = std::thread::Builder::new()
+            .name("pakenoba-movie".to_owned())
+            .spawn(move || -> Result<(), String> {
+                let file = std::fs::File::create(&file_path).map_err(|e| e.to_string())?;
+                let mut encoder = gif::Encoder::new(std::io::BufWriter::new(file), size[0] as u16, size[1] as u16, &[]).map_err(|e| e.to_string())?;
+                encoder.set_repeat(gif::Repeat::Infinite).map_err(|e| e.to_string())?;
+                for mut rgba in receive {
+                    let mut frame = gif::Frame::from_rgba_speed(size[0] as u16, size[1] as u16, &mut rgba, 10);
+                    frame.delay = (100 / MOVIE_FPS) as u16;
+                    encoder.write_frame(&frame).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            })
+            .map_err(|e| e.to_string());
+        match writer {
+            Ok(writer) => {
+                self.movie = Some(MovieJob { frame: 0, total, yaw: self.yaw, send: Some(send), writer: Some(writer), path });
+                self.say("動画を書き出しています…");
+            }
+            Err(e) => self.say(format!("動画を書き出せませんでした: {e}")),
+        }
+    }
+
+    /// 動画のコマを 1 つ描いて渡す。描き終わったら、書き終わるのを待って知らせる。画面の更新ごとに呼ぶ。
+    pub(super) fn movie_frame(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.movie else { return };
+        ctx.request_repaint();
+        if job.frame < job.total {
+            let (frame, total, yaw0) = (job.frame, job.total, job.yaw);
+            let Some(rs) = self.render_state.clone() else { return };
+            let (open, swing) = movie_pose(frame, total, self.output.movie_turn);
+            let size = MOVIE_SIZES[self.output.movie_size].1;
+            let background = BACKGROUNDS[self.output.background.min(1)].1;
+            let kept = self.clean_art(ctx, &rs);
+            let rendered = self.render_box(&rs, size, [open, 0.0], yaw0 + swing, background, true);
+            self.restore_marks(kept);
+            let job = self.movie.as_mut().expect("あった");
+            match rendered {
+                Ok(rgba) => {
+                    if job.send.as_ref().is_some_and(|send| send.send(rgba).is_err()) {
+                        job.frame = job.total;
+                    } else {
+                        job.frame += 1;
+                    }
+                    let progress = format!("動画を書き出しています… {} / {} コマ", job.frame, job.total);
+                    self.say(progress);
+                }
+                Err(e) => {
+                    self.movie = None;
+                    return self.say(format!("動画を書き出せませんでした: {e}"));
+                }
+            }
+            return;
+        }
+        // 描き終わった。渡し口を閉じて、書き終わるのを待つ。
+        let job = self.movie.as_mut().expect("あった");
+        job.send = None;
+        if job.writer.as_ref().is_some_and(|w| !w.is_finished()) {
+            return;
+        }
+        let job = self.movie.take().expect("あった");
+        let result = job.writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err("書き出しの途中で止まりました".to_owned())));
+        match result {
+            Ok(()) => self.say(format!("{} を保存しました（{} コマ）", job.path.display(), job.total)),
+            Err(e) => self.say(format!("動画を保存できませんでした: {e}")),
+        }
+    }
+
+    /// 実寸の型紙の PDF を書き出す。
+    pub(super) fn export_print(&mut self) {
+        let Some(path) = self.ask_output("実寸の型紙を保存", "PDF", "pdf", "実寸の型紙") else { return };
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        // 柄と紙の色だけの絵（ガイドの線は、PDF に線で描く）。
+        let art = compose(&self.sheet, self.custom[0].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), false, Canvas { w, h, rgba }));
+        let (cuts, folds) = sheet_lines(&self.template);
+        let title = self.project_name();
+        let sheet = SheetPrint { min: self.template.min, max: self.template.max, w, h, rgba: &art, cuts: &cuts, folds: &folds, title: &title };
+        match print_pdf(&sheet, &self.output.print).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+            Ok(()) => {
+                let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
+                let pages = self.used_tiles(size, &tile(size, &self.output.print)).len();
+                self.say(format!("{} を保存しました（{} {pages} 枚）。印刷するときは「実際のサイズ」（100%）で刷ってください。", path.display(), self.output.print.paper.name()));
+            }
+            Err(e) => self.say(format!("実寸の型紙を保存できませんでした: {e}")),
+        }
+    }
+
+    /// 右（出力）: 選んだ出力の設定。
+    pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::right("output-settings").resizable(false).exact_size(300.0).show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.strong(OUTPUTS[self.output_kind].0);
+            let ctx = ui.ctx().clone();
+            match self.output_kind {
+                0 => {
+                    ui.label("切り線、折り線、のりしろと、置いた柄を、レイヤーに分けた PSD で保存します。");
+                    if ui.button("型紙を PSD で保存…").clicked() {
+                        self.export_psd();
+                    }
+                    if self.has_back_decals() {
+                        ui.small("紙の裏にも柄があるので、裏の型紙も、同じ場所に「_裏」を付けた名前で保存します。裏の型紙は、裏から見た向き（左右を裏返した向き）です。");
+                    }
+                }
+                1 => {
+                    ui.label("いま見えている向きの箱を、16:9 の画像（PNG）で保存します。向きと大きさは、中央の箱をドラッグとホイールで合わせます。");
+                    egui::Grid::new("shot").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("大きさ");
+                        egui::ComboBox::from_id_salt("shot-size").selected_text(SHOT_SIZES[self.output.shot_size].0).show_ui(ui, |ui| {
+                            for (i, (label, _)) in SHOT_SIZES.iter().enumerate() {
+                                ui.selectable_value(&mut self.output.shot_size, i, *label);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("背景");
+                        egui::ComboBox::from_id_salt("shot-bg").selected_text(BACKGROUNDS[self.output.background].0).show_ui(ui, |ui| {
+                            for (i, (label, _)) in BACKGROUNDS.iter().enumerate() {
+                                ui.selectable_value(&mut self.output.background, i, *label);
+                            }
+                        });
+                        ui.end_row();
+                    });
+                    if ui.button("画像を保存…").clicked() {
+                        self.export_image(&ctx);
+                    }
+                    ui.small("中央の枠の中が、画像に入る範囲です。");
+                }
+                2 => {
+                    ui.label("閉じた箱が開く動きを、GIF アニメーションで保存します。スライドに貼れます。向きは、いま見えている向きから始めます。大きさは、開けきった箱が収まるように合わせます。");
+                    egui::Grid::new("movie").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("大きさ");
+                        egui::ComboBox::from_id_salt("movie-size").selected_text(MOVIE_SIZES[self.output.movie_size].0).show_ui(ui, |ui| {
+                            for (i, (label, _)) in MOVIE_SIZES.iter().enumerate() {
+                                ui.selectable_value(&mut self.output.movie_size, i, *label);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("長さ");
+                        ui.add(egui::DragValue::new(&mut self.output.movie_seconds).range(1.5..=10.0).speed(0.1).max_decimals(1).suffix(" 秒"));
+                        ui.end_row();
+                        ui.label("背景");
+                        egui::ComboBox::from_id_salt("movie-bg").selected_text(BACKGROUNDS[self.output.background.min(1)].0).show_ui(ui, |ui| {
+                            for (i, (label, _)) in BACKGROUNDS.iter().take(2).enumerate() {
+                                ui.selectable_value(&mut self.output.background, i, *label);
+                            }
+                        });
+                        ui.end_row();
+                    });
+                    ui.checkbox(&mut self.output.movie_turn, "開けながら、少し回り込む");
+                    let busy = self.movie.is_some();
+                    if ui.add_enabled(!busy, egui::Button::new("動画を保存…")).clicked() {
+                        self.export_movie();
+                    }
+                    if !self.template.can_open_at(0) {
+                        ui.small("この型には、開け閉めの動きがありません。");
+                    }
+                    ui.small("MP4 での保存は、まだありません。");
+                }
+                4 => {
+                    ui.label("展開図を実寸で、紙に分けた PDF にします。重ねしろで貼り合わせて、厚紙に貼って組めます。");
+                    egui::Grid::new("print").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("用紙");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut self.output.print.paper, Paper::A4, "A4");
+                            ui.selectable_value(&mut self.output.print.paper, Paper::A3, "A3");
+                        });
+                        ui.end_row();
+                        ui.label("重ねしろ");
+                        ui.add(egui::DragValue::new(&mut self.output.print.overlap).range(0.0..=30.0).speed(0.5).max_decimals(0).suffix(" mm"));
+                        ui.end_row();
+                        ui.label("紙の端の余白");
+                        ui.add(egui::DragValue::new(&mut self.output.print.margin).range(3.0..=25.0).speed(0.5).max_decimals(0).suffix(" mm"));
+                        ui.end_row();
+                    });
+                    let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
+                    let tiling = tile(size, &self.output.print);
+                    let used = self.used_tiles(size, &tiling);
+                    ui.label(format!("{} を{}で {} 枚（横 {} x 縦 {} に分け、展開図がかからない紙は刷らない）", self.output.print.paper.name(), if tiling.landscape() { "横向き" } else { "縦向き" }, used.len(), tiling.columns, tiling.rows));
+                    self.print_preview(ui, size, &tiling, &used);
+                    if ui.button("実寸の型紙を PDF で保存…").clicked() {
+                        self.export_print();
+                    }
+                    ui.small("印刷するときは、拡大・縮小をせず「実際のサイズ」（100%）で刷ってください。1 枚目の 100 mm の目盛りを定規で測ると、確かめられます。");
+                }
+                _ => {}
+            }
+            ui.add_space(6.0);
+            ui.small("この出力はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");
+        });
+    }
+
+    /// 紙の分け方の見本。展開図の絵の上に、紙の区切り（刷れる範囲）と番号を描く。
+    /// 刷る紙（展開図の紙がかかるもの）。
+    fn used_tiles(&self, size: [f32; 2], tiling: &crate::print::Tiling) -> Vec<(usize, usize)> {
+        let (w, art) = (self.sheet.w, &self.sheet.art);
+        crate::print::used_tiles(tiling, size, self.output.print.margin, w, self.sheet.h, |x, y| art[(y * w + x) * 4 + 3])
+    }
+
+    fn print_preview(&mut self, ui: &mut egui::Ui, size: [f32; 2], tiling: &crate::print::Tiling, used: &[(usize, usize)]) {
+        // 展開図の絵（出力の工程では、展開図の表示を出さないので、ここで用意する）。
+        if self.front_tex.is_none() || self.front_tex_dirty {
+            self.front_tex = Some(super::views::texture(ui.ctx(), "sheet-front", self.sheet.w, self.sheet.h, &self.front_rgba));
+            self.front_tex_dirty = false;
+        }
+        let margin = self.output.print.margin;
+        let usable = [tiling.page[0] - 2.0 * margin, tiling.page[1] - 2.0 * margin];
+        let extent = [((tiling.columns - 1) as f32 * tiling.step[0] + usable[0]).max(size[0]), ((tiling.rows - 1) as f32 * tiling.step[1] + usable[1]).max(size[1])];
+        let width = ui.available_width();
+        let scale = (width / extent[0]).min(240.0 / extent[1]);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, extent[1] * scale + 4.0), egui::Sense::hover());
+        let origin = rect.left_top() + egui::vec2((width - extent[0] * scale) * 0.5, 2.0);
+        let painter = ui.painter_at(rect);
+        // 展開図は、1 枚目の左上から置く（PDF と同じ）。
+        let sheet = egui::Rect::from_min_size(origin, egui::vec2(size[0] * scale, size[1] * scale));
+        if let Some(texture) = &self.front_tex {
+            painter.image(texture.id(), sheet, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        }
+        for (number, &(row, column)) in used.iter().enumerate() {
+            let min = origin + egui::vec2(column as f32 * tiling.step[0], row as f32 * tiling.step[1]) * scale;
+            let page = egui::Rect::from_min_size(min, egui::vec2(usable[0], usable[1]) * scale);
+            painter.rect_stroke(page, 0.0, egui::Stroke::new(1.0, super::TEAL), egui::StrokeKind::Inside);
+            painter.text(page.left_top() + egui::vec2(3.0, 2.0), egui::Align2::LEFT_TOP, format!("{}", number + 1), egui::FontId::proportional(11.0), super::TEAL);
+        }
+    }
+
+    /// 出力の工程で、16:9 の画像を選んでいるとき、立体の表示の上に、画像に入る範囲の枠を描く。
+    pub(super) fn shot_frame(&self, ui: &egui::Ui, rect: egui::Rect) {
+        if self.output_kind != 1 {
+            return;
+        }
+        let target = 16.0 / 9.0;
+        let aspect = rect.width() / rect.height();
+        let frame = if aspect > target { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.height() * target, rect.height())) } else { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), rect.width() / target)) };
+        let painter = ui.painter().with_clip_rect(rect);
+        let shade = egui::Color32::from_black_alpha(110);
+        for part in [egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, frame.min.y)), egui::Rect::from_min_max(egui::pos2(rect.min.x, frame.max.y), rect.max), egui::Rect::from_min_max(egui::pos2(rect.min.x, frame.min.y), egui::pos2(frame.min.x, frame.max.y)), egui::Rect::from_min_max(egui::pos2(frame.max.x, frame.min.y), egui::pos2(rect.max.x, frame.max.y))] {
+            painter.rect_filled(part, 0.0, shade);
+        }
+        painter.rect_stroke(frame, 0.0, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)), egui::StrokeKind::Inside);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 動画は_閉じたまま始まり_開けたまま終わる() {
+        let total = 60;
+        assert_eq!(movie_pose(0, total, false), (0.0, 0.0));
+        assert_eq!(movie_pose(5, total, false).0, 0.0, "はじめの 1 割は閉じたまま");
+        assert_eq!(movie_pose(total - 1, total, false).0, 1.0);
+        assert_eq!(movie_pose(45, total, false).0, 1.0, "後ろは開けたまま");
+        let opens: Vec<f32> = (0..total).map(|f| movie_pose(f, total, true).0).collect();
+        assert!(opens.windows(2).all(|w| w[1] >= w[0]), "閉じる向きに戻らない");
+        let (_, first) = movie_pose(0, total, true);
+        let (_, last) = movie_pose(total - 1, total, true);
+        assert!((last - first - 30f32.to_radians()).abs() < 1e-4, "30 度回り込む");
+    }
+
+    #[test]
+    fn 名前に拡張子を足す() {
+        assert_eq!(with_extension(PathBuf::from("a/箱"), "png"), PathBuf::from("a/箱.png"));
+        assert_eq!(with_extension(PathBuf::from("a/箱.PNG"), "png"), PathBuf::from("a/箱.PNG"));
+    }
+}

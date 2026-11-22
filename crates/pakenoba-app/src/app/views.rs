@@ -86,6 +86,7 @@ impl App {
         // 表、裏を出せるのは、デザインの工程だけ。ほかの工程は立体だけ。
         let shown = if self.workspace == Workspace::Design { self.shown } else { Shown::SOLID_ONLY };
         let rs: Option<egui_wgpu::RenderState> = frame.wgpu_render_state().cloned();
+        self.render_state.clone_from(&rs);
         self.refresh_art(ui.ctx(), rs.as_ref(), shown);
         ui.painter().rect_filled(rect, 0.0, ui.visuals().window_stroke.color);
         self.hover = None;
@@ -102,6 +103,9 @@ impl App {
             let split = rect.bottom() - (10.0 + 28.0 * rows as f32);
             let (view, strip) = (Rect::from_min_max(rect.min, pos2(rect.right(), split)), Rect::from_min_max(pos2(rect.left(), split), rect.max));
             candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
+            if self.workspace == Workspace::Output {
+                self.shot_frame(ui, view);
+            }
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
             ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, rows));
             if several {
@@ -164,6 +168,7 @@ impl App {
         let ppp = ui.ctx().pixels_per_point();
         let size = [(rect.width() * ppp).round().max(2.0) as u32, (rect.height() * ppp).round().max(2.0) as u32];
         let aspect = size[0] as f32 / size[1] as f32;
+        self.solid_aspect = aspect;
         let fov = 30f32.to_radians();
         // 縦長の画面でも箱がはみ出さないように、狭いほうに合わせて離れる。
         let dist = radius / (fov * 0.5).sin() * 1.1 / self.zoom / aspect.min(1.0);

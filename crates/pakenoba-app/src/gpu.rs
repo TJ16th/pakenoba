@@ -334,4 +334,89 @@ impl BoxRenderer {
         rs.queue.submit(Some(encoder.finish()));
         self.egui_id
     }
+
+    /// 箱を、画面とは別の画像に描いて、RGBA（アルファは乗算なし）で読み戻す。画像や動画に書き出すとき用。
+    /// `background` のアルファを 0 にすると、背景は透明になる。
+    #[allow(clippy::too_many_arguments)]
+    pub fn capture(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, light: V3, holes: [[f32; 4]; 2], background: [f32; 4]) -> Result<Vec<u8>, String> {
+        let max = rs.device.limits().max_texture_dimension_2d;
+        if size[0] < 2 || size[1] < 2 || size[0] > max || size[1] > max {
+            return Err(format!("この PC では、{} x {} px の画像を描けません（{max} px まで）", size[0], size[1]));
+        }
+        let device = &rs.device;
+        let attach = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let msaa = texture(device, "capture msaa", size, COLOR_FORMAT, SAMPLES, attach);
+        let depth = texture(device, "capture depth", size, DEPTH_FORMAT, SAMPLES, attach);
+        let resolve = texture(device, "capture resolve", size, COLOR_FORMAT, 1, attach | wgpu::TextureUsages::COPY_SRC);
+        let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
+        if vertices.len() > self.vertex_capacity {
+            self.vertex_capacity = vertices.len().next_power_of_two();
+            self.vertex_buf = vertex_buffer(device, self.vertex_capacity);
+        }
+        rs.queue.write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
+        rs.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&Globals { view_proj, light: [light[0], light[1], light[2], 0.0], holes }));
+        // 1 行の長さは 256 バイトの倍数にそろえる（wgpu の決まり）。
+        let row = (size[0] * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("capture readback"), size: (row * size[1]) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("capture") });
+        {
+            let (msaa_view, depth_view, resolve_view) = (view(&msaa), view(&depth), view(&resolve));
+            let clear = wgpu::Color { r: background[0] as f64, g: background[1] as f64, b: background[2] as f64, a: background[3] as f64 };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("capture"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &msaa_view,
+                    resolve_target: Some(&resolve_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Discard },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.globals_bind, &[]);
+            pass.set_bind_group(1, &self.art_bind, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buf.slice(..std::mem::size_of_val(vertices) as u64));
+            pass.draw(0..vertices.len() as u32, 0..1);
+        }
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo { texture: &resolve, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(size[1]) } },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        rs.queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (send, receive) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = send.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| format!("描き終わるのを待てませんでした: {e}"))?;
+        receive.recv().map_err(|_| "読み戻せませんでした".to_owned())?.map_err(|e| format!("読み戻せませんでした: {e}"))?;
+        let mapped = slice.get_mapped_range().map_err(|e| format!("読み戻せませんでした: {e:?}"))?;
+        let mut rgba = Vec::with_capacity((size[0] * size[1] * 4) as usize);
+        for y in 0..size[1] as usize {
+            let start = y * row as usize;
+            rgba.extend_from_slice(&mapped[start..start + size[0] as usize * 4]);
+        }
+        drop(mapped);
+        readback.unmap();
+        // 色は乗算済みで描かれる（背景が透明のとき）ので、乗算なしに直す。
+        if background[3] < 1.0 {
+            for p in rgba.chunks_exact_mut(4) {
+                let a = p[3];
+                if a > 0 && a < 255 {
+                    for c in &mut p[..3] {
+                        *c = ((*c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
+                    }
+                }
+            }
+        }
+        Ok(rgba)
+    }
 }

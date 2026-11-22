@@ -22,6 +22,10 @@ png = "0.18"
 fontique = "0.11.1"
 skrifa = "0.44.0"
 vello_cpu = { version = "0.2.0", default-features = false, features = ["std", "u8_pipeline", "text"] }
+# 書き出し: 箱開けの動画（GIF）と、実寸の型紙（PDF。絵は flate2 で圧縮して入れる）。
+gif = "0.14.2"
+pdf-writer = "0.15.0"
+flate2 = "1.1.11"
 # 柄にする画像（JPEG）の読み込み。
 zune-jpeg = "0.5.15"
 # craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
