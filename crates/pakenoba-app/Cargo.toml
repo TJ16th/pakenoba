@@ -20,6 +20,9 @@ bytemuck = { version = "1", features = ["derive"] }
 png = "0.18"
 # craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
 craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+# 案件をまたぐ設定（コレクションの登録）を、人が読める形で覚える。
+serde = { version = "1", features = ["derive"] }
+toml = "1"
 # ファイルを開く、保存するときの、OS のダイアログ。
 rfd = "0.18"
 # 素材を取り込んだ日時（その土地の時刻）。

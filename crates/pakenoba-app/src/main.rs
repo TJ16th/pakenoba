@@ -39,6 +39,13 @@ fn main() -> ExitCode {
             ("--recovery-dir", _) if i + 1 < args.len() => initial.recovery_dir = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--backup-seconds", Some(v)) => initial.backup_seconds = v as f64,
             ("--answer-export", _) if i + 1 < args.len() => initial.answer_export = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--settings", _) if i + 1 < args.len() => initial.settings = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--answer-folder", _) if i + 1 < args.len() => initial.answer_folder = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--library", _) => {
+                initial.library = true;
+                i += 1;
+                continue;
+            }
             ("--answer-replace", _) if i + 1 < args.len() => initial.answer_replace = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--psd", _) if i + 1 < args.len() => initial.psd = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--png", _) if i + 1 < args.len() => initial.png = Some(std::path::PathBuf::from(&args[i + 1])),
@@ -75,7 +82,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("使い方: pakenoba [開く案件のファイル（.pknb）] [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、100: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号] [--assets 素材の欄を開く（1: 道具の右、2: 道具の左）]");
+                println!("使い方: pakenoba [開く案件のファイル（.pknb）] [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、100: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号] [--assets 素材の欄を開く（1: 道具の右、2: 道具の左）] [--library 「素材」の画面を開く]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

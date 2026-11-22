@@ -67,14 +67,7 @@ pub(super) struct Recovery {
 
 /// 使う人のデータのフォルダの中の、控えの場所。
 fn default_dir() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
-    } else {
-        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-    }?;
-    Some(base.join("pakenoba").join("recovery"))
+    Some(super::settings::data_dir()?.join("recovery"))
 }
 
 impl Recovery {

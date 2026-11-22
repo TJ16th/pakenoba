@@ -1948,6 +1948,8 @@ dependencies = [
  "pakenoba-core",
  "png",
  "rfd",
+ "serde",
+ "toml",
 ]
 
 [[package]]

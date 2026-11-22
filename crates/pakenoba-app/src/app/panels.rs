@@ -29,7 +29,11 @@ impl App {
                 self.file_menu(ui);
                 ui.add_space(8.0);
                 for (workspace, label) in [(Workspace::Shape, "型"), (Workspace::Design, "デザイン"), (Workspace::Output, "出力")] {
-                    ui.selectable_value(&mut self.workspace, workspace, format!("  {label}  "));
+                    // 「素材」の画面を開いているあいだは、どの工程も選んでいない見た目にする。
+                    if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
+                        self.workspace = workspace;
+                        self.library.open = false;
+                    }
                 }
                 // 案件の名前と、保存していない変更の印。
                 ui.add_space(16.0);
@@ -43,6 +47,10 @@ impl App {
                 // メニューバーを作るまでの、元に戻すとやり直すの置き場。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
+                    if ui.selectable_label(self.library.open, "  素材  ").on_hover_text("素材を探して、この案件に取り込む画面（もう一度押すと戻ります）").clicked() {
+                        self.toggle_library();
+                    }
+                    ui.separator();
                     if ui.add_enabled(self.history.can_redo(), egui::Button::new("やり直す")).on_hover_text("Ctrl+Shift+Z").clicked() {
                         self.redo();
                     }

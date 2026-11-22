@@ -9,8 +9,10 @@ mod export;
 mod file;
 mod history;
 mod icons;
+mod library;
 mod panels;
 mod recovery;
+mod settings;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -78,11 +80,17 @@ pub struct Initial {
     pub recovery_dir: Option<PathBuf>,
     /// 控えを書く間隔（秒）。
     pub backup_seconds: f64,
+    /// 設定のファイル（テスト用。指定がなければ、いつもの場所）。
+    pub settings: Option<PathBuf>,
+    /// 起動したときに「素材」の画面を開く。
+    pub library: bool,
+    /// テスト用: 素材のフォルダを選ぶダイアログの代わりの答え。
+    pub answer_folder: Option<PathBuf>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0 }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None }
     }
 }
 
@@ -422,6 +430,10 @@ struct App {
     answer_export: Option<PathBuf>,
     /// 落ちたときの控え。
     recovery: recovery::Recovery,
+    /// 案件をまたいで覚えておく設定（登録したフォルダ）。
+    settings: settings::Settings,
+    /// 「素材」の画面。
+    library: library::Library,
     show_guides: bool,
     /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
@@ -515,6 +527,8 @@ impl App {
             answer_export: initial.answer_export.clone(),
             // 自動のテストでは、使う人のフォルダに控えを書かない。
             recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
+            settings: if cfg!(test) { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) },
+            library: library::Library::new(initial.library, initial.answer_folder.clone()),
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -706,31 +720,49 @@ impl App {
 
     /// 画像（PNG）を、この案件の素材に取り込んで、柄として置く。元のファイルの中身も、そのまま持つ（案件のファイルに入れるため）。
     fn add_png(&mut self, path: &Path) {
+        let known = self.assets.len();
+        let Some(index) = self.import_png(path, false) else { return };
+        let (picture, size) = (self.assets[index].picture.clone(), self.assets[index].size);
+        if index < known {
+            self.say(format!("{} は、すでに素材の欄にあります。柄として置きました。", self.assets[index].name));
+        } else {
+            self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
+        }
+        self.add_decal(picture, size);
+    }
+
+    /// 画像（PNG）を、この案件の素材に取り込む（置かない）。素材の欄での番号を返す。
+    /// 同じ中身の素材がすでにあれば、増やさずに、その番号を返す。`checkpoint` が真なら、取り込みを元に戻せるようにする。
+    fn import_png(&mut self, path: &Path, checkpoint: bool) -> Option<usize> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
-            Err(e) => return self.say(format!("{} を開けませんでした: {e}", path.display())),
+            Err(e) => {
+                self.say(format!("{} を開けませんでした: {e}", path.display()));
+                return None;
+            }
         };
         let picture = match decode_png(&bytes) {
             Ok(picture) => picture,
-            Err(e) => return self.say(e),
+            Err(e) => {
+                self.say(e);
+                return None;
+            }
         };
-        let Picture::Image { w, h, .. } = &picture else { return };
+        let Picture::Image { w, h, .. } = &picture else { return None };
         let size = [50.0, 50.0 * *h as f32 / *w as f32];
         let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
         let stored = project::Asset::new(name.clone(), bytes, size, file::now_local());
-        // 同じ中身の素材がすでにあれば、増やさずに、それを使う。
-        let known = self.assets.iter().find(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())).map(|asset| (asset.picture.clone(), asset.size));
-        match known {
-            Some((picture, size)) => {
-                self.say(format!("{name} は、すでに素材の欄にあります。柄として置きました。"));
-                self.add_decal(picture, size);
+        if let Some(index) = self.assets.iter().position(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())) {
+            if checkpoint {
+                self.say(format!("{name} は、すでにこの案件の素材にあります。"));
             }
-            None => {
-                self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
-                self.assets.push(assets::Asset { name, picture: picture.clone(), size, thumb: None, bundled: false, stored: Some(stored) });
-                self.add_decal(picture, size);
-            }
+            return Some(index);
         }
+        if checkpoint {
+            self.checkpoint();
+        }
+        self.assets.push(assets::Asset { name, picture, size, thumb: None, bundled: false, stored: Some(stored) });
+        Some(self.assets.len() - 1)
     }
 
     /// 表か裏の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
@@ -963,7 +995,14 @@ impl eframe::App for App {
             if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(project::EXTENSION)) {
                 self.request_open(Some(path.clone()));
             } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
-                self.add_png(path);
+                // 「素材」の画面では、箱がないので、取り込むだけ。
+                if self.library.open {
+                    if self.import_png(path, true).is_some() {
+                        self.say(format!("{} を、この案件の素材に取り込みました。", path.display()));
+                    }
+                } else {
+                    self.add_png(path);
+                }
             } else {
                 self.psd_path = path.display().to_string();
                 self.open_psd(path);
@@ -986,6 +1025,11 @@ impl eframe::App for App {
         self.confirm_shape(ui.ctx());
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
+        if self.library.open {
+            self.library_screen(ui);
+            self.rebuild_if_needed();
+            return;
+        }
         match self.workspace {
             Workspace::Shape => {
                 self.shape_list(ui);

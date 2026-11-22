@@ -1,7 +1,7 @@
 //! 素材の欄。この案件の素材（取り込んだ画像）と、付属の見本。素材の差し替えも、ここ。
 //!
 //! 素材を、立体や展開図へドラッグして置く。落とした場所が紙の表か裏かで、置く面が決まる。
-//! コレクション（フォルダの登録）は、ファイルのダイアログと設定の保存が要るので、まだ作っていない。
+//! 登録したフォルダ（コレクション）から探して取り込むのは、「素材」の画面（library.rs）。ここは軽く、この案件の素材と見本だけ。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -127,6 +127,9 @@ impl App {
             ui.horizontal(|ui| {
                 ui.strong("素材");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("大きく開く").on_hover_text("「素材」の画面で、登録したフォルダから探して取り込みます").clicked() {
+                        self.toggle_library();
+                    }
                     let tip = if self.assets_inside { "素材の欄を、道具の帯の左へ移す" } else { "素材の欄を、道具の帯の右へ移す" };
                     if ui.small_button("位置").on_hover_text(tip).clicked() {
                         self.assets_inside = !self.assets_inside;
@@ -157,15 +160,16 @@ impl App {
                         }
                     });
                 }
-                ui.add_space(6.0);
-                ui.label("コレクション");
-                ui.small("フォルダを登録して、案件をまたいで使う素材を並べる機能は、これから作ります。");
+                ui.add_space(10.0);
+                if ui.button("ほかの素材を探す…").on_hover_text("「素材」の画面で、登録したフォルダ（コレクション）から探して取り込みます").clicked() {
+                    self.toggle_library();
+                }
             });
         });
     }
 
     /// 一覧に出す絵。初めて出すときに作る。
-    fn thumb(&mut self, ctx: &egui::Context, index: usize) -> egui::TextureId {
+    pub(super) fn thumb(&mut self, ctx: &egui::Context, index: usize) -> egui::TextureId {
         let asset = &mut self.assets[index];
         asset
             .thumb
