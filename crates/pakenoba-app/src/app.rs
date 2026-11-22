@@ -422,7 +422,7 @@ impl App {
         let mut decals = Vec::new();
         for (picture, size, place) in [(Picture::Band, [around, 14.0], initial.band), (Picture::Logo, [logo, logo], initial.logo)] {
             if let Some([panel, x, y, degrees]) = place {
-                let panel = Some((panel as usize).min(template.panels.len() - 1)).filter(|&i| !template.panels[i].hidden_when_closed()).unwrap_or(front);
+                let panel = Some((panel as usize).min(template.panels.len() - 1)).filter(|&i| template.panels[i].takes_art()).unwrap_or(front);
                 decals.push(Placed { picture, decal: Decal { panel, at: [x, y], size, angle: degrees.to_radians() }, back: false });
             }
         }

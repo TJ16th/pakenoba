@@ -8,7 +8,7 @@
 //!   合わせ目: 組み上がると接するが、展開図の上では離れている辺。隣のパネルの座標へ、回転と移動で写して続ける。
 //! - 合わせ目は、組み上がった形から自動で見つける。
 
-use crate::math::{Affine, V3, add, cross, dot, length, normalize, scale, sub};
+use crate::math::{V3, add, cross, dot, length, normalize, scale, sub};
 use crate::template::{P2, Panel, Template, Vertex, inside};
 
 /// 展開図の上での回転と移動（裏返しは含まない）。
@@ -227,6 +227,7 @@ pub struct Surface {
 }
 
 /// 組み上がった箱での、パネルごとの「上」の向き。紙の表（箱の外側）と、裏（箱の内側）のそれぞれ。
+/// 閉じると隠れるパネルは、開けた姿での向き。
 ///
 /// - 立っている面と、斜めの面（屋根など）: 箱の上へ向かう向き。表も裏も同じ。
 /// - 上を向いた面（天面の外側、底の内側）: 奥へ向かう向き。正面から見下ろして、まっすぐ読める。
@@ -237,33 +238,22 @@ pub struct Surface {
 /// 丸めたパネルでは、パネルの中央での向きで決める。
 fn face_ups(tpl: &Template) -> Vec<[f32; 2]> {
     let world = tpl.world_at(1.0);
-    let frames: Vec<Affine> = tpl
-        .transforms(1.0, 1.0)
-        .iter()
-        .enumerate()
-        .map(|(index, place)| {
+    // 閉じると隠れるパネル（差し込み、内側のフラップなど）は、お客さんが見るのは開けたときなので、開けた姿で決める。
+    let (closed, open) = (tpl.transforms(1.0, 1.0), tpl.transforms(1.0, 0.0));
+    (0..tpl.panels.len())
+        .map(|index| {
+            let place = if tpl.panels[index].hidden_when_closed() { &open[index] } else { &closed[index] };
             let (lo, hi) = panel_box(tpl, index);
-            world.then_after(&place.at([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5]))
-        })
-        .collect();
-    let centers: Vec<V3> = frames.iter().enumerate().map(|(index, frame)| {
-        let (lo, hi) = panel_box(tpl, index);
-        frame.point([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, 0.0])
-    }).collect();
-    let middle = centers.iter().fold(0.0, |sum, c| sum + c[1]) / centers.len().max(1) as f32;
-    frames
-        .iter()
-        .zip(&centers)
-        .map(|(frame, center)| {
-            let (ex, ey) = (frame.vector([1.0, 0.0, 0.0]), frame.vector([0.0, 1.0, 0.0]));
+            let frame = world.then_after(&place.at([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5]));
+            let (ex, ey, ez) = (frame.vector([1.0, 0.0, 0.0]), frame.vector([0.0, 1.0, 0.0]), frame.vector([0.0, 0.0, 1.0]));
             let angle = |u: P2| if len2(u) < 1e-3 { 0.0 } else { (-u[0]).atan2(u[1]) };
             // 箱の上（Y）を、面の中へ映す。ほぼ水平な面では向きが決まらないので、奥か手前を使う。
             let u = [ex[1], ey[1]];
             if len2(u) >= 0.35 {
                 return [angle(u); 2];
             }
-            // 箱の上半分にある水平な面は、外側が上を向き、内側が下を向いている。下半分は、その逆。
-            let depth = if center[1] >= middle { -1.0 } else { 1.0 };
+            // 紙の表は、厚みの向き（z）の手前の側。z が下を向いていれば、表が上を向いている。
+            let depth = if ez[1] <= 0.0 { -1.0 } else { 1.0 };
             [angle([ex[2] * depth, ey[2] * depth]), angle([-ex[2] * depth, -ey[2] * depth])]
         })
         .collect()
@@ -277,6 +267,8 @@ pub struct Piece {
     pub place: Aff2,
     /// ここへ来るまでに、合わせ目をまたいだ回数。
     pub seams: usize,
+    /// ここへ来るまでに、閉じると隠れるパネル（差し込み、内側のフラップなど）を通ったか。このパネル自身も含む。
+    pub tucked: bool,
 }
 
 impl Surface {
@@ -300,6 +292,17 @@ impl Surface {
         let mut joined: Vec<Vec<[P2; 2]>> = (0..tpl.panels.len()).map(|_| Vec::new()).collect();
         for (from, list) in links.iter().enumerate() {
             joined[from] = list.iter().flat_map(|link| link.gate.iter().copied()).collect();
+        }
+        // 閉じると隠れるパネル（差し込み、内側のフラップなど）への折り線。紙は続いているので、柄も続く。
+        // 合わせ目の計算（上の `joined`）には入れない。側面の上の辺は、フラップへ折り線で続き、フタとは合わせ目で接する。
+        for (i, panel) in tpl.panels.iter().enumerate() {
+            let Some(hinge) = &panel.hinge else { continue };
+            let parent = hinge.parent;
+            if panel.takes_art() && tpl.panels[parent].takes_art() && !(visible(i) && visible(parent)) {
+                let gate = vec![[hinge.a, hinge.b]];
+                links[i].push(Link { to: parent, map: Aff2::IDENTITY, gate: gate.clone(), seam: false });
+                links[parent].push(Link { to: i, map: Aff2::IDENTITY, gate, seam: false });
+            }
         }
         // 合わせ目。辺の数が合わないときは（型紙の作りが厚みで変わる場合）、使わない。
         let same_shape = tpl.panels.len() == thin.panels.len() && tpl.panels.iter().zip(&thin.panels).all(|(p, q)| p.outline.len() == q.outline.len());
@@ -329,7 +332,8 @@ impl Surface {
     /// ただし、向きが同じで位置だけが違うときは、両方とも使う（箱を一周して戻ってきた帯）。
     pub fn layout(&self, tpl: &Template, decal: &Decal) -> Vec<Piece> {
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
-        let mut pieces = vec![Piece { panel: decal.panel, place: decal.place(tpl), seams: 0 }];
+        let tucked = |panel: usize| tpl.panels[panel].hidden_when_closed();
+        let mut pieces = vec![Piece { panel: decal.panel, place: decal.place(tpl), seams: 0, tucked: tucked(decal.panel) }];
         let mut next = 0;
         while next < pieces.len() && pieces.len() < 48 {
             let from = pieces[next];
@@ -342,6 +346,12 @@ impl Surface {
                 if link.seam && from.seams >= 1 {
                     continue;
                 }
+                // 合わせ目は、閉じた箱の外側の面どうしのつながり。閉じると隠れるパネルを通る道とは、混ぜない。
+                // 混ぜると、差し込みに置いた柄が正面の外側に出たり、正面の縁の柄が差し込みに出たりする
+                // （フタの先の辺は、差し込みへの折り線でもあり、正面との合わせ目でもある）。
+                if (link.seam && from.tucked) || (from.seams >= 1 && tucked(link.to)) {
+                    continue;
+                }
                 if !link.gate.iter().any(|g| segment_hits_box(to_decal.point(g[0]), to_decal.point(g[1]), half)) {
                     continue;
                 }
@@ -352,7 +362,7 @@ impl Surface {
                     boxes_overlap(&between, half) && !shifted_only
                 });
                 if !clash {
-                    pieces.push(Piece { panel: link.to, place, seams: from.seams + link.seam as usize });
+                    pieces.push(Piece { panel: link.to, place, seams: from.seams + link.seam as usize, tucked: from.tucked || tucked(link.to) });
                 }
             }
         }
@@ -385,7 +395,7 @@ impl Surface {
     ///
     /// `back` が真なら、紙の裏（箱の内側の面）に置いた柄。内側の面の「上」を使う。
     pub fn drag_on_solid(&self, tpl: &Template, decal: &mut Decal, back: bool, panel: usize, at: P2, grab: P2) {
-        if tpl.panels[panel].hidden_when_closed() {
+        if !tpl.panels[panel].takes_art() {
             return;
         }
         let angle = decal.angle - self.up(decal.panel, back) + self.up(panel, back);
@@ -403,7 +413,7 @@ impl Surface {
     /// 行き先のパネルに、柄がすでにかかっていれば、その続き方のまま（合わせ目で回った向きのまま）置き直す。
     /// 展開図の上では、動かしても絵は回らない。
     pub fn drag(&self, tpl: &Template, decal: &mut Decal, panel: usize, at: P2, grab: P2) {
-        if tpl.panels[panel].hidden_when_closed() {
+        if !tpl.panels[panel].takes_art() {
             return;
         }
         let pieces = self.layout(tpl, decal);
@@ -490,10 +500,10 @@ impl Decal {
     }
 }
 
-/// 展開図上の点が、どのパネルにあるか（組み上がると隠れるパネルは除く）。
+/// 展開図上の点が、柄を置けるどのパネルにあるか（のりしろは除く）。
 /// 折り線のすき間を埋める面のように、輪郭のちょうど上にある点は、いちばん近いパネルにする。
 pub fn panel_at(tpl: &Template, at: P2) -> Option<usize> {
-    let visible = || tpl.panels.iter().enumerate().filter(|(_, panel)| !panel.hidden_when_closed());
+    let visible = || tpl.panels.iter().enumerate().filter(|(_, panel)| panel.takes_art());
     if let Some((index, _)) = visible().find(|(_, panel)| inside(&panel.outline, at)) {
         return Some(index);
     }
@@ -717,8 +727,8 @@ mod tests {
     fn 立体の上でどの面をたどっても_同じ面では同じ向きに戻る() {
         for (tpl, thin) in [(Template::tuck_box(200.0, 160.0, 85.0, 0.5), Template::tuck_box(200.0, 160.0, 85.0, 0.02)), (Template::prism(6, 70.0, 160.0, 0.5), Template::prism(6, 70.0, 160.0, 0.02)), (Template::gable(160.0, 100.0, 110.0, 45.0, 0.5), Template::gable(160.0, 100.0, 110.0, 45.0, 0.02))] {
             let surface = Surface::new(&tpl, &thin);
-            let visible: Vec<usize> = (0..tpl.panels.len()).filter(|&i| !tpl.panels[i].hidden_when_closed()).collect();
-            // 斜めに回した柄で、見えている面をでたらめな順に 400 回たどる。表の柄でも、裏の柄でも。
+            let visible: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].takes_art()).collect();
+            // 斜めに回した柄で、柄を置ける面（差し込みや内側のフラップも）をでたらめな順に 400 回たどる。表の柄でも、裏の柄でも。
             for back in [false, true] {
                 let mut logo = Decal { panel: visible[0], at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.3 };
                 let mut seen: Vec<Option<f32>> = vec![None; tpl.panels.len()];
@@ -736,6 +746,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn 差し込みと内側のフラップにも_柄を置ける() {
+        let (tpl, surface) = tuck(0.5);
+        let center = |name: &str| Decal { panel: index(&tpl, name), at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 }.center(&tpl);
+        // 展開図の上で、差し込みとフラップを指せる。のりしろは指せない。
+        for name in ["上の差し込み", "底の差し込み", "上の左フラップ", "上の右フラップ", "底の左フラップ", "底の右フラップ"] {
+            assert_eq!(panel_at(&tpl, center(name)), Some(index(&tpl, name)), "{name}");
+        }
+        assert_eq!(panel_at(&tpl, center("のりしろ")), None);
+
+        // 正面の柄を、フラップへ運べる。のりしろへは運べない。
+        let mut logo = Decal { panel: index(&tpl, "正面"), at: [0.5, 0.5], size: [20.0, 20.0], angle: 0.0 };
+        surface.drag_on_solid(&tpl, &mut logo, false, index(&tpl, "上の左フラップ"), center("上の左フラップ"), [0.0, 0.0]);
+        assert_eq!(logo.panel, index(&tpl, "上の左フラップ"));
+        // 開けて立ったフラップの上で、まっすぐ立っている。
+        assert!(dot(up_when(&tpl, &logo, 0.0), [0.0, 1.0, 0.0]) > 0.9, "{:?}", up_when(&tpl, &logo, 0.0));
+        surface.drag_on_solid(&tpl, &mut logo, false, index(&tpl, "のりしろ"), center("のりしろ"), [0.0, 0.0]);
+        assert_eq!(logo.panel, index(&tpl, "上の左フラップ"));
+        surface.drag(&tpl, &mut logo, index(&tpl, "のりしろ"), center("のりしろ"), [0.0, 0.0]);
+        assert_eq!(logo.panel, index(&tpl, "上の左フラップ"));
+
+        // 差し込みの表は、開けたとき上を向く。正面から見下ろして読めるように、奥が「上」。
+        surface.drag_on_solid(&tpl, &mut logo, false, index(&tpl, "上の差し込み"), center("上の差し込み"), [0.0, 0.0]);
+        assert!(dot(up_when(&tpl, &logo, 0.0), [0.0, 0.0, -1.0]) > 0.9, "{:?}", up_when(&tpl, &logo, 0.0));
+    }
+
+    #[test]
+    fn 柄は_折り線の先の差し込みやフラップへ続く() {
+        let (tpl, surface) = tuck(0.5);
+        let names = |decal: &Decal| -> Vec<&str> { surface.layout(&tpl, decal).iter().map(|p| tpl.panels[p.panel].name).collect() };
+        // フタの先にかかった柄は、差し込みへ続く。紙が続いているので、ずれも回転もない。
+        let on_lid = Decal { panel: index(&tpl, "上のフタ"), at: [0.5, 0.97], size: [30.0, 30.0], angle: 0.2 };
+        let pieces = surface.layout(&tpl, &on_lid);
+        let tuck_piece = pieces.iter().find(|p| tpl.panels[p.panel].name == "上の差し込み").expect("差し込みへ続いていない");
+        let between = pieces[0].place.inverse().then_after(&tuck_piece.place);
+        assert!(between.angle().abs() < 1e-5 && len2(between.t) < 1e-3);
+        // 側面の上の辺にかかった柄は、フラップ（折り線の先）と、フタ（合わせ目の先）の両方へ続く。
+        let on_side = Decal { panel: index(&tpl, "右側面"), at: [0.5, 0.97], size: [30.0, 30.0], angle: 0.0 };
+        let found = names(&on_side);
+        assert!(found.contains(&"上の右フラップ") && found.contains(&"上のフタ"), "{found:?}");
+        // 差し込みに置いた柄は、フタへは続くが、正面の外側へは出ない。
+        let on_tuck = Decal { panel: index(&tpl, "上の差し込み"), at: [0.5, 0.5], size: [46.0, 46.0], angle: 0.0 };
+        let found = names(&on_tuck);
+        assert!(found.contains(&"上のフタ") && !found.contains(&"正面"), "{found:?}");
+        // 正面の上の縁の柄は、フタへは続くが、差し込みへは出ない。
+        let on_front = Decal { panel: index(&tpl, "正面"), at: [0.5, 0.97], size: [40.0, 40.0], angle: 0.0 };
+        let found = names(&on_front);
+        assert!(found.contains(&"上のフタ") && !found.contains(&"上の差し込み"), "{found:?}");
+        // フタの先の縁の柄は、差し込み（折り線の先）と、正面（合わせ目の先）の両方へ続く。
+        let found = names(&on_lid);
+        assert!(found.contains(&"上の差し込み") && found.contains(&"正面"), "{found:?}");
+        // のりしろへは続かない。
+        let on_left = Decal { panel: index(&tpl, "左側面"), at: [0.02, 0.5], size: [30.0, 30.0], angle: 0.0 };
+        assert!(!names(&on_left).contains(&"のりしろ"), "{:?}", names(&on_left));
+        // 面の真ん中の柄は、どこへも続かない。
+        let alone = Decal { panel: index(&tpl, "正面"), at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.0 };
+        assert_eq!(names(&alone), ["正面"]);
     }
 
     #[test]

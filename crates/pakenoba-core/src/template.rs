@@ -190,9 +190,15 @@ impl Panel {
         Panel { name, outline, hinge, bend: None, curved: None, slices: 0, role }
     }
 
-    /// 組み上がると隠れる部分（のりしろ、差し込みなど）か。
+    /// 組み上がって閉じると隠れる部分（のりしろ、差し込み、内側のフラップなど）か。
     pub fn hidden_when_closed(&self) -> bool {
         !matches!(self.role, Role::Face | Role::Fin)
+    }
+
+    /// 柄を置ける部分か。お客さんが開けたときに見えるところは、すべて置ける（差し込みも、内側のフラップも）。
+    /// のりしろだけは、貼ってしまうと見えないので、置けない。
+    pub fn takes_art(&self) -> bool {
+        self.role != Role::GlueTab
     }
 }
 
