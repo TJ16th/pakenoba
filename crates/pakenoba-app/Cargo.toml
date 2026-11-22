@@ -18,6 +18,10 @@ eframe = { version = "0.37", default-features = false, features = ["wgpu", "defa
 bytemuck = { version = "1", features = ["derive"] }
 # 柄にする画像（PNG）の読み込み。
 png = "0.18"
+# 文字の柄。OS のフォントを探し（fontique）、読み（skrifa）、描く（vello_cpu）。どれも egui が使っている部品と同じ版。
+fontique = "0.11.1"
+skrifa = "0.44.0"
+vello_cpu = { version = "0.2.0", default-features = false, features = ["std", "u8_pipeline", "text"] }
 # 柄にする画像（JPEG）の読み込み。
 zune-jpeg = "0.5.15"
 # craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。

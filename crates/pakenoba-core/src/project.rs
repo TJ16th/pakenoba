@@ -156,13 +156,66 @@ fn is_asset_file(file: &str) -> bool {
 }
 
 /// 柄の絵が、どこから来たか。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Source {
     /// 付属の見本。値は見本の名前（どんな見本があるかは、アプリの側が決める）。
     Builtin(String),
     /// この案件の素材。値は `Project::assets` の中での番号。
     Asset(usize),
+    /// 文字。絵は、開くときにアプリが文字から描き直す。
+    Text(TextSpec),
 }
+
+/// 文字の柄の中身と書式。
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSpec {
+    /// 文字（改行で行を分ける）。
+    pub text: String,
+    /// フォントの名前（ファミリー名）。開いた PC にないときは、アプリが別のフォントで描く。
+    pub font: String,
+    /// 文字の大きさ（mm。全角 1 文字の高さ）。
+    pub size: f32,
+    /// 色（sRGB）。
+    pub color: [u8; 3],
+    pub align: TextAlign,
+    /// 字間（全角の 1/1000 単位。0 がふつう）。
+    pub spacing: f32,
+    /// 行送り（文字の大きさの何倍か）。
+    pub leading: f32,
+}
+
+/// 文字の揃え。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    fn name(self) -> &'static str {
+        match self {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<TextAlign> {
+        Some(match name {
+            "left" => TextAlign::Left,
+            "center" => TextAlign::Center,
+            "right" => TextAlign::Right,
+            _ => return None,
+        })
+    }
+}
+
+/// 文字の範囲（読むときに、範囲の外は寄せる）。
+pub const TEXT_SIZE: RangeInclusive<f32> = 0.5..=500.0;
+pub const TEXT_SPACING: RangeInclusive<f32> = -500.0..=2000.0;
+pub const TEXT_LEADING: RangeInclusive<f32> = 0.5..=5.0;
 
 /// 置いた柄 1 つ。
 #[derive(Clone, Debug, PartialEq)]
@@ -328,6 +381,57 @@ struct DecalEntry {
     hidden: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
+    /// 文字の柄（`asset`、`builtin` のかわりに書く）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<TextEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TextEntry {
+    text: String,
+    font: String,
+    /// 文字の大きさ（mm）。
+    size: f64,
+    /// 色（`#rrggbb`）。
+    color: String,
+    /// `left`、`center`、`right` のどれか。
+    #[serde(default = "left", skip_serializing_if = "is_left")]
+    align: String,
+    /// 字間（全角の 1/1000）。
+    #[serde(default, skip_serializing_if = "is_zero")]
+    spacing: f64,
+    /// 行送り（文字の大きさの何倍か）。
+    #[serde(default = "normal_leading")]
+    leading: f64,
+}
+
+fn left() -> String {
+    "left".to_owned()
+}
+
+fn is_left(value: &str) -> bool {
+    value == "left"
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
+fn normal_leading() -> f64 {
+    1.5
+}
+
+fn hex(color: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2])
+}
+
+fn from_hex(text: &str) -> Option<[u8; 3]> {
+    let digits = text.strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(digits.get(i..i + 2)?, 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
 fn is_false(value: &bool) -> bool {
@@ -418,11 +522,16 @@ impl Project {
                 .iter()
                 .map(|placed| {
                     let (panel, nth) = panel_ref(tpl, placed.decal.panel);
-                    let (asset, builtin) = match &placed.source {
-                        Source::Asset(index) => (Some(*index), None),
-                        Source::Builtin(name) => (None, Some(name.clone())),
+                    let (asset, builtin, text) = match &placed.source {
+                        Source::Asset(index) => (Some(*index), None, None),
+                        Source::Builtin(name) => (None, Some(name.clone()), None),
+                        Source::Text(spec) => (
+                            None,
+                            None,
+                            Some(TextEntry { text: spec.text.clone(), font: spec.font.clone(), size: tidy(spec.size), color: hex(spec.color), align: spec.align.name().to_owned(), spacing: tidy(spec.spacing), leading: tidy(spec.leading) }),
+                        ),
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, text }
                 })
                 .collect(),
         }
@@ -582,6 +691,38 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     for (index, entry) in manifest.decals.iter().enumerate() {
         let number = index + 1;
         let source = match (entry.asset, &entry.builtin) {
+            (None, None) if entry.text.is_some() => {
+                let Some(text) = &entry.text else { unreachable!() };
+                let clamp = |v: f64, range: &RangeInclusive<f32>, what: &str, problems: &mut Vec<String>| {
+                    let v = v as f32;
+                    if !v.is_finite() {
+                        problems.push(format!("柄 {number} の文字の{what}が正しくないので、ふつうの値にしました"));
+                        return None;
+                    }
+                    let c = v.clamp(*range.start(), *range.end());
+                    if c != v {
+                        problems.push(format!("柄 {number} の文字の{what}が範囲の外だったので、{c} にしました"));
+                    }
+                    Some(c)
+                };
+                let color = from_hex(&text.color).unwrap_or_else(|| {
+                    problems.push(format!("柄 {number} の文字の色が読めないので、黒にしました"));
+                    [0, 0, 0]
+                });
+                let align = TextAlign::from_name(&text.align).unwrap_or_else(|| {
+                    problems.push(format!("柄 {number} の文字の揃えが読めないので、左揃えにしました"));
+                    TextAlign::Left
+                });
+                Source::Text(TextSpec {
+                    text: text.text.clone(),
+                    font: text.font.clone(),
+                    size: clamp(text.size, &TEXT_SIZE, "大きさ", &mut problems).unwrap_or(10.0),
+                    color,
+                    align,
+                    spacing: clamp(text.spacing, &TEXT_SPACING, "字間", &mut problems).unwrap_or(0.0),
+                    leading: clamp(text.leading, &TEXT_LEADING, "行送り", &mut problems).unwrap_or(1.5),
+                })
+            }
             (Some(asset), None) => match kept.get(asset) {
                 Some(Some(now)) => Source::Asset(*now),
                 Some(None) => {
@@ -689,9 +830,18 @@ mod tests {
         let decals = (0..tpl.panels.len())
             .map(|panel| {
                 let k = panel as f32;
-                let source = match panel % 4 {
+                let source = match panel % 5 {
                     0 => Source::Builtin("logo".to_owned()),
                     1 => Source::Builtin("band".to_owned()),
+                    4 => Source::Text(TextSpec {
+                        text: format!("新発売\n{panel} 番の \"文字\" = 'テスト'"),
+                        font: "Noto Sans CJK JP".to_owned(),
+                        size: 4.0 + k * 0.7,
+                        color: [k as u8 * 9, 200, 17],
+                        align: [TextAlign::Left, TextAlign::Center, TextAlign::Right][panel % 3],
+                        spacing: if panel % 2 == 0 { 0.0 } else { -25.5 },
+                        leading: 1.25 + k / 10.0,
+                    }),
                     n => Source::Asset(n - 2),
                 };
                 Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer { name: (panel % 4 == 1).then(|| format!("名前 {panel}")), hidden: panel % 5 == 2, locked: panel % 7 == 3 } }

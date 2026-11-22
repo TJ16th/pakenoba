@@ -62,6 +62,8 @@ pub enum Picture {
     Band,
     /// 読み込んだ画像（RGBA、アルファは乗算なし）。
     Image { w: usize, h: usize, rgba: Arc<Vec<u8>> },
+    /// 文字（文字と書式から描いた絵）。
+    Text(Arc<crate::text::TextArt>),
 }
 
 impl Picture {
@@ -70,6 +72,7 @@ impl Picture {
             Picture::Logo => "ロゴ",
             Picture::Band => "帯",
             Picture::Image { .. } => "画像",
+            Picture::Text(_) => "文字",
         }
     }
 
@@ -105,26 +108,30 @@ impl Picture {
                 let rgb = if y > 0.78 || (y < 0.60 && phase < period * 0.32) { DARK } else { AMBER };
                 [rgb[0], rgb[1], rgb[2], 1.0]
             }
-            Picture::Image { w, h, rgba } => {
-                // 画素の中心どうしの間を、なめらかにつなぐ。
-                let fx = ((q[0] + half[0]) / size[0] * *w as f32 - 0.5).clamp(0.0, (*w - 1) as f32);
-                let fy = ((half[1] - q[1]) / size[1] * *h as f32 - 0.5).clamp(0.0, (*h - 1) as f32);
-                let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
-                let (x1, y1) = ((x0 + 1).min(*w - 1), (y0 + 1).min(*h - 1));
-                let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
-                let texel = |x: usize, y: usize| {
-                    let o = (y * *w + x) * 4;
-                    let a = rgba[o + 3] as f32 / 255.0;
-                    [rgba[o] as f32 * a, rgba[o + 1] as f32 * a, rgba[o + 2] as f32 * a, a]
-                };
-                let (p00, p10, p01, p11) = (texel(x0, y0), texel(x1, y0), texel(x0, y1), texel(x1, y1));
-                let mut out = [0.0f32; 4];
-                for i in 0..4 {
-                    out[i] = (p00[i] * (1.0 - tx) + p10[i] * tx) * (1.0 - ty) + (p01[i] * (1.0 - tx) + p11[i] * tx) * ty;
-                }
-                if out[3] <= 0.0 { [0.0; 4] } else { [out[0] / out[3], out[1] / out[3], out[2] / out[3], out[3]] }
-            }
+            Picture::Text(art) => Picture::sample_rgba(art.w, art.h, &art.rgba, q, size),
+            Picture::Image { w, h, rgba } => Picture::sample_rgba(*w, *h, rgba, q, size),
         }
+    }
+
+    /// RGBA の画像（アルファは乗算なし）の、柄の座標 `q` での色。画素の中心どうしの間を、なめらかにつなぐ。
+    fn sample_rgba(w: usize, h: usize, rgba: &[u8], q: P2, size: P2) -> [f32; 4] {
+        let half = [size[0] * 0.5, size[1] * 0.5];
+        let fx = ((q[0] + half[0]) / size[0] * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+        let fy = ((half[1] - q[1]) / size[1] * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let texel = |x: usize, y: usize| {
+            let o = (y * w + x) * 4;
+            let a = rgba[o + 3] as f32 / 255.0;
+            [rgba[o] as f32 * a, rgba[o + 1] as f32 * a, rgba[o + 2] as f32 * a, a]
+        };
+        let (p00, p10, p01, p11) = (texel(x0, y0), texel(x1, y0), texel(x0, y1), texel(x1, y1));
+        let mut out = [0.0f32; 4];
+        for i in 0..4 {
+            out[i] = (p00[i] * (1.0 - tx) + p10[i] * tx) * (1.0 - ty) + (p01[i] * (1.0 - tx) + p11[i] * tx) * ty;
+        }
+        if out[3] <= 0.0 { [0.0; 4] } else { [out[0] / out[3], out[1] / out[3], out[2] / out[3], out[3]] }
     }
 }
 

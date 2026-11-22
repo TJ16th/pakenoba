@@ -15,6 +15,7 @@ mod panels;
 mod recovery;
 mod select;
 mod settings;
+mod typing;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -312,14 +313,14 @@ impl Tool {
 
     /// まだ作っていない道具は、押せない。
     fn ready(self) -> bool {
-        matches!(self, Tool::Select | Tool::Hand)
+        matches!(self, Tool::Select | Tool::Text | Tool::Hand)
     }
 
     /// ツールチップ。名前とショートカット。押せない道具は、その理由。
     fn tip(self) -> &'static str {
         match self {
             Tool::Select => "選択 (V)",
-            Tool::Text => "文字（これから作ります）",
+            Tool::Text => "文字 (T)",
             Tool::Shape => "図形（これから作ります）",
             Tool::Ai => "生成AI（これから作ります）",
             Tool::Hand => "手のひら (H)",
@@ -481,6 +482,12 @@ struct App {
     settings: settings::Settings,
     /// 「素材」の画面。
     library: library::Library,
+    /// OS のフォント（文字の柄を描く）。
+    fonts: crate::text::Fonts,
+    /// 次に置く文字の書式。
+    text_style: pakenoba_core::project::TextSpec,
+    /// 文字を置いた直後。右の欄の文字の入力に、カーソルを置く。
+    focus_text: bool,
     /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
     renaming: Option<(usize, String)>,
     /// レイヤーの欄で、ドラッグしている柄。
@@ -584,6 +591,9 @@ impl App {
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,
             layer_drag: None,
+            fonts: Default::default(),
+            text_style: typing::default_style(),
+            focus_text: false,
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -835,7 +845,17 @@ impl App {
     /// レイヤーの欄などに出す、柄の名前。付けた名前がなければ「種類 番号」。
     fn layer_label(&self, index: usize) -> String {
         let decal = &self.decals[index];
-        decal.layer.name.clone().unwrap_or_else(|| format!("{} {}", decal.picture.label(), index + 1))
+        if let Some(name) = &decal.layer.name {
+            return name.clone();
+        }
+        // 文字の柄は、文字の 1 行目を名前にする（Photoshop の文字のレイヤーと同じ）。
+        if let Picture::Text(art) = &decal.picture {
+            let first: String = art.spec.text.lines().next().unwrap_or("").chars().take(20).collect();
+            if !first.trim().is_empty() {
+                return first;
+            }
+        }
+        format!("{} {}", decal.picture.label(), index + 1)
     }
 
     /// 下の帯に、知らせを 1 行出す。
@@ -959,10 +979,10 @@ impl App {
             return;
         }
         let (plain, command, shift, pressed) = ctx.input(|i| {
-            let pressed = [egui::Key::V, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
+            let pressed = [egui::Key::V, egui::Key::T, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
             (i.modifiers.is_none(), i.modifiers.command, i.modifiers.shift, pressed)
         });
-        let [v, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
+        let [v, t, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
             self.zoom = 1.0;
@@ -992,6 +1012,9 @@ impl App {
         }
         if h {
             self.tool = Tool::Hand;
+        }
+        if t {
+            self.tool = Tool::Text;
         }
         for (pressed, view) in [(one, View::Solid), (two, View::Front), (three, View::Back)] {
             if pressed {

@@ -1945,11 +1945,14 @@ dependencies = [
  "chrono",
  "craft-psd",
  "eframe",
+ "fontique",
  "pakenoba-core",
  "png",
  "rfd",
  "serde",
+ "skrifa",
  "toml",
+ "vello_cpu",
  "zune-jpeg",
 ]
 

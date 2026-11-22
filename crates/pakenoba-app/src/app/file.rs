@@ -142,6 +142,7 @@ impl App {
                 .filter(|asset| asset.stored.is_some())
                 .position(|asset| matches!(&asset.picture, Picture::Image { rgba: other, .. } if std::sync::Arc::ptr_eq(rgba, other)))
                 .map(Source::Asset),
+            Picture::Text(art) => Some(Source::Text(art.spec.clone())),
         }
     }
 
@@ -189,6 +190,7 @@ impl App {
             match self.source_of(&placed.picture) {
                 Some(Source::Builtin(name)) => (0u8, name).hash(&mut hasher),
                 Some(Source::Asset(index)) => (1u8, index).hash(&mut hasher),
+                Some(Source::Text(spec)) => (3u8, &spec.text, &spec.font, [spec.size, spec.spacing, spec.leading].map(f32::to_bits), spec.color, spec.align).hash(&mut hasher),
                 None => 2u8.hash(&mut hasher),
             }
         }
@@ -251,6 +253,20 @@ impl App {
                 Source::Asset(asset) => match self.assets.get(first + asset) {
                     Some(asset) => asset.picture.clone(),
                     None => continue,
+                },
+                Source::Text(spec) => match self.text_picture(spec) {
+                    Ok(picture) => {
+                        if let Picture::Text(art) = &picture
+                            && art.font_used != spec.font
+                        {
+                            problems.push(format!("柄 {}（文字）のフォント「{}」がこの PC にないので、{} で描きました", index + 1, spec.font, art.font_used));
+                        }
+                        picture
+                    }
+                    Err(e) => {
+                        problems.push(format!("柄 {}（文字）を描けなかったので、外しました（{e}）", index + 1));
+                        continue;
+                    }
                 },
             };
             self.decals.push(Placed { decal: placed.decal, picture, back: placed.back, layer: placed.layer.clone() });

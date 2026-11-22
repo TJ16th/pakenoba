@@ -80,6 +80,7 @@ pub(super) fn same_picture(a: &Picture, b: &Picture) -> bool {
     match (a, b) {
         (Picture::Logo, Picture::Logo) | (Picture::Band, Picture::Band) => true,
         (Picture::Image { rgba: x, .. }, Picture::Image { rgba: y, .. }) => Arc::ptr_eq(x, y),
+        (Picture::Text(x), Picture::Text(y)) => Arc::ptr_eq(x, y),
         _ => false,
     }
 }

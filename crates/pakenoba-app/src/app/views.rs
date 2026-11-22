@@ -12,7 +12,7 @@ use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown, Tool, Workspace};
 use crate::gpu::BoxRenderer;
-use crate::paint::{Placed, spots_on};
+use crate::paint::{Picture, Placed, spots_on};
 
 /// 表示と表示の間のすき間。
 const GAP: f32 = 2.0;
@@ -242,7 +242,11 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() && self.tool != Tool::Hand {
+        // 文字の道具では、文字の柄を押せば選び、ほかを押せば、そこに文字を置く。
+        let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
+        if text_click && let Some((panel, at, back)) = hit {
+            self.add_text_at(panel, at, back);
+        } else if response.clicked() && self.tool != Tool::Hand {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
         }
@@ -256,6 +260,8 @@ impl App {
         }
         if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if decal_under.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -395,7 +401,10 @@ impl App {
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() && self.tool != Tool::Hand {
+        let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
+        if text_click && let Some((panel, at)) = hit {
+            self.add_text_at(panel, at, back);
+        } else if response.clicked() && self.tool != Tool::Hand {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
         }
@@ -409,6 +418,8 @@ impl App {
         }
         if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if decal_under.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }

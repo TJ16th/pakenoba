@@ -111,7 +111,8 @@ impl App {
                     Tool::Hand => {
                         ui.weak("ドラッグで、箱を回す、展開図をずらす");
                     }
-                    Tool::Text | Tool::Shape | Tool::Ai => {}
+                    Tool::Text => self.text_bar(ui),
+                    Tool::Shape | Tool::Ai => {}
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
@@ -182,11 +183,12 @@ impl App {
         if others > 0 {
             ui.weak(format!("ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。"));
         }
-        let earlier = self.snapshot();
         let locked = self.decals[index].layer.locked;
         if locked {
             ui.weak("ロックしています。動かすには、レイヤーの欄で鍵を外してください。");
         }
+        self.text_properties(ui, index, locked);
+        let earlier = self.snapshot();
         let template = &self.template;
         let decal = &mut self.decals[index];
         let before = decal.decal;
