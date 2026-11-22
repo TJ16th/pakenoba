@@ -195,7 +195,7 @@
 	{} (not found)	{}（見つかりません）
 	Clear list	一覧を消す
 	The files are not deleted	ファイルは消えません
-	Save	保存する
+	Save	保存
 	Save As…	名前を付けて保存…
 	No changes (already saved)	変更はありません（保存してあります）
 	Close	閉じる
@@ -588,3 +588,32 @@
 	Language	言語
 	Same as the system	システムと同じ
 	Undo	元に戻す
+# menus.rs
+	Edit	編集
+	Object	柄
+	Help	ヘルプ
+	Export	書き出し
+	Dieline (PSD)…	型紙（PSD）…
+	16:9 image…	16:9 の画像…
+	Box-opening video…	箱開け動画…
+	Full-size dieline (PDF)…	実寸の型紙（PDF）…
+	Exit	終了
+	Nothing to undo	元に戻せる操作がありません
+	Nothing to redo	やり直せる操作がありません
+	Select all	すべて選択
+	Deselect	選択を解除
+	Nothing is selected	何も選んでいません
+	Usable in the Design step	デザインの工程で使えます
+	Select artwork in the Design step	デザインの工程で、柄を選ぶと使えます
+	Preferences	環境設定
+	Assets screen	「素材」の画面
+	Assets panel	素材の欄
+	Fit to window	全体を表示
+	Select three or more pieces of artwork	柄を 3 つ以上選ぶと使えます
+	Select artwork that uses an asset	素材を使っている柄を選ぶと使えます
+	Select image artwork (not vector, not locked)	画像の柄（ベクターでなく、ロックしていないもの）を選ぶと使えます
+	About PAKENOBA	パケノバについて
+	Version {}	版 {}
+	Software for designing packages: choose a dieline, place artwork on the box, and export.	パッケージデザインのためのソフトです。型紙を選び、箱の上に柄を置いて、書き出します。
+	The code is licensed under MIT or Apache-2.0, at your option. The PAKENOBA name and logo are not covered by the code license.	コードのライセンスは MIT または Apache-2.0（どちらかを選べます）。パケノバの名前とロゴは、コードのライセンスの対象外です。
+	Uses craft-libs and VectorCraft's Image Trace (MIT or Apache-2.0).	craft-libs と、VectorCraft の画像トレースを使っています（MIT または Apache-2.0）。

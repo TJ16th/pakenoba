@@ -20,20 +20,15 @@ fn number(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f3
 }
 
 impl App {
-    /// 上: 工程の切り替え。左から順に進めば完成する。
+    /// 上（メニューバーの下）: 工程の切り替え。左から順に進めば完成する。
     pub(super) fn top_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("workspaces").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
-                ui.strong(t!("PAKENOBA"));
-                ui.add_space(8.0);
-                self.file_menu(ui);
-                ui.add_space(8.0);
                 for (workspace, label) in [(Workspace::Shape, t!("Structure")), (Workspace::Design, t!("Design")), (Workspace::Output, t!("Output"))] {
                     // 「素材」の画面を開いているあいだは、どの工程も選んでいない見た目にする。
                     if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
-                        self.workspace = workspace;
-                        self.library.open = false;
+                        self.go_to(workspace);
                     }
                 }
                 // 案件の名前と、保存していない変更の印。
@@ -45,18 +40,11 @@ impl App {
                 } else if unsaved {
                     name.on_hover_text(t!("There are unsaved changes (Ctrl+S to save)"));
                 }
-                // メニューバーを作るまでの、元に戻すとやり直すの置き場。
+                // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
                     if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The screen for finding assets and importing them into this project (press again to go back)")).clicked() {
                         self.toggle_library();
-                    }
-                    ui.separator();
-                    if ui.add_enabled(self.history.can_redo(), egui::Button::new(t!("Redo"))).on_hover_text("Ctrl+Shift+Z").clicked() {
-                        self.redo();
-                    }
-                    if ui.add_enabled(self.history.can_undo(), egui::Button::new(t!("Undo"))).on_hover_text("Ctrl+Z").clicked() {
-                        self.undo();
                     }
                 });
             });
@@ -94,12 +82,7 @@ impl App {
                             }
                             ui.separator();
                             if ui.add_enabled(!self.decals[index].layer.locked, egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
-                                self.checkpoint();
-                                let decal = &mut self.decals[index];
-                                let turned = decal.angle + std::f32::consts::FRAC_PI_2;
-                                decal.angle = (turned + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                                self.art_dirty = true;
-                                self.back_dirty = true;
+                                self.rotate_selected();
                             }
                             ui.separator();
                             ui.label(t!("To the panel"));

@@ -21,6 +21,7 @@ mod typing;
 mod shapes;
 mod adjust;
 mod vectorize;
+mod menus;
 mod views;
 
 use pakenoba_i18n::t;
@@ -512,6 +513,8 @@ struct App {
     /// ベクター化の設定と、別のスレッドで動いているベクター化。
     trace: crate::vector::TraceSettings,
     vectorizing: Option<vectorize::VectorizeJob>,
+    /// 「パケノバについて」の窓を出しているか。
+    about_open: bool,
     /// 文字を置いた直後。右の欄の文字の入力に、カーソルを置く。
     focus_text: bool,
     /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
@@ -636,6 +639,7 @@ impl App {
             adjust: Default::default(),
             trace: vectorize::default_settings(),
             vectorizing: None,
+            about_open: false,
             focus_text: false,
             show_guides: initial.guides,
             art_dirty: true,
@@ -1028,8 +1032,16 @@ impl App {
         let [v, e, t, u, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
-            self.zoom = 1.0;
-            self.flat = [FlatCam::default(); 2];
+            self.fit_view();
+        }
+        // Ctrl+Alt+1、2、3 で、型、デザイン、出力の工程へ（Lightroom Classic のモジュールの切り替えと同じ形）。
+        let alt = ctx.input(|i| i.modifiers.alt);
+        if command && alt {
+            for (pressed, workspace) in [(one, Workspace::Shape), (two, Workspace::Design), (three, Workspace::Output)] {
+                if pressed {
+                    self.go_to(workspace);
+                }
+            }
         }
         // Ctrl+Z で元に戻す。Ctrl+Shift+Z か Ctrl+Y で、やり直す。
         if command && ((z && shift) || y) {
@@ -1148,6 +1160,7 @@ impl eframe::App for App {
         self.recovery_frame(ui.ctx());
         self.file_shortcuts(ui.ctx());
         self.shortcuts(ui.ctx());
+        self.menu_bar(ui);
         self.top_bar(ui);
         self.run_file_action(ui.ctx());
         self.run_replace();

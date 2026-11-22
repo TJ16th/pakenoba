@@ -581,13 +581,12 @@ impl App {
         }
     }
 
-    /// 上の帯の「ファイル」のメニュー。
+    /// メニューバーの「ファイル」のメニュー。
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let saving = self.is_saving();
         let mut chosen = None;
         let mut open = None;
         let mut clear = false;
-        let mut language = None;
         ui.menu_button(t!("File"), |ui| {
             ui.set_min_width(220.0);
             let mut pick = |ui: &mut egui::Ui, enabled: bool, label: &str, keys: &str, action: FileAction| {
@@ -625,27 +624,14 @@ impl App {
             pick(ui, !saving, t!("Save"), "Ctrl+S", FileAction::Save);
             pick(ui, !saving, t!("Save As…"), "Ctrl+Shift+S", FileAction::SaveAs);
             ui.separator();
-            // 言語。メニューバーを作ったら、「編集」の「環境設定」へ移す。
-            // 読めない言語にしてしまっても見つけられるように、英語の名前も添える。
-            let label = if pakenoba_i18n::current() == "en" { "Language".to_owned() } else { format!("{} / Language", t!("Language")) };
-            ui.menu_button(label, |ui| {
-                let following_os = self.settings.language.is_none();
-                if ui.radio(following_os, t!("Same as the system")).clicked() {
-                    language = Some(None);
-                    ui.close();
-                }
-                for lang in &pakenoba_i18n::LANGS {
-                    let on = self.settings.language.as_deref() == Some(lang.code);
-                    if ui.radio(on, lang.name).clicked() {
-                        language = Some(Some(lang.code.to_owned()));
-                        ui.close();
-                    }
-                }
-            });
+            self.export_items(ui);
+            ui.separator();
+            // 終了。保存していない変更があれば、閉じるときと同じく確かめる。
+            if ui.add(egui::Button::new(t!("Exit")).shortcut_text("Alt+F4")).clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                ui.close();
+            }
         });
-        if let Some(choice) = language {
-            self.set_language(choice);
-        }
         if chosen.is_some() {
             self.file.action = chosen;
         }
