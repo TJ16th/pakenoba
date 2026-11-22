@@ -162,7 +162,7 @@ impl App {
             .enumerate()
             .map(|(index, placed)| {
                 let source = self.source_of(&placed.picture).ok_or_else(|| format!("柄 {} の絵が、素材の一覧にありません", index + 1))?;
-                Ok(Placement { decal: placed.decal, back: placed.back, source })
+                Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Project { shape: self.dims.shape(), assets, decals, base: self.base_file.clone() })
@@ -182,7 +182,7 @@ impl App {
         self.base_file.as_ref().map(|base| (base.id(), &base.name)).hash(&mut hasher);
         for placed in &self.decals {
             let decal = &placed.decal;
-            (decal.panel, decal.at.map(f32::to_bits), decal.size.map(f32::to_bits), decal.angle.to_bits(), placed.back).hash(&mut hasher);
+            (decal.panel, decal.at.map(f32::to_bits), decal.size.map(f32::to_bits), decal.angle.to_bits(), placed.back, &placed.layer).hash(&mut hasher);
             match self.source_of(&placed.picture) {
                 Some(Source::Builtin(name)) => (0u8, name).hash(&mut hasher),
                 Some(Source::Asset(index)) => (1u8, index).hash(&mut hasher),
@@ -212,7 +212,7 @@ impl App {
     }
 
     /// 開いた案件を、画面の状態にする。表示できなかったものの知らせを返す。
-    fn apply_project(&mut self, project: Project) -> Vec<String> {
+    pub(super) fn apply_project(&mut self, project: Project) -> Vec<String> {
         let mut problems = Vec::new();
         self.dims = Dims::from_shape(&project.shape);
         (self.template, self.surface, self.problems) = self.dims.build();
@@ -250,7 +250,7 @@ impl App {
                     None => continue,
                 },
             };
-            self.decals.push(Placed { decal: placed.decal, picture, back: placed.back });
+            self.decals.push(Placed { decal: placed.decal, picture, back: placed.back, layer: placed.layer.clone() });
         }
 
         // 展開図まるごとの絵。
@@ -269,6 +269,7 @@ impl App {
         self.history = history::History::default();
         (self.selected, self.grab, self.hover, self.preview, self.carry, self.asset_selected, self.pending_shape) = (None, None, None, None, None, None, None);
         (self.editing, self.keep_decals) = (false, false);
+        (self.renaming, self.layer_drag) = (None, None);
         self.flat = [FlatCam::default(); 2];
         self.fold = 1.0;
         self.open = [0.0; 2];

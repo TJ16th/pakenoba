@@ -19,6 +19,8 @@ pub struct Placed {
     /// 紙の裏（箱の内側の面）に置いた柄か。
     /// 場所は、表の柄と同じく展開図の座標で持つ。絵は、裏から見て正しく読めるように、左右を逆にして描く。
     pub back: bool,
+    /// レイヤーとしての名前、表示、ロック。
+    pub layer: pakenoba_core::project::Layer,
 }
 
 impl Deref for Placed {
@@ -34,10 +36,10 @@ impl DerefMut for Placed {
     }
 }
 
-/// 表か裏の、どちらかの面にある柄の場所を取り出す（中核の関数に渡すため）。
+/// 表か裏の、どちらかの面にある柄のうち、つかめるもの（隠していない、ロックしていない）の場所を取り出す（中核の関数に渡すため）。
 /// 返すのは、もとの番号の並びと、場所の並び。
 pub fn spots_on(decals: &[Placed], back: bool) -> (Vec<usize>, Vec<Decal>) {
-    decals.iter().enumerate().filter(|(_, p)| p.back == back).map(|(index, p)| (index, p.decal)).unzip()
+    decals.iter().enumerate().filter(|(_, p)| p.back == back && !p.layer.hidden && !p.layer.locked).map(|(index, p)| (index, p.decal)).unzip()
 }
 
 /// 柄の絵。
@@ -123,10 +125,10 @@ pub struct Canvas<'a> {
 }
 
 /// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
-/// 描くのは、`back` で指定した面（表か裏）の柄だけ。
+/// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。
 pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], selected: Option<usize>, back: bool, canvas: Canvas) {
     let Canvas { w, h, rgba } = canvas;
-    for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back) {
+    for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back && !decal.layer.hidden) {
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
         for piece in surface.layout(tpl, decal).iter().rev() {
@@ -203,8 +205,8 @@ mod tests {
         let thin = Template::tuck_box(120.0, 60.0, 160.0, 0.02);
         let surface = Surface::new(&tpl, &thin);
         let (w, h) = (((tpl.max[0] - tpl.min[0]) * PX_PER_MM).ceil() as usize, ((tpl.max[1] - tpl.min[1]) * PX_PER_MM).ceil() as usize);
-        let front = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.7], size: [40.0, 10.0], angle: 0.0 }, back: false };
-        let back = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.3], size: [40.0, 10.0], angle: 0.0 }, back: true };
+        let front = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.7], size: [40.0, 10.0], angle: 0.0 }, back: false, layer: Default::default() };
+        let back = Placed { picture: red_blue(), decal: Decal { panel: 0, at: [0.5, 0.3], size: [40.0, 10.0], angle: 0.0 }, back: true, layer: Default::default() };
         let (front_at, back_at) = (front.center(&tpl), back.center(&tpl));
         let decals = [front, back];
         let left = |c: P2| [c[0] - 10.0, c[1]];

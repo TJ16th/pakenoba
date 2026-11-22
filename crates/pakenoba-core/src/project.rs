@@ -172,6 +172,19 @@ pub struct Placement {
     /// 紙の裏（箱の内側の面）に置いた柄か。
     pub back: bool,
     pub source: Source,
+    /// レイヤーとしての名前、表示、ロック。
+    pub layer: Layer,
+}
+
+/// 柄のレイヤーとしての設定。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Layer {
+    /// 使う人が付けた名前。None なら、画面では「番号（種類）」と出す。
+    pub name: Option<String>,
+    /// 隠している（箱にも、書き出す型紙にも描かない。型紙の PSD では、隠したレイヤーとして入れる）。
+    pub hidden: bool,
+    /// ロックしている（箱や展開図の上で、つかんだり動かしたりできない）。
+    pub locked: bool,
 }
 
 /// 案件 1 つ。
@@ -303,6 +316,17 @@ struct DecalEntry {
     /// 回転（ラジアン、反時計回り）。
     angle: f64,
     back: bool,
+    /// レイヤーの名前（付けたときだけ書く）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    hidden: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    locked: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn one() -> usize {
@@ -392,7 +416,7 @@ impl Project {
                         Source::Asset(index) => (Some(*index), None),
                         Source::Builtin(name) => (None, Some(name.clone())),
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked }
                 })
                 .collect(),
         }
@@ -575,7 +599,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             problems.push(format!("柄 {number} は、場所か大きさが正しくないので、外しました"));
             continue;
         }
-        decals.push(Placement { decal, back: entry.back, source });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked } });
     }
 
     Ok(Opened { project: Project { shape, assets, decals, base }, problems })
@@ -660,7 +684,7 @@ mod tests {
                     1 => Source::Builtin("band".to_owned()),
                     n => Source::Asset(n - 2),
                 };
-                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source }
+                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer { name: (panel % 4 == 1).then(|| format!("名前 {panel}")), hidden: panel % 5 == 2, locked: panel % 7 == 3 } }
             })
             .collect();
         // 展開図まるごとの絵は、型によって、あるものとないもの。素材と同じ中身のこともある。
@@ -1064,10 +1088,10 @@ mod tests {
             shape,
             assets: vec![Asset::new("ロゴ.png", fake_file(11, 600), [46.0, 46.0], "2026-11-22T00:30:00+09:00"), Asset::new("地紋.psd", fake_file(12, 2000), [120.0, 80.0], "2026-11-22T00:31:00+09:00")],
             decals: vec![
-                Placement { decal: Decal { panel: panel("側面 1", 1), at: [0.5, 0.5], size: [46.0, 46.0], angle: 0.0 }, back: false, source: Source::Asset(0) },
-                Placement { decal: Decal { panel: panel("側面 3", 1), at: [0.25, 0.75], size: [120.0, 80.0], angle: std::f32::consts::FRAC_PI_2 }, back: true, source: Source::Asset(1) },
-                Placement { decal: Decal { panel: panel("上のフラップ", 3), at: [0.5, 0.4], size: [20.0, 20.0], angle: -0.3 }, back: false, source: Source::Builtin("logo".to_owned()) },
-                Placement { decal: Decal { panel: panel("側面 2", 1), at: [0.5, 0.1], size: [420.0, 14.0], angle: 0.0 }, back: false, source: Source::Builtin("band".to_owned()) },
+                Placement { decal: Decal { panel: panel("側面 1", 1), at: [0.5, 0.5], size: [46.0, 46.0], angle: 0.0 }, back: false, source: Source::Asset(0), layer: Layer::default() },
+                Placement { decal: Decal { panel: panel("側面 3", 1), at: [0.25, 0.75], size: [120.0, 80.0], angle: std::f32::consts::FRAC_PI_2 }, back: true, source: Source::Asset(1), layer: Layer::default() },
+                Placement { decal: Decal { panel: panel("上のフラップ", 3), at: [0.5, 0.4], size: [20.0, 20.0], angle: -0.3 }, back: false, source: Source::Builtin("logo".to_owned()), layer: Layer::default() },
+                Placement { decal: Decal { panel: panel("側面 2", 1), at: [0.5, 0.1], size: [420.0, 14.0], angle: 0.0 }, back: false, source: Source::Builtin("band".to_owned()), layer: Layer::default() },
             ],
             base: Some(Asset::new("型紙に描いた絵.psd", fake_file(13, 1500), [0.0, 0.0], "2026-11-22T00:32:00+09:00")),
         }

@@ -104,7 +104,7 @@ impl App {
         let source = self.assets.get(asset)?;
         let mut decal = Decal { panel, at: [0.5, 0.5], size: self.asset_size(source), angle };
         decal.set_center(&self.template, at);
-        Some(Placed { picture: source.picture.clone(), decal, back })
+        Some(Placed { picture: source.picture.clone(), decal, back, layer: Default::default() })
     }
 
     /// 柄を置いて、選ぶ。
@@ -302,7 +302,7 @@ impl App {
             return;
         };
         ui.set_min_width(240.0);
-        ui.label(format!("{} {}", self.decals[index].picture.label(), index + 1));
+        ui.label(self.layer_label(index));
         ui.separator();
         match self.asset_of(&self.decals[index].picture) {
             Some(asset) => {
@@ -605,5 +605,51 @@ mod tests {
         assert_eq!(again.decals.len(), 2);
         assert!(again.decals.iter().all(|d| matches!(d.picture, Picture::Image { .. })));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn レイヤーの表示とロックと名前と並べ替え() {
+        let mut app = App::new(&Initial::default());
+        for _ in 0..3 {
+            app.add_decal(Picture::Logo, [30.0, 30.0]);
+        }
+        app.decals[2].back = true;
+        // 名前は、付けた名前か「種類 番号」。
+        assert_eq!(app.layer_label(0), "ロゴ 1");
+        app.decals[0].layer.name = Some("表のロゴ".to_owned());
+        assert_eq!(app.layer_label(0), "表のロゴ");
+        // 隠した柄と、ロックした柄は、箱の上でつかめない。
+        app.decals[1].layer.hidden = true;
+        assert_eq!(crate::paint::spots_on(&app.decals, false).0, vec![0]);
+        app.decals[1].layer.hidden = false;
+        app.decals[0].layer.locked = true;
+        assert_eq!(crate::paint::spots_on(&app.decals, false).0, vec![1]);
+        // ロックした柄は消せない。
+        app.selected = Some(0);
+        app.delete_selected();
+        assert_eq!(app.decals.len(), 3);
+        // 柄 0 を、柄 1 の上へ。重なり順が入れ替わり、動かした柄を選ぶ。元に戻せる。
+        app.move_layer(0, 1, true);
+        assert_eq!(app.decals[1].layer.name.as_deref(), Some("表のロゴ"));
+        assert_eq!(app.selected, Some(1));
+        app.undo();
+        assert_eq!(app.decals[0].layer.name.as_deref(), Some("表のロゴ"));
+        // 下に落とす。同じ場所なら、何もしない。
+        app.move_layer(1, 0, false);
+        assert_eq!(app.decals[0].layer.name, None);
+        app.move_layer(0, 1, false);
+        assert_eq!(app.decals[0].layer.name, None);
+        // 保存して開くと、名前、表示、ロックが戻る。
+        app.decals[2].layer.hidden = true;
+        let project = app.project().unwrap();
+        let mut again = App::new(&Initial::default());
+        again.apply_project(project);
+        let layers: Vec<_> = again.decals.iter().map(|d| d.layer.clone()).collect();
+        assert_eq!(layers, app.decals.iter().map(|d| d.layer.clone()).collect::<Vec<_>>());
+        // 型紙の PSD では、隠した柄は、隠したレイヤーになる。
+        let back = again.decal_layers(true);
+        assert_eq!(back.len(), 1);
+        assert!(!back[0].visible);
+        assert!(back[0].image.iter().skip(3).step_by(4).any(|&a| a > 0), "隠した柄も、レイヤーには描く");
     }
 }

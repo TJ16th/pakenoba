@@ -70,3 +70,46 @@ fn draw(painter: &egui::Painter, center: Pos2, tool: Tool, stroke: Stroke) {
         }
     }
 }
+
+/// レイヤーの行の、小さなアイコンのボタン（目と鍵）。`on` のときは、はっきり描く。
+fn row_button(ui: &mut egui::Ui, on: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Pos2, Stroke)) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(20.0, 18.0), Sense::click());
+    let visuals = ui.visuals();
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 3.0, visuals.widgets.hovered.bg_fill);
+    }
+    let color = if on { visuals.text_color() } else { visuals.weak_text_color().gamma_multiply(0.7) };
+    icon(ui.painter(), rect.center(), Stroke::new(1.2, color));
+    response.on_hover_text(tip)
+}
+
+/// 柄を見せるか隠すかの、目のボタン。
+pub(super) fn eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
+    let tip = if visible { "隠す（箱にも、型紙にも描かない）" } else { "見せる" };
+    row_button(ui, visible, tip, |painter, c, stroke| {
+        // 目の輪郭（上下 2 本の弧）と、ひとみ。隠しているときは、閉じた目（下の弧だけ）。
+        let arc = |sign: f32| -> Vec<Pos2> { (0..=12).map(|k| { let t = k as f32 / 12.0; let x = (t - 0.5) * 13.0; pos2(c.x + x, c.y + sign * 4.2 * (1.0 - (2.0 * t - 1.0).powi(2))) }).collect() };
+        painter.add(Shape::line(arc(1.0), stroke));
+        if visible {
+            painter.add(Shape::line(arc(-1.0), stroke));
+            painter.circle_filled(c, 1.9, stroke.color);
+        }
+    })
+}
+
+/// 柄をロックするかの、鍵のボタン。
+pub(super) fn lock_button(ui: &mut egui::Ui, locked: bool) -> egui::Response {
+    let tip = if locked { "ロックを外す" } else { "ロックする（箱や展開図の上で、つかめなくする）" };
+    row_button(ui, locked, tip, |painter, c, stroke| {
+        // 錠の本体と、つる。外しているときは、つるを片側だけ浮かせる。
+        painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.2), vec2(9.0, 6.5)), 1.0, stroke, StrokeKind::Middle);
+        let lift = if locked { 0.0 } else { 2.0 };
+        let shackle: Vec<Pos2> = (0..=10).map(|k| { let a = std::f32::consts::PI * k as f32 / 10.0; pos2(c.x - 2.8 * a.cos(), c.y - 1.0 - lift - 3.3 * a.sin()) }).collect();
+        let (left, right) = (shackle[0], shackle[10]);
+        painter.add(Shape::line(shackle, stroke));
+        painter.line_segment([left, pos2(left.x, c.y - 1.0)], stroke);
+        if locked {
+            painter.line_segment([right, pos2(right.x, c.y - 1.0)], stroke);
+        }
+    })
+}

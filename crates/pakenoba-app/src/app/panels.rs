@@ -71,7 +71,7 @@ impl App {
                 match self.tool {
                     Tool::Select => match self.selected.filter(|&i| i < self.decals.len()) {
                         Some(index) => {
-                            ui.label(format!("{} {}", self.decals[index].picture.label(), index + 1));
+                            ui.label(self.layer_label(index));
                             ui.separator();
                             ui.label("重なり順");
                             if ui.add_enabled(self.neighbor(index, 1).is_some(), egui::Button::new("前面へ")).clicked() {
@@ -81,7 +81,7 @@ impl App {
                                 self.reorder_selected(-1);
                             }
                             ui.separator();
-                            if ui.button("90 度回す").clicked() {
+                            if ui.add_enabled(!self.decals[index].layer.locked, egui::Button::new("90 度回す")).on_disabled_hover_text("ロックしています").clicked() {
                                 self.checkpoint();
                                 let decal = &mut self.decals[index];
                                 let turned = decal.angle + std::f32::consts::FRAC_PI_2;
@@ -165,6 +165,10 @@ impl App {
         };
         // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
         let earlier = self.snapshot();
+        let locked = self.decals[index].layer.locked;
+        if locked {
+            ui.weak("ロックしています。動かすには、レイヤーの欄で鍵を外してください。");
+        }
         let template = &self.template;
         let decal = &mut self.decals[index];
         let before = decal.decal;
@@ -183,7 +187,7 @@ impl App {
         let mut height = decal.size[1];
         // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
         let mut degrees = decal.angle.to_degrees() * turn + 0.0;
-        egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.add_enabled_ui(!locked, |ui| egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("種類");
             ui.label(decal.picture.label());
             ui.end_row();
@@ -208,7 +212,7 @@ impl App {
             ui.label("回転");
             number(ui, &mut degrees, -180.0..=180.0, "度");
             ui.end_row();
-        });
+        }));
         if (x, y) != (x0, y0) {
             // 数値で動かすときは、置かれている面の中にとどめる（隣の面へは、ドラッグで動かす）。
             decal.set_center(template, [template.min[0] + mirror(x), template.max[1] - y]);
@@ -253,7 +257,7 @@ impl App {
             ui.small(format!("合わせ目を {seams} 回またいでいます。"));
         }
         ui.add_space(2.0);
-        if ui.button("この柄を消す").on_hover_text("Delete").clicked() {
+        if ui.add_enabled(!locked, egui::Button::new("この柄を消す")).on_hover_text("Delete").on_disabled_hover_text("ロックしている柄は消せません").clicked() {
             self.delete_selected();
         }
     }
@@ -266,35 +270,133 @@ impl App {
                 self.back_dirty = true;
             }
             // 紙の表と裏に分けて、上に重なっているものから並べる。
+            // 行ごとに、目（見せる、隠す）、鍵（ロック）、名前。名前をダブルクリックで名前を変える。行をドラッグで重なり順を変える。
+            let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
             for back in [false, true] {
                 ui.label(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
-                let mut any = false;
                 let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
+                if rows.is_empty() && (back || self.custom.is_none()) {
+                    ui.small("　柄はありません");
+                }
                 for index in rows {
-                    any = true;
-                    let label = format!("{} {}", self.decals[index].picture.label(), index + 1);
-                    let row = ui.selectable_label(self.selected == Some(index), label);
-                    if row.clicked() {
-                        self.selected = if self.selected == Some(index) { None } else { Some(index) };
-                        self.art_dirty = true;
-                    }
-                    if row.secondary_clicked() {
+                    let row = ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let layer = self.decals[index].layer.clone();
+                        if icons::eye_button(ui, !layer.hidden).clicked() {
+                            self.checkpoint();
+                            self.decals[index].layer.hidden = !layer.hidden;
+                            (self.art_dirty, self.back_dirty) = (true, true);
+                        }
+                        if icons::lock_button(ui, layer.locked).clicked() {
+                            self.checkpoint();
+                            self.decals[index].layer.locked = !layer.locked;
+                            self.grab = None;
+                        }
+                        ui.add_space(4.0);
+                        if let Some((renamed, text)) = &mut self.renaming
+                            && *renamed == index
+                        {
+                            let edit = ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
+                            if !edit.has_focus() && !edit.lost_focus() {
+                                edit.request_focus();
+                            }
+                            let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                            if cancel || edit.lost_focus() {
+                                let text = text.trim().to_owned();
+                                self.renaming = None;
+                                if !cancel {
+                                    let name = (!text.is_empty()).then_some(text);
+                                    if name != self.decals[index].layer.name {
+                                        self.checkpoint();
+                                        self.decals[index].layer.name = name;
+                                    }
+                                }
+                            }
+                            return None;
+                        }
+                        let label = self.layer_label(index);
+                        let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
+                        let selected = self.selected == Some(index);
+                        let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag());
+                        Some(response)
+                    });
+                    rows_at.push((index, row.response.rect));
+                    let Some(response) = row.inner else { continue };
+                    if response.double_clicked() {
+                        self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
+                    } else if response.clicked() {
+                        // 選ぶだけ（もう一度押しても外さない。ダブルクリックで名前を変えるときに、表示がずれないように）。
                         self.selected = Some(index);
                         self.art_dirty = true;
                     }
-                    row.context_menu(|ui| self.decal_menu(ui));
-                }
-                if !any && (back || self.custom.is_none()) {
-                    ui.small("　柄はありません");
+                    if response.secondary_clicked() {
+                        self.selected = Some(index);
+                        self.art_dirty = true;
+                    }
+                    if response.drag_started() {
+                        self.layer_drag = Some(index);
+                    }
+                    let response = response.on_hover_text("ダブルクリックで名前を変える。ドラッグで重なり順を変える");
+                    response.context_menu(|ui| {
+                        if ui.button("名前を変える").clicked() {
+                            self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
+                            ui.close();
+                        }
+                        ui.separator();
+                        self.decal_menu(ui);
+                    });
                 }
                 if back {
                     continue;
                 }
                 self.custom_layer(ui);
             }
+            self.drag_layer(ui, &rows_at);
         });
         ui.add_space(6.0);
         self.psd_loader(ui);
+    }
+
+    /// レイヤーの行のドラッグ。運んでいる間は、落とす場所に線を出し、放したら、同じ面の中で重なり順を変える。
+    fn drag_layer(&mut self, ui: &mut egui::Ui, rows: &[(usize, egui::Rect)]) {
+        let Some(dragged) = self.layer_drag.filter(|&i| i < self.decals.len()) else {
+            self.layer_drag = None;
+            return;
+        };
+        let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) else { return };
+        let back = self.decals[dragged].back;
+        // 同じ面の行のうち、カーソルにいちばん近い行の、上か下。
+        let target = rows
+            .iter()
+            .filter(|(i, _)| self.decals[*i].back == back)
+            .min_by(|a, b| (a.1.center().y - pointer.y).abs().total_cmp(&(b.1.center().y - pointer.y).abs()))
+            .map(|&(i, rect)| (i, rect, pointer.y < rect.center().y));
+        let Some((over, rect, above)) = target else { return };
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let y = if above { rect.top() } else { rect.bottom() };
+        ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
+        if ui.input(|i| i.pointer.any_released()) {
+            self.layer_drag = None;
+            self.move_layer(dragged, over, above);
+        }
+    }
+
+    /// 柄 `dragged` を、柄 `over` のすぐ上（`above`）か、すぐ下へ動かす（重なり順）。動かしたら、その柄を選ぶ。
+    pub(super) fn move_layer(&mut self, dragged: usize, over: usize, above: bool) {
+        // 一覧は上が重なりの上。上に落としたら、その柄のすぐ上（並びでは、すぐ後ろ）へ。
+        let mut to = if above { over + 1 } else { over };
+        if dragged < to {
+            to -= 1;
+        }
+        if to == dragged || dragged >= self.decals.len() || to >= self.decals.len() {
+            return;
+        }
+        self.checkpoint();
+        let item = self.decals.remove(dragged);
+        self.decals.insert(to, item);
+        self.selected = Some(to);
+        self.grab = None;
+        (self.art_dirty, self.back_dirty) = (true, true);
     }
 
     /// レイヤーの欄の、展開図まるごとの絵（PSD）の行。

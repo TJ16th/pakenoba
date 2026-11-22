@@ -469,6 +469,10 @@ struct App {
     settings: settings::Settings,
     /// 「素材」の画面。
     library: library::Library,
+    /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
+    renaming: Option<(usize, String)>,
+    /// レイヤーの欄で、ドラッグしている柄。
+    layer_drag: Option<usize>,
     show_guides: bool,
     /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
@@ -520,7 +524,7 @@ impl App {
         for (picture, size, place) in [(Picture::Band, [around, 14.0], initial.band), (Picture::Logo, [logo, logo], initial.logo)] {
             if let Some([panel, x, y, degrees]) = place {
                 let panel = Some((panel as usize).min(template.panels.len() - 1)).filter(|&i| template.panels[i].takes_art()).unwrap_or(front);
-                decals.push(Placed { picture, decal: Decal { panel, at: [x, y], size, angle: degrees.to_radians() }, back: false });
+                decals.push(Placed { picture, decal: Decal { panel, at: [x, y], size, angle: degrees.to_radians() }, back: false, layer: Default::default() });
             }
         }
         let mut app = App {
@@ -564,6 +568,8 @@ impl App {
             recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
             settings: if cfg!(test) { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) },
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
+            renaming: None,
+            layer_drag: None,
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -698,6 +704,7 @@ impl App {
         self.decals = state.decals;
         self.selected = state.selected.filter(|&i| i < self.decals.len());
         self.grab = None;
+        (self.renaming, self.layer_drag) = (None, None);
         self.art_dirty = true;
         self.back_dirty = true;
     }
@@ -735,6 +742,10 @@ impl App {
     /// 選んでいる柄を消す。確認は出さない（元に戻せる）。
     fn delete_selected(&mut self) {
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        if self.decals[index].layer.locked {
+            self.say("ロックしている柄は消せません。レイヤーの欄で、鍵を外してください。");
+            return;
+        }
         self.checkpoint();
         self.decals.remove(index);
         self.selected = None;
@@ -748,7 +759,7 @@ impl App {
     fn add_decal(&mut self, picture: Picture, size: P2) {
         self.checkpoint();
         let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
-        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false });
+        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false, layer: Default::default() });
         self.selected = Some(self.decals.len() - 1);
         self.art_dirty = true;
     }
@@ -805,19 +816,31 @@ impl App {
         Some(self.assets.len() - 1)
     }
 
-    /// 表か裏の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は「番号（種類）」。
-    /// 向きは、どちらも表の展開図の向き（裏の型紙では、書くときに左右を裏返す）。
-    fn decal_layers(&self, back: bool) -> Vec<(String, Vec<u8>)> {
+    /// 表か裏の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は、付けた名前か「番号（種類）」。
+    /// 向きは、どちらも表の展開図の向き（裏の型紙では、書くときに左右を裏返す）。隠した柄は、隠したレイヤーにする。
+    fn decal_layers(&self, back: bool) -> Vec<crate::art::DecalLayer> {
         self.decals
             .iter()
             .enumerate()
             .filter(|(_, decal)| decal.back == back)
             .map(|(index, decal)| {
-                let mut layer = vec![0u8; self.sheet.w * self.sheet.h * 4];
-                paint(&self.surface, &self.template, std::slice::from_ref(decal), None, back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut layer });
-                (format!("{}（{}）", index + 1, decal.picture.label()), layer)
+                let mut image = vec![0u8; self.sheet.w * self.sheet.h * 4];
+                let mut shown = decal.clone();
+                shown.layer.hidden = false;
+                paint(&self.surface, &self.template, std::slice::from_ref(&shown), None, back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
+                let name = match &decal.layer.name {
+                    Some(name) => format!("{}（{name}）", index + 1),
+                    None => format!("{}（{}）", index + 1, decal.picture.label()),
+                };
+                crate::art::DecalLayer { name, image, visible: !decal.layer.hidden }
             })
             .collect()
+    }
+
+    /// レイヤーの欄などに出す、柄の名前。付けた名前がなければ「種類 番号」。
+    fn layer_label(&self, index: usize) -> String {
+        let decal = &self.decals[index];
+        decal.layer.name.clone().unwrap_or_else(|| format!("{} {}", decal.picture.label(), index + 1))
     }
 
     fn open_psd(&mut self, path: &Path) {
