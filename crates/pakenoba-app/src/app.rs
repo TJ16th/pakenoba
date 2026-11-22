@@ -20,6 +20,7 @@ mod settings;
 mod typing;
 mod shapes;
 mod adjust;
+mod vectorize;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -224,14 +225,14 @@ impl Dims {
 }
 
 /// 柄の素材にできる画像の拡張子。
-const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "psd"];
+const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "psd", "svg", "svgz"];
 
 /// 柄の素材にできる画像のファイルか（拡張子で見る）。
 fn is_image(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| IMAGE_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
-/// 画像のファイルの中身を、RGBA（アルファは乗算なし）にする。PNG、JPEG、PSD（統合した絵）を、中身の先頭で見分ける。
+/// 画像のファイルの中身を、RGBA（アルファは乗算なし）にする。PNG、JPEG、PSD（統合した絵）、SVG（細かく描く）を、中身の先頭で見分ける。
 fn decode_image(bytes: &[u8]) -> Result<Picture, String> {
     if bytes.starts_with(b"\x89PNG") {
         decode_png(bytes)
@@ -239,9 +240,12 @@ fn decode_image(bytes: &[u8]) -> Result<Picture, String> {
         decode_jpeg(bytes)
     } else if bytes.starts_with(b"8BPS") {
         let (w, h, rgba) = crate::art::psd_picture(bytes)?;
-        Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba) })
+        Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: false })
+    } else if crate::vector::is_svg(bytes) {
+        let (w, h, rgba) = crate::vector::decode_svg(bytes)?;
+        Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: true })
     } else {
-        Err("画像として読めませんでした（扱えるのは PNG、JPEG、PSD です）".to_owned())
+        Err("画像として読めませんでした（扱えるのは PNG、JPEG、PSD、SVG です）".to_owned())
     }
 }
 
@@ -255,7 +259,7 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Picture, String> {
     if w == 0 || h == 0 || rgba.len() != w * h * 4 {
         return Err("JPEG の大きさが合いません".to_owned());
     }
-    Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba) })
+    Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: false })
 }
 
 /// PNG のファイルの中身を、RGBA（アルファは乗算なし）にする。
@@ -285,7 +289,7 @@ fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
             _ => [p[0], p[1], p[2], p[3]],
         })
         .collect();
-    Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba) })
+    Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: false })
 }
 
 /// 選べる型。検査を通ったものだけを並べる。
@@ -504,6 +508,9 @@ struct App {
     shape_style: pakenoba_core::project::ShapeSpec,
     /// 画像の調整の欄の値。
     adjust: adjust::AdjustSettings,
+    /// ベクター化の設定と、別のスレッドで動いているベクター化。
+    trace: crate::vector::TraceSettings,
+    vectorizing: Option<vectorize::VectorizeJob>,
     /// 文字を置いた直後。右の欄の文字の入力に、カーソルを置く。
     focus_text: bool,
     /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
@@ -619,6 +626,8 @@ impl App {
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),
             adjust: Default::default(),
+            trace: vectorize::default_settings(),
+            vectorizing: None,
             focus_text: false,
             show_guides: initial.guides,
             art_dirty: true,
@@ -808,7 +817,7 @@ impl App {
         self.add_decal(picture, size);
     }
 
-    /// 画像（PNG、JPEG、PSD）を、この案件の素材に取り込む（置かない）。素材の欄での番号を返す。
+    /// 画像（PNG、JPEG、PSD、SVG）を、この案件の素材に取り込む（置かない）。素材の欄での番号を返す。
     /// 同じ中身の素材がすでにあれば、増やさずに、その番号を返す。`checkpoint` が真なら、取り込みを元に戻せるようにする。
     fn import_image(&mut self, path: &Path, checkpoint: bool) -> Option<usize> {
         let bytes = match std::fs::read(path) {
@@ -1104,7 +1113,7 @@ impl eframe::App for App {
 
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         for path in &dropped {
-            // 案件のファイルは開く。画像（PNG、JPEG、PSD）は柄として置く。
+            // 案件のファイルは開く。画像（PNG、JPEG、PSD、SVG）は柄として置く。
             // ただし、パケノバが書き出した型紙の PSD（ガイドのレイヤーがある）は、展開図まるごとの絵として読む。
             let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
             let dieline = ext.as_deref() == Some("psd") && std::fs::read(path).is_ok_and(|bytes| crate::art::psd_is_dieline(&bytes));
@@ -1141,6 +1150,7 @@ impl eframe::App for App {
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());
         self.poll_edits(ui.ctx());
+        self.poll_vectorize(ui.ctx());
         if self.library.open {
             self.library_screen(ui);
             self.rebuild_if_needed();

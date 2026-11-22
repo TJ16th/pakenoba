@@ -156,7 +156,7 @@ impl App {
                     ui.label(if bundled { "付属の見本" } else { "この案件の素材" });
                     let list: Vec<usize> = (0..self.assets.len()).filter(|&i| self.assets[i].bundled == bundled).collect();
                     if list.is_empty() {
-                        ui.small("画像（PNG、JPEG、PSD）をウィンドウにドロップすると、ここに入ります。");
+                        ui.small("画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップすると、ここに入ります。");
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -242,7 +242,9 @@ impl App {
         let asset = &self.assets[index];
         let size = self.asset_size(asset);
         ui.label(&asset.name);
-        if let Picture::Image { w, h, .. } = &asset.picture {
+        if let Picture::Image { vector: true, .. } = &asset.picture {
+            ui.small("ベクター（SVG）");
+        } else if let Picture::Image { w, h, .. } = &asset.picture {
             ui.small(format!("画像: {w} × {h} px"));
         }
         ui.small(format!("置く大きさ: {:.0} × {:.0} mm", size[0], size[1]));
@@ -337,7 +339,7 @@ impl App {
         if let Some(answer) = self.answer_replace.take() {
             return Some(answer);
         }
-        rfd::FileDialog::new().set_title("差し替える画像を選ぶ").add_filter("画像（PNG、JPEG、PSD）", &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "psd", "PSD"]).pick_file()
+        rfd::FileDialog::new().set_title("差し替える画像を選ぶ").add_filter("画像（PNG、JPEG、PSD、SVG）", &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "psd", "PSD", "svg", "SVG", "svgz", "SVGZ"]).pick_file()
     }
 
     /// 頼まれた差し替えを行う。画像を選んでもらい、絵を入れ替える。元に戻せる。
@@ -437,9 +439,9 @@ mod tests {
     #[test]
     fn 同じ絵かどうかを見分ける() {
         let data = Arc::new(vec![0u8; 4]);
-        let a = Picture::Image { w: 1, h: 1, rgba: data.clone() };
-        let b = Picture::Image { w: 1, h: 1, rgba: data };
-        let c = Picture::Image { w: 1, h: 1, rgba: Arc::new(vec![0u8; 4]) };
+        let a = Picture::Image { w: 1, h: 1, rgba: data.clone(), vector: false };
+        let b = Picture::Image { w: 1, h: 1, rgba: data, vector: false };
+        let c = Picture::Image { w: 1, h: 1, rgba: Arc::new(vec![0u8; 4]), vector: false };
         assert!(same_picture(&a, &b));
         assert!(!same_picture(&a, &c), "中身が同じでも、別に取り込んだ画像は別の素材");
         assert!(same_picture(&Picture::Logo, &Picture::Logo));
@@ -576,7 +578,7 @@ mod tests {
         // JPEG（RGB、CMYK、白黒）。
         for (name, size) in [("red.jpg", [12, 6]), ("red-cmyk.jpg", [6, 12]), ("gray.jpg", [4, 4])] {
             let bytes = std::fs::read(data.join(name)).unwrap();
-            let Ok(Picture::Image { w, h, rgba }) = super::super::decode_image(&bytes) else { panic!("{name} を読めない") };
+            let Ok(Picture::Image { w, h, rgba, .. }) = super::super::decode_image(&bytes) else { panic!("{name} を読めない") };
             assert_eq!([w, h], size, "{name}");
             assert_eq!(rgba[3], 255, "{name}");
             if name.starts_with("red") {

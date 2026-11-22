@@ -60,8 +60,8 @@ pub enum Picture {
     Logo,
     /// 帯（確認用。右向きの山形の並びで、向きと続き方が分かる）。
     Band,
-    /// 読み込んだ画像（RGBA、アルファは乗算なし）。
-    Image { w: usize, h: usize, rgba: Arc<Vec<u8>> },
+    /// 読み込んだ画像（RGBA、アルファは乗算なし）。`vector` なら、SVG を細かく描いた絵（素材は SVG のまま）。
+    Image { w: usize, h: usize, rgba: Arc<Vec<u8>>, vector: bool },
     /// 文字（文字と書式から描いた絵）。
     Text(Arc<crate::text::TextArt>),
     /// 図形（形と色から、その場で描く。拡大してもぼやけない）。
@@ -73,6 +73,7 @@ impl Picture {
         match self {
             Picture::Logo => "ロゴ",
             Picture::Band => "帯",
+            Picture::Image { vector: true, .. } => "ベクター",
             Picture::Image { .. } => "画像",
             Picture::Text(_) => "文字",
             Picture::Shape(_) => "図形",
@@ -113,7 +114,7 @@ impl Picture {
             }
             Picture::Text(art) => Picture::sample_rgba(art.w, art.h, &art.rgba, q, size),
             Picture::Shape(spec) => Picture::sample_shape(spec, q, half),
-            Picture::Image { w, h, rgba } => Picture::sample_rgba(*w, *h, rgba, q, size),
+            Picture::Image { w, h, rgba, .. } => Picture::sample_rgba(*w, *h, rgba, q, size),
         }
     }
 
@@ -249,7 +250,7 @@ mod tests {
     fn red_blue() -> Picture {
         let (w, h) = (8, 2);
         let rgba: Vec<u8> = (0..w * h).flat_map(|i| if i % w < w / 2 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }).collect();
-        Picture::Image { w, h, rgba: Arc::new(rgba) }
+        Picture::Image { w, h, rgba: Arc::new(rgba), vector: false }
     }
 
     /// 展開図の画像の、展開図上の位置 `at` の色。

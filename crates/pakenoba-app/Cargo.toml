@@ -29,7 +29,12 @@ flate2 = "1.1.11"
 # 柄にする画像（JPEG）の読み込み。
 zune-jpeg = "0.5.15"
 # craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
-craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233934d1b2f74e3c0f235168bf5f13ef3" }
+# ベクターの柄（SVG）を読んで描く。Craft のアプリが共有する、制限つきの usvg と resvg（0.48.1）。
+# コミットは、下の vectorcraft-trace が使う craft-libs（craft-image-codecs）とそろえる。
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233934d1b2f74e3c0f235168bf5f13ef3", features = ["tree-render"] }
+# 画像のベクター化。VectorCraft の画像トレース（Illustrator の画像トレースにならったもの）を、部品としてそのまま使う。
+vectorcraft-trace = { git = "https://github.com/storytold/vectorcraft", rev = "db9acab4da715945ea12c865e6ec54a5589588c9" }
 # 案件をまたぐ設定（コレクションの登録）を、人が読める形で覚える。
 serde = { version = "1", features = ["derive"] }
 toml = "1"

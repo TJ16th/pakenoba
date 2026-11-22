@@ -80,12 +80,18 @@ impl App {
         }
     }
 
+    /// 素材を直すアプリ。ベクター（SVG）と画像で、別々に選べる。
+    fn editor_for(&self, picture: &Picture) -> Option<&Path> {
+        if matches!(picture, Picture::Image { vector: true, .. }) { self.settings.vector_editor.as_deref() } else { self.settings.editor.as_deref() }
+    }
+
     /// 素材を外のアプリで開く。すでに開いていれば、もう一度開くだけ。
     pub(super) fn start_edit(&mut self, asset: usize) {
         let Some(stored) = self.assets.get(asset).and_then(|a| a.stored.clone()) else { return self.say("この素材は、外のアプリでは直せません。") };
+        let editor = self.editor_for(&self.assets[asset].picture).map(Path::to_path_buf);
         if let Some(job) = self.edits.iter().find(|j| j.asset == asset) {
             let path = job.path.clone();
-            if let Err(e) = open_with(self.settings.editor.as_deref(), &path) {
+            if let Err(e) = open_with(editor.as_deref(), &path) {
                 self.say(format!("外のアプリで開けませんでした: {e}"));
             }
             return;
@@ -97,7 +103,7 @@ impl App {
         if let Err(e) = written {
             return self.say(format!("作業用のファイルを書けませんでした: {e}"));
         }
-        match open_with(self.settings.editor.as_deref(), &path) {
+        match open_with(editor.as_deref(), &path) {
             Ok(()) => {
                 self.edits.push(EditJob { asset, seen: stamp(&path), pending: None, path });
                 self.say(format!("「{}」を外のアプリで開きました。保存すると、箱に反映します。", self.assets[asset].name));
@@ -186,24 +192,33 @@ impl App {
                 self.stop_edit(asset);
             }
         });
-        let app = self.settings.editor.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "OS で決まっているアプリ".to_owned(), |n| n.to_string_lossy().into_owned());
+        // ベクター（SVG）と画像で、開くアプリを別々に覚える。
+        let vector = matches!(picture, Picture::Image { vector: true, .. });
+        let (tip, title) = if vector { ("VectorCraft、Illustrator、Affinity など", "ベクター（SVG）を直すアプリを選ぶ") } else { ("PhotoCraft、Photoshop、Affinity など", "画像を直すアプリを選ぶ") };
+        let current = if vector { self.settings.vector_editor.clone() } else { self.settings.editor.clone() };
+        let app = current.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "OS で決まっているアプリ".to_owned(), |n| n.to_string_lossy().into_owned());
+        let mut chosen = None;
         ui.horizontal_wrapped(|ui| {
             ui.small(format!("開くアプリ: {app}"));
-            if ui.small_button("選ぶ…").on_hover_text("PhotoCraft、Photoshop、Affinity など").clicked()
-                && let Some(path) = rfd::FileDialog::new().set_title("画像を直すアプリを選ぶ").pick_file()
+            if ui.small_button("選ぶ…").on_hover_text(tip).clicked()
+                && let Some(path) = rfd::FileDialog::new().set_title(title).pick_file()
             {
-                self.settings.editor = Some(path);
-                if let Err(e) = self.settings.save() {
-                    self.say(e);
-                }
+                chosen = Some(Some(path));
             }
-            if self.settings.editor.is_some() && ui.small_button("元に戻す").on_hover_text("OS で決まっているアプリで開く").clicked() {
-                self.settings.editor = None;
-                if let Err(e) = self.settings.save() {
-                    self.say(e);
-                }
+            if current.is_some() && ui.small_button("元に戻す").on_hover_text("OS で決まっているアプリで開く").clicked() {
+                chosen = Some(None);
             }
         });
+        if let Some(path) = chosen {
+            if vector {
+                self.settings.vector_editor = path;
+            } else {
+                self.settings.editor = path;
+            }
+            if let Err(e) = self.settings.save() {
+                self.say(e);
+            }
+        }
     }
 }
 

@@ -9,6 +9,7 @@ mod gpu;
 mod paint;
 mod print;
 mod text;
+mod vector;
 
 use std::process::ExitCode;
 

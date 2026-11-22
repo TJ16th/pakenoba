@@ -71,7 +71,7 @@ pub(super) struct Scan {
     pub capped: bool,
 }
 
-/// フォルダの中の画像（PNG、JPEG、PSD）を探す。隠しフォルダは見ない。
+/// フォルダの中の画像（PNG、JPEG、PSD、SVG）を探す。隠しフォルダは見ない。
 pub(super) fn scan(root: &Path) -> Scan {
     if !root.is_dir() {
         return Scan { entries: Vec::new(), missing: true, capped: false };
@@ -531,14 +531,14 @@ impl App {
             },
             Place::Project if !self.assets.iter().any(|a| !a.bundled) => {
                 ui.label("この案件には、まだ素材がありません。");
-                ui.small("画像（PNG、JPEG、PSD）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。");
+                ui.small("画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。");
                 return;
             }
             _ => {}
         }
         let items = self.library_items();
         if items.is_empty() {
-            ui.label(if self.library.search.trim().is_empty() { "画像（PNG、JPEG、PSD）がありません。" } else { "探す言葉に合う素材がありません。" });
+            ui.label(if self.library.search.trim().is_empty() { "画像（PNG、JPEG、PSD、SVG）がありません。" } else { "探す言葉に合う素材がありません。" });
             return;
         }
         let imported = self.project_ids();

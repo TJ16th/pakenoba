@@ -236,7 +236,7 @@ impl App {
                 Err(why) => {
                     problems.push(format!("素材「{}」は、絵として表示できません（{why}）。案件の中には残してあります。", stored.name));
                     // 中身は残したまま、灰色の四角で代わりに見せる。
-                    Picture::Image { w: 2, h: 2, rgba: std::sync::Arc::new([150u8, 150, 150, 255].repeat(4)) }
+                    Picture::Image { w: 2, h: 2, rgba: std::sync::Arc::new([150u8, 150, 150, 255].repeat(4)), vector: false }
                 }
             };
             self.assets.push(assets::Asset { name: stored.name.clone(), picture, size: stored.size, thumb: None, bundled: false, stored: Some(stored) });

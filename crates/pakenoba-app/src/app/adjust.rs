@@ -342,7 +342,7 @@ impl App {
         let Some(placed) = self.decals.get(index) else {
             return;
         };
-        let Picture::Image { w, h, rgba } = &placed.picture else {
+        let Picture::Image { w, h, rgba, vector: false } = &placed.picture else {
             return;
         };
         let (w, h) = (*w, *h);
@@ -388,6 +388,7 @@ impl App {
                 w: adjusted.w,
                 h: adjusted.h,
                 rgba: Arc::new(adjusted.rgba),
+                vector: false,
             };
             self.assets.push(Asset {
                 name: name.clone(),
@@ -410,7 +411,7 @@ impl App {
     pub(super) fn adjust_controls(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
         if !matches!(
             self.decals.get(index).map(|d| &d.picture),
-            Some(Picture::Image { .. })
+            Some(Picture::Image { vector: false, .. })
         ) {
             return;
         }
@@ -473,6 +474,8 @@ impl App {
                         );
                     },
                 );
+                let enabled = !locked && !self.is_editing(&self.decals[index].picture);
+                self.vectorize_controls(ui, index, enabled);
             });
         if let Some(how) = chosen {
             self.adjust_decal(index, how);
@@ -576,6 +579,7 @@ mod tests {
             w,
             h,
             rgba: Arc::new(rgba),
+            vector: false,
         };
         let decal = Decal {
             panel,
