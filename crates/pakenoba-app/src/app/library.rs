@@ -6,6 +6,7 @@
 //! 登録したフォルダ（コレクション）の中は、案件には入れない。取り込んだときに、中身を案件に写す（案件のファイルだけで開けるように）。
 //! 一覧の絵は、別のスレッドで作る（大きな画像がたくさんあっても、画面が止まらないように）。
 
+use pakenoba_i18n::t;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -147,9 +148,9 @@ pub(super) struct Thumbs {
 
 /// 画像のファイルから、一覧の絵を作る。
 fn make(path: &Path, px: usize) -> Result<Made, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("開けませんでした: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| t!("Could not open: {e}"))?;
     let picture = decode_image(&bytes)?;
-    let Picture::Image { w, h, .. } = &picture else { return Err("画像ではありません".to_owned()) };
+    let Picture::Image { w, h, .. } = &picture else { return Err(t!("Not an image").to_owned()) };
     let size = [*w, *h];
     let rgba = thumbnail(&picture, [50.0, 50.0 * *h as f32 / *w as f32], px);
     let id = project::Asset::new("", bytes, [0.0, 0.0], "").id().to_owned();
@@ -191,13 +192,13 @@ impl Thumbs {
                             ctx.request_repaint();
                         }
                     })
-                    .expect("一覧の絵を作るスレッドを始められませんでした");
+                    .expect("could not start the thumbnail thread");
                 send
             });
             let _ = send.send(key.clone());
             self.cache.insert(key.clone(), (Thumb::Waiting, self.frame));
         }
-        let entry = self.cache.get_mut(&key).expect("いま入れた");
+        let entry = self.cache.get_mut(&key).expect("just inserted");
         entry.1 = self.frame;
         &entry.0
     }
@@ -327,15 +328,15 @@ impl App {
     fn add_collection(&mut self) {
         let answer = match self.library.answer_folder.take() {
             Some(answer) => Some(answer),
-            None => rfd::FileDialog::new().set_title("素材のフォルダを登録する").pick_folder(),
+            None => rfd::FileDialog::new().set_title(t!("Register an asset folder")).pick_folder(),
         };
         let Some(folder) = answer else { return };
         if !self.settings.add(folder.clone()) {
-            self.say(format!("{} は、すでに登録してあります。", folder.display()));
+            self.say(t!("{} is already registered.", folder.display()));
         } else if let Err(e) = self.settings.save() {
             self.say(e);
         } else {
-            self.say(format!("{} を、素材のフォルダとして登録しました。", folder.display()));
+            self.say(t!("Registered {} as an asset folder.", folder.display()));
         }
         let index = self.settings.collections.iter().position(|c| c.path == folder).unwrap_or(self.settings.collections.len().saturating_sub(1));
         self.rescan(index);
@@ -351,7 +352,7 @@ impl App {
         if let Err(e) = self.settings.save() {
             self.say(e);
         } else {
-            self.say(format!("{} の登録を外しました（フォルダの中身は、そのままです）。", removed.path.display()));
+            self.say(t!("Unregistered {} (the folder's contents are unchanged).", removed.path.display()));
         }
         self.library.scans.remove(&removed.path);
         self.library.thumbs.forget(&removed.path);
@@ -421,32 +422,32 @@ impl App {
     /// 左: 場所。
     fn library_places(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
-        ui.strong("素材");
+        ui.strong(t!("Assets"));
         ui.add_space(6.0);
         let mut go = None;
         let mine = self.assets.iter().filter(|a| !a.bundled).count();
-        if ui.selectable_label(self.library.place == Place::Project, format!("この案件の素材（{mine}）")).clicked() {
+        if ui.selectable_label(self.library.place == Place::Project, t!("This project's assets ({mine})")).clicked() {
             go = Some(Place::Project);
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            ui.label("コレクション");
+            ui.label(t!("Collections"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("＋ 登録…").on_hover_text("素材を入れているフォルダを登録します。どの案件からも使えます").clicked() {
+                if ui.small_button(t!("+ Register…")).on_hover_text(t!("Register a folder that holds assets. It can be used from any project")).clicked() {
                     self.add_collection();
                 }
             });
         });
         if self.settings.collections.is_empty() {
-            ui.small("素材を入れているフォルダを登録すると、ここに並びます。フォルダの中身は動かしません。");
+            ui.small(t!("Register folders that hold assets and they are listed here. Their contents are never moved."));
         }
         let mut rescan = None;
         let mut remove = None;
         for (i, collection) in self.settings.collections.iter().enumerate() {
             let scan = self.library.scans.get(&collection.path);
             let label = match scan {
-                Some(scan) if scan.missing => format!("{}（見つかりません）", collection.name()),
-                Some(scan) => format!("{}（{}{}）", collection.name(), scan.entries.len(), if scan.capped { "+" } else { "" }),
+                Some(scan) if scan.missing => t!("{} (not found)", collection.name()),
+                Some(scan) => t!("{} ({}{})", collection.name(), scan.entries.len(), if scan.capped { "+" } else { "" }),
                 None => collection.name(),
             };
             let response = ui.selectable_label(self.library.place == Place::Collection(i), label).on_hover_text(collection.path.display().to_string());
@@ -454,28 +455,28 @@ impl App {
                 go = Some(Place::Collection(i));
             }
             response.context_menu(|ui| {
-                if ui.button("読み直す").on_hover_text("フォルダに足した画像や、書き換えた画像を、一覧に出し直します").clicked() {
+                if ui.button(t!("Rescan")).on_hover_text(t!("Lists images added to or changed in the folder again")).clicked() {
                     rescan = Some(i);
                     ui.close();
                 }
-                if ui.button("登録を外す").on_hover_text("フォルダの中身は、そのままです").clicked() {
+                if ui.button(t!("Unregister")).on_hover_text(t!("The folder's contents are unchanged")).clicked() {
                     remove = Some(i);
                     ui.close();
                 }
             });
         }
         ui.add_space(10.0);
-        if ui.selectable_label(self.library.place == Place::Bundled, "付属の見本").clicked() {
+        if ui.selectable_label(self.library.place == Place::Bundled, t!("Built-in samples")).clicked() {
             go = Some(Place::Bundled);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.add_space(6.0);
             let back = match self.workspace {
-                Workspace::Shape => "型",
-                Workspace::Design => "デザイン",
-                Workspace::Output => "出力",
+                Workspace::Shape => t!("Structure"),
+                Workspace::Design => t!("Design"),
+                Workspace::Output => t!("Output"),
             };
-            if ui.button(format!("{back}に戻る")).on_hover_text("Esc").clicked() {
+            if ui.button(t!("Back to {back}")).on_hover_text("Esc").clicked() {
                 self.library.open = false;
             }
         });
@@ -493,21 +494,21 @@ impl App {
     /// 中央: 探す、並べ替える、大きな絵の一覧。
     fn library_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.library.search).hint_text("名前で探す").desired_width(220.0));
-            if !self.library.search.is_empty() && ui.small_button("×").on_hover_text("探す言葉を消す").clicked() {
+            ui.add(egui::TextEdit::singleline(&mut self.library.search).hint_text(t!("Search by name")).desired_width(220.0));
+            if !self.library.search.is_empty() && ui.small_button("×").on_hover_text(t!("Clear the search")).clicked() {
                 self.library.search.clear();
             }
             ui.add_space(8.0);
-            egui::ComboBox::from_id_salt("library-sort").selected_text(if self.library.sort == Sort::Name { "名前順" } else { "新しい順" }).show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.library.sort, Sort::Name, "名前順");
-                ui.selectable_value(&mut self.library.sort, Sort::Newer, "新しい順");
+            egui::ComboBox::from_id_salt("library-sort").selected_text(if self.library.sort == Sort::Name { t!("By name") } else { t!("Newest first") }).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.library.sort, Sort::Name, t!("By name"));
+                ui.selectable_value(&mut self.library.sort, Sort::Newer, t!("Newest first"));
             });
             ui.add_space(8.0);
-            ui.label("絵の大きさ");
+            ui.label(t!("Thumbnail size"));
             ui.add(egui::Slider::new(&mut self.library.tile, 80.0..=260.0).show_value(false));
             if let Place::Collection(i) = self.library.place {
                 ui.add_space(8.0);
-                if ui.button("読み直す").on_hover_text("フォルダに足した画像や、書き換えた画像を、一覧に出し直します").clicked() {
+                if ui.button(t!("Rescan")).on_hover_text(t!("Lists images added to or changed in the folder again")).clicked() {
                     self.rescan(i);
                 }
             }
@@ -517,28 +518,28 @@ impl App {
         match self.library.place {
             Place::Collection(i) => match self.scan_of(i) {
                 Some(scan) if scan.missing => {
-                    ui.label(format!("フォルダが見つかりません: {}", self.settings.collections[i].path.display()));
-                    ui.small("外付けのドライブやネットワークのフォルダなら、つないでから「読み直す」を押してください。");
-                    if ui.button("登録を外す").clicked() {
+                    ui.label(t!("Folder not found: {}", self.settings.collections[i].path.display()));
+                    ui.small(t!("For an external drive or a network folder, connect it and press \"Rescan\"."));
+                    if ui.button(t!("Unregister")).clicked() {
                         self.remove_collection(i);
                     }
                     return;
                 }
                 Some(scan) if scan.capped => {
-                    ui.small(format!("画像が多いので、はじめの {SCAN_LIMIT} 個だけ出しています。もっと小さなフォルダを登録すると、すべて出せます。"));
+                    ui.small(t!("There are many images, so only the first {SCAN_LIMIT} are shown. Register a smaller folder to see them all."));
                 }
                 _ => {}
             },
             Place::Project if !self.assets.iter().any(|a| !a.bundled) => {
-                ui.label("この案件には、まだ素材がありません。");
-                ui.small("画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。");
+                ui.label(t!("This project has no assets yet."));
+                ui.small(t!("Drop images (PNG, JPEG, PSD, SVG) on the window, or import them from a folder registered under \"Collections\" on the left."));
                 return;
             }
             _ => {}
         }
         let items = self.library_items();
         if items.is_empty() {
-            ui.label(if self.library.search.trim().is_empty() { "画像（PNG、JPEG、PSD、SVG）がありません。" } else { "探す言葉に合う素材がありません。" });
+            ui.label(if self.library.search.trim().is_empty() { t!("There are no images (PNG, JPEG, PSD, SVG).") } else { t!("No assets match the search.") });
             return;
         }
         let imported = self.project_ids();
@@ -609,7 +610,7 @@ impl App {
                     painter.image(texture, image_rect.shrink(8.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
                 }
                 None => {
-                    let text = if broken { "読めません" } else { "…" };
+                    let text = if broken { t!("Unreadable") } else { "…" };
                     painter.text(image_rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(13.0), visuals.weak_text_color());
                 }
             }
@@ -631,8 +632,8 @@ impl App {
             painter.galley(egui::pos2(x, label_rect.min.y), galley, Color32::WHITE);
         }
         let tip = match (&item, done) {
-            (Item::File(_), true) => format!("{name}\nこの案件に取り込み済み"),
-            (Item::File(_), false) => format!("{name}\nダブルクリックで、この案件に取り込みます"),
+            (Item::File(_), true) => t!("{name}\nAlready imported into this project"),
+            (Item::File(_), false) => t!("{name}\nDouble-click to import into this project"),
             _ => name,
         };
         let response = response.on_hover_text(tip);
@@ -645,7 +646,7 @@ impl App {
         }
         if let Some(path) = file {
             response.context_menu(|ui| {
-                if ui.add_enabled(!done, egui::Button::new("この案件に取り込む")).clicked() {
+                if ui.add_enabled(!done, egui::Button::new(t!("Import into this project"))).clicked() {
                     import = Some(path.clone());
                     ui.close();
                 }
@@ -654,7 +655,7 @@ impl App {
             && !self.assets[i].bundled
         {
             response.context_menu(|ui| {
-                if ui.button("素材を差し替える…").on_hover_text("この素材を使っている柄が、すべて新しい絵になります").clicked() {
+                if ui.button(t!("Replace asset…")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture")).clicked() {
                     self.replace_request = Some(Replace::Asset(i));
                     ui.close();
                 }
@@ -666,7 +667,7 @@ impl App {
     /// フォルダの画像を、この案件に取り込む（箱には置かない）。元に戻せる。
     fn import_from_library(&mut self, path: &Path) {
         if let Some(index) = self.import_image(path, true) {
-            self.say(format!("{} を、この案件の素材に取り込みました。デザインの工程で、素材の欄から箱へドラッグして置けます。", self.assets[index].name));
+            self.say(t!("Imported {} into this project's assets. In the Design step, drag it from the assets panel onto the box.", self.assets[index].name));
         }
     }
 
@@ -674,7 +675,7 @@ impl App {
     fn library_detail(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         let Some(pick) = self.library.pick().cloned() else {
-            ui.weak("素材を選ぶと、ここに大きく出ます。");
+            ui.weak(t!("Select an asset to see it large here."));
             return;
         };
         let side = ui.available_width().min(460.0);
@@ -690,17 +691,17 @@ impl App {
                 let asset = &self.assets[index];
                 ui.strong(&asset.name);
                 if let Picture::Image { w, h, .. } = &asset.picture {
-                    ui.label(format!("解像度: {w} × {h} px"));
+                    ui.label(t!("Resolution: {w} × {h} px"));
                 }
                 if let Some(when) = asset.stored.as_ref().and_then(|s| file::show_time(&s.imported)) {
-                    ui.label(format!("取り込んだ日時: {when}"));
+                    ui.label(t!("Imported: {when}"));
                 }
                 let uses = self.uses(index);
-                ui.label(if uses > 0 { format!("箱で {uses} か所に使っています") } else { "まだ箱に置いていません".to_owned() });
+                ui.label(if uses > 0 { t!("Used in {uses} place(s) on the box") } else { t!("Not placed on the box yet").to_owned() });
                 ui.add_space(6.0);
                 if self.assets[index].bundled {
-                    ui.weak("付属の見本です。デザインの工程で、素材の欄から箱へドラッグして置けます。");
-                } else if ui.button("差し替える…").on_hover_text("この素材を使っている柄が、すべて新しい絵になります").clicked() {
+                    ui.weak(t!("A built-in sample. In the Design step, drag it from the assets panel onto the box."));
+                } else if ui.button(t!("Replace…")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture")).clicked() {
                     self.replace_request = Some(Replace::Asset(index));
                 }
             }
@@ -716,7 +717,7 @@ impl App {
                         ui.painter().image(texture, image.shrink(10.0), uv, Color32::WHITE);
                     }
                     None => {
-                        ui.painter().text(image.center(), egui::Align2::CENTER_CENTER, if broken.is_some() { "読めません" } else { "…" }, egui::FontId::proportional(14.0), ui.visuals().weak_text_color());
+                        ui.painter().text(image.center(), egui::Align2::CENTER_CENTER, if broken.is_some() { t!("Unreadable") } else { "…" }, egui::FontId::proportional(14.0), ui.visuals().weak_text_color());
                     }
                 }
                 let entry = match self.library.place {
@@ -728,35 +729,35 @@ impl App {
                 if let Some(entry) = entry
                     && !entry.folder.is_empty()
                 {
-                    ui.label(format!("フォルダ: {}", entry.folder));
+                    ui.label(t!("Folder: {}", entry.folder));
                 }
                 if let Some([w, h]) = size {
-                    ui.label(format!("解像度: {w} × {h} px"));
+                    ui.label(t!("Resolution: {w} × {h} px"));
                 }
                 if let Some(entry) = entry {
                     if let Some(when) = show_modified(entry.modified) {
-                        ui.label(format!("更新日時: {when}"));
+                        ui.label(t!("Modified: {when}"));
                     }
-                    ui.label(format!("ファイルの大きさ: {}", show_bytes(entry.bytes)));
+                    ui.label(t!("File size: {}", show_bytes(entry.bytes)));
                 }
                 if let Some(e) = &broken {
-                    ui.colored_label(ui.visuals().warn_fg_color, format!("この画像は読めません: {e}"));
+                    ui.colored_label(ui.visuals().warn_fg_color, t!("This image cannot be read: {e}"));
                 }
-                ui.small(path.display().to_string()).on_hover_text("ファイルの場所");
+                ui.small(path.display().to_string()).on_hover_text(t!("File location"));
                 ui.add_space(6.0);
                 let ids = self.project_ids();
                 match id.as_ref().and_then(|id| ids.get(id)) {
                     Some(&index) => {
                         let uses = self.uses(index);
-                        ui.label(if uses > 0 { format!("この案件に取り込み済み（箱で {uses} か所に使っています）") } else { "この案件に取り込み済み（まだ箱に置いていません）".to_owned() });
-                        if ui.button("この案件の素材で見る").clicked() {
+                        ui.label(if uses > 0 { t!("Already imported into this project (used in {uses} place(s) on the box)") } else { t!("Already imported into this project (not placed on the box yet)").to_owned() });
+                        if ui.button(t!("Show in this project's assets")).clicked() {
                             self.library.picks.insert(Place::Project, Pick::Asset(index));
                             self.go_place(Place::Project);
                         }
                     }
                     None => {
                         let ready = id.is_some();
-                        if ui.add_enabled(ready, egui::Button::new("この案件に取り込む")).on_hover_text("画像の中身を案件に写します。元のファイルを動かしたり消したりしても、案件は困りません").clicked() {
+                        if ui.add_enabled(ready, egui::Button::new(t!("Import into this project"))).on_hover_text(t!("Copies the image into the project. Moving or deleting the original file does not affect the project")).clicked() {
                             self.import_from_library(&path);
                         }
                     }
@@ -790,7 +791,7 @@ impl App {
             return;
         }
         ui.add_space(6.0);
-        ui.label("最近使ったもの");
+        ui.label(t!("Recently used"));
         let mut take = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -804,7 +805,7 @@ impl App {
                     ui.painter().rect_stroke(rect, 6.0, egui::Stroke::new(1.0, ui.visuals().widgets.hovered.fg_stroke.color), egui::StrokeKind::Inside);
                 }
                 let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                let response = response.on_hover_text(format!("{name}\nクリックかドラッグで、この案件に取り込みます\n{}", path.display()));
+                let response = response.on_hover_text(t!("{name}\nClick or drag to import into this project\n{}", path.display()));
                 if response.drag_started() {
                     take = Some((path, true));
                 } else if response.clicked() {
@@ -819,7 +820,7 @@ impl App {
             if carry {
                 self.carry = Some(index);
             } else {
-                self.say(format!("{} を、この案件の素材に取り込みました。", self.assets[index].name));
+                self.say(t!("Imported {} into this project's assets.", self.assets[index].name));
             }
         }
     }

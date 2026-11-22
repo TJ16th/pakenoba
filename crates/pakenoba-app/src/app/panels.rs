@@ -2,6 +2,7 @@
 //!
 //! 役割は工程をまたいで変えない。左は「選ぶもの・道具」、右は「選んだものの設定」、下は「動き」。
 
+use pakenoba_i18n::t;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -24,11 +25,11 @@ impl App {
         egui::Panel::top("workspaces").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
-                ui.strong("パケノバ");
+                ui.strong(t!("PAKENOBA"));
                 ui.add_space(8.0);
                 self.file_menu(ui);
                 ui.add_space(8.0);
-                for (workspace, label) in [(Workspace::Shape, "型"), (Workspace::Design, "デザイン"), (Workspace::Output, "出力")] {
+                for (workspace, label) in [(Workspace::Shape, t!("Structure")), (Workspace::Design, t!("Design")), (Workspace::Output, t!("Output"))] {
                     // 「素材」の画面を開いているあいだは、どの工程も選んでいない見た目にする。
                     if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
                         self.workspace = workspace;
@@ -40,21 +41,21 @@ impl App {
                 let unsaved = self.unsaved();
                 let name = ui.label(format!("{}{}", self.project_name(), if unsaved { " *" } else { "" }));
                 if self.is_saving() {
-                    ui.weak("保存しています…");
+                    ui.weak(t!("Saving…"));
                 } else if unsaved {
-                    name.on_hover_text("保存していない変更があります（Ctrl+S で保存）");
+                    name.on_hover_text(t!("There are unsaved changes (Ctrl+S to save)"));
                 }
                 // メニューバーを作るまでの、元に戻すとやり直すの置き場。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
-                    if ui.selectable_label(self.library.open, "  素材  ").on_hover_text("素材を探して、この案件に取り込む画面（もう一度押すと戻ります）").clicked() {
+                    if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The screen for finding assets and importing them into this project (press again to go back)")).clicked() {
                         self.toggle_library();
                     }
                     ui.separator();
-                    if ui.add_enabled(self.history.can_redo(), egui::Button::new("やり直す")).on_hover_text("Ctrl+Shift+Z").clicked() {
+                    if ui.add_enabled(self.history.can_redo(), egui::Button::new(t!("Redo"))).on_hover_text("Ctrl+Shift+Z").clicked() {
                         self.redo();
                     }
-                    if ui.add_enabled(self.history.can_undo(), egui::Button::new("元に戻す")).on_hover_text("Ctrl+Z").clicked() {
+                    if ui.add_enabled(self.history.can_undo(), egui::Button::new(t!("Undo"))).on_hover_text("Ctrl+Z").clicked() {
                         self.undo();
                     }
                 });
@@ -72,27 +73,27 @@ impl App {
                     Tool::Select => match self.selected.filter(|&i| i < self.decals.len()) {
                         Some(_) if self.selection().len() > 1 => {
                             // いくつも選んでいるとき: 整列と、まとめて消す。
-                            ui.label(format!("{} 個の柄", self.selection().len()));
+                            ui.label(t!("{} pieces of artwork", self.selection().len()));
                             ui.separator();
-                            ui.label("そろえる");
+                            ui.label(t!("Align"));
                             self.align_buttons(ui);
                             ui.separator();
-                            if ui.button("消す").on_hover_text("Delete").clicked() {
+                            if ui.button(t!("Delete")).on_hover_text("Delete").clicked() {
                                 self.delete_selected();
                             }
                         }
                         Some(index) => {
                             ui.label(self.layer_label(index));
                             ui.separator();
-                            ui.label("重なり順");
-                            if ui.add_enabled(self.neighbor(index, 1).is_some(), egui::Button::new("前面へ")).clicked() {
+                            ui.label(t!("Arrange"));
+                            if ui.add_enabled(self.neighbor(index, 1).is_some(), egui::Button::new(t!("Bring forward"))).clicked() {
                                 self.reorder_selected(1);
                             }
-                            if ui.add_enabled(self.neighbor(index, -1).is_some(), egui::Button::new("背面へ")).clicked() {
+                            if ui.add_enabled(self.neighbor(index, -1).is_some(), egui::Button::new(t!("Send backward"))).clicked() {
                                 self.reorder_selected(-1);
                             }
                             ui.separator();
-                            if ui.add_enabled(!self.decals[index].layer.locked, egui::Button::new("90 度回す")).on_disabled_hover_text("ロックしています").clicked() {
+                            if ui.add_enabled(!self.decals[index].layer.locked, egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
                                 self.checkpoint();
                                 let decal = &mut self.decals[index];
                                 let turned = decal.angle + std::f32::consts::FRAC_PI_2;
@@ -101,15 +102,15 @@ impl App {
                                 self.back_dirty = true;
                             }
                             ui.separator();
-                            ui.label("パネルに");
+                            ui.label(t!("To the panel"));
                             self.align_buttons(ui);
                         }
                         None => {
-                            ui.weak("柄をクリックして選びます。Shift を押しながらで、いくつも選べます（Ctrl+A ですべて）。素材は、左の素材の欄から、箱や展開図へドラッグして置きます");
+                            ui.weak(t!("Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline"));
                         }
                     },
                     Tool::Hand => {
-                        ui.weak("ドラッグで、箱を回す、展開図をずらす");
+                        ui.weak(t!("Drag to turn the box or move the dieline"));
                     }
                     Tool::Text => self.text_bar(ui),
                     Tool::Shape => self.shape_bar(ui),
@@ -118,17 +119,17 @@ impl App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
                     // 右から並べるので、逆の順に足す。
-                    for (view, label, key) in [(View::Back, "裏", "3"), (View::Front, "表", "2"), (View::Solid, "立体", "1")] {
-                        let response = ui.selectable_label(self.shown.get(view), format!(" {label} ")).on_hover_text(format!("{label}の表示を出す、隠す。{key} のキーか、Alt を押しながら押すと、この表示だけにする"));
+                    for (view, label, key) in [(View::Back, t!("Back"), "3"), (View::Front, t!("Front"), "2"), (View::Solid, t!("3D"), "1")] {
+                        let response = ui.selectable_label(self.shown.get(view), format!(" {label} ")).on_hover_text(t!("Show or hide the {label} view. Press {key}, or click with Alt held, to show only this view"));
                         if response.clicked() {
                             if ui.input(|i| i.modifiers.alt) {
                                 self.shown.solo(view);
                             } else if !self.shown.toggle(view) {
-                                self.say("最後の 1 つの表示は隠せません。");
+                                self.say(t!("The last view cannot be hidden."));
                             }
                         }
                     }
-                    ui.weak("表示");
+                    ui.weak(t!("View"));
                 });
             });
         });
@@ -154,12 +155,12 @@ impl App {
 
     /// 右（デザイン）: 選んだ柄の設定と、レイヤー。
     pub(super) fn design_side(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("design-side").resizable(false).exact_size(280.0).show(ui, |ui| {
+        egui::Panel::right("design-side").resizable(false).exact_size(310.0).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(4.0);
-                // 型の工程へ戻る入口。
-                ui.horizontal(|ui| {
-                    if ui.small_button("型").on_hover_text("型の工程へ戻って、形と寸法を変える").clicked() {
+                // 型の工程へ戻る入口。言語によっては長くなるので、折り返す。
+                ui.horizontal_wrapped(|ui| {
+                    if ui.small_button(t!("Structure")).on_hover_text(t!("Go back to the Structure step to change the box type and dimensions")).clicked() {
                         self.workspace = Workspace::Shape;
                     }
                     ui.weak(self.shape_summary());
@@ -174,19 +175,19 @@ impl App {
     }
 
     fn properties(&mut self, ui: &mut egui::Ui) {
-        ui.strong("プロパティ");
+        ui.strong(t!("Properties"));
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else {
-            ui.weak("柄を選ぶと、ここに設定が出ます。");
+            ui.weak(t!("Select artwork to see its settings here."));
             return;
         };
         // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
         let others = self.selection().len() - 1;
         if others > 0 {
-            ui.weak(format!("ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。"));
+            ui.weak(t!("{others} more selected. They move together."));
         }
         let locked = self.decals[index].layer.locked;
         if locked {
-            ui.weak("ロックしています。動かすには、レイヤーの欄で鍵を外してください。");
+            ui.weak(t!("Locked. To move it, unlock it in the Layers panel."));
         }
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
@@ -212,29 +213,29 @@ impl App {
         // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
         let mut degrees = decal.angle.to_degrees() * turn + 0.0;
         ui.add_enabled_ui(!locked, |ui| egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("種類");
+            ui.label(t!("Type"));
             ui.label(decal.picture.label());
             ui.end_row();
-            ui.label("紙の面");
+            ui.label(t!("Side of sheet"));
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut back, false, " 表 ").on_hover_text("紙の表（箱の外側）に置く");
-                ui.selectable_value(&mut back, true, " 裏 ").on_hover_text("紙の裏（箱の内側）に置く。フタの裏など");
+                ui.selectable_value(&mut back, false, t!(" Front ")).on_hover_text(t!("Place on the front of the sheet (outside of the box)"));
+                ui.selectable_value(&mut back, true, t!(" Back ")).on_hover_text(t!("Place on the back of the sheet (inside of the box), such as under the lid"));
             });
             ui.end_row();
-            ui.label("位置 X");
+            ui.label(t!("Position X"));
             number(ui, &mut x, -2000.0..=4000.0, "mm");
             ui.end_row();
-            ui.label("位置 Y");
+            ui.label(t!("Position Y"));
             number(ui, &mut y, -2000.0..=4000.0, "mm");
             ui.end_row();
-            ui.label("幅");
+            ui.label(t!("Width"));
             number(ui, &mut width, 2.0..=2000.0, "mm");
             ui.end_row();
-            ui.label("高さ");
+            ui.label(t!("Height"));
             number(ui, &mut height, 2.0..=2000.0, "mm");
             ui.end_row();
-            ui.label("回転");
-            number(ui, &mut degrees, -180.0..=180.0, "度");
+            ui.label(t!("Rotation"));
+            number(ui, &mut degrees, -180.0..=180.0, t!("°"));
             ui.end_row();
         }));
         if (x, y) != (x0, y0) {
@@ -268,28 +269,28 @@ impl App {
         if moved_side {
             self.back_dirty = true;
             self.grab = None;
-            self.say(if back { "紙の裏へ移しました。「裏」の表示か、箱を開けた内側で見られます。" } else { "紙の表へ移しました。" });
+            self.say(if back { t!("Moved to the back of the sheet. You can see it in the \"Back\" view or inside the opened box.") } else { t!("Moved to the front of the sheet.") });
         }
         // どの面にかかっているか。
         let pieces = self.surface.layout(&self.template, &self.decals[index]);
-        let mut names: Vec<&str> = pieces.iter().map(|p| self.template.panels[p.panel].name).collect();
+        let mut names: Vec<&str> = pieces.iter().map(|p| pakenoba_i18n::trc("panel", self.template.panels[p.panel].name)).collect();
         names.dedup();
         let seams = pieces.iter().map(|p| p.seams).max().unwrap_or(0);
         ui.add_space(2.0);
-        ui.small(format!("かかっている面: {}", names.join("、")));
+        ui.small(t!("On panels: {}", names.join(pakenoba_i18n::tr(", "))));
         if seams > 0 {
-            ui.small(format!("合わせ目を {seams} 回またいでいます。"));
+            ui.small(t!("Crosses {seams} seam(s)."));
         }
         ui.add_space(2.0);
-        if ui.add_enabled(!locked, egui::Button::new("この柄を消す")).on_hover_text("Delete").on_disabled_hover_text("ロックしている柄は消せません").clicked() {
+        if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
             self.delete_selected();
         }
     }
 
     fn layers(&mut self, ui: &mut egui::Ui) {
-        ui.strong("レイヤー");
+        ui.strong(t!("Layers"));
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            if ui.checkbox(&mut self.show_guides, "ガイド（切り線、折り線、のりしろ）").changed() {
+            if ui.checkbox(&mut self.show_guides, t!("Guides (cut lines, fold lines, glue flaps)")).changed() {
                 self.art_dirty = true;
                 self.back_dirty = true;
             }
@@ -297,10 +298,10 @@ impl App {
             // 行ごとに、目（見せる、隠す）、鍵（ロック）、名前。名前をダブルクリックで名前を変える。行をドラッグで重なり順を変える。
             let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
             for back in [false, true] {
-                ui.label(if back { "裏（箱の内側）" } else { "表（箱の外側）" });
+                ui.label(if back { t!("Back (inside of the box)") } else { t!("Front (outside of the box)") });
                 let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
                 if rows.is_empty() && self.bases[back as usize].is_none() {
-                    ui.small("　柄はありません");
+                    ui.small(t!("　No artwork"));
                 }
                 for index in rows {
                     let row = ui.horizontal(|ui| {
@@ -340,7 +341,7 @@ impl App {
                         }
                         let mut label = self.layer_label(index);
                         if self.is_editing(&self.decals[index].picture) {
-                            label.push_str("（外で編集中）");
+                            label.push_str(t!(" (being edited elsewhere)"));
                         }
                         let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
                         let selected = self.is_selected(index);
@@ -366,9 +367,9 @@ impl App {
                     if response.drag_started() {
                         self.layer_drag = Some(index);
                     }
-                    let response = response.on_hover_text("ダブルクリックで名前を変える。ドラッグで重なり順を変える");
+                    let response = response.on_hover_text(t!("Double-click to rename. Drag to change the stacking order"));
                     response.context_menu(|ui| {
-                        if ui.button("名前を変える").clicked() {
+                        if ui.button(t!("Rename")).clicked() {
                             self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
                             ui.close();
                         }
@@ -428,13 +429,13 @@ impl App {
 
     /// 展開図まるごとの絵（PSD）の読み込み。
     fn psd_loader(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("展開図の絵を読み込む").default_open(!self.psd_info.is_empty()).show(ui, |ui| {
-            ui.small("「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。裏の型紙（名前に「_裏」が付くもの）に描いた絵は、紙の裏に敷きます。");
+        egui::CollapsingHeader::new(t!("Load dieline artwork")).default_open(!self.psd_info.is_empty()).show(ui, |ui| {
+            ui.small(t!("Draw on a dieline PSD saved from \"Output\" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with \"_back\") is laid on the back of the sheet."));
             let mut load_clicked = false;
             let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
             ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                load_clicked = ui.button("読み込む").clicked();
-                ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text("PSD のパス").desired_width(f32::INFINITY));
+                load_clicked = ui.button(t!("Load")).clicked();
+                ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text(t!("PSD path")).desired_width(f32::INFINITY));
             });
             if load_clicked {
                 let path = PathBuf::from(self.psd_path.trim().trim_matches('"'));
@@ -450,10 +451,10 @@ impl App {
     pub(super) fn shape_list(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("shape-list").resizable(false).exact_size(180.0).show(ui, |ui| {
             ui.add_space(4.0);
-            ui.strong("型");
+            ui.strong(t!("Structure"));
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (sides, label) in SHAPES {
-                    if ui.selectable_label(self.dims.sides == sides, label).clicked() && self.dims.sides != sides {
+                    if ui.selectable_label(self.dims.sides == sides, pakenoba_i18n::tr(label)).clicked() && self.dims.sides != sides {
                         if self.decals.is_empty() {
                             self.set_shape(sides);
                         } else {
@@ -468,10 +469,10 @@ impl App {
 
     /// 右（型）: 寸法、紙の厚み、型紙の検査。
     pub(super) fn shape_settings(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("shape-settings").resizable(false).exact_size(300.0).show(ui, |ui| {
+        egui::Panel::right("shape-settings").resizable(false).exact_size(320.0).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.strong("寸法（内寸）");
+                ui.strong(t!("Dimensions (inside)"));
                 let gable = self.dims.sides == 2;
                 let pillow = self.dims.sides == PILLOW;
                 let prism = self.dims.sides >= 3 && !pillow;
@@ -486,47 +487,47 @@ impl App {
                         });
                         ui.end_row();
                     };
-                    row(ui, if prism { "一辺" } else if pillow { "横の長さ" } else { "幅" }, &mut dims.w, 40.0..=300.0, "mm");
+                    row(ui, if prism { t!("Side") } else if pillow { t!("Horizontal length") } else { t!("Width") }, &mut dims.w, 40.0..=300.0, "mm");
                     if !prism && !pillow {
-                        row(ui, "奥行き", &mut dims.d, 20.0..=200.0, "mm");
+                        row(ui, t!("Depth"), &mut dims.d, 20.0..=200.0, "mm");
                     }
-                    row(ui, if gable { "胴の高さ" } else if pillow { "面の高さ" } else { "高さ" }, &mut dims.h, 40.0..=300.0, "mm");
+                    row(ui, if gable { t!("Body height") } else if pillow { t!("Face height") } else { t!("Height") }, &mut dims.h, 40.0..=300.0, "mm");
                     if gable {
-                        row(ui, "屋根の高さ", &mut dims.roof, 10.0..=150.0, "mm");
+                        row(ui, t!("Roof height"), &mut dims.roof, 10.0..=150.0, "mm");
                     }
                     if pillow {
-                        row(ui, "ふくらみ", &mut dims.bulge, 15.0..=90.0, "度");
+                        row(ui, t!("Bulge"), &mut dims.bulge, 15.0..=90.0, t!("°"));
                     }
-                    row(ui, "紙の厚み", &mut dims.t, 0.3..=6.0, "mm");
+                    row(ui, t!("Paper thickness"), &mut dims.t, 0.3..=6.0, "mm");
                 });
                 let d = self.dims;
                 if gable && d.d > d.w {
-                    ui.small("奥行きは幅までに抑えています（側面の三角形が中央でぶつかるため）。");
+                    ui.small(t!("The depth is limited to the width (the side triangles would collide in the middle)."));
                 }
                 if pillow {
                     let psi = d.bulge.clamp(15.0, 90.0).to_radians();
                     let deepest = d.h * (1.0 - (psi * 0.5).cos()) / psi;
-                    ui.small(format!("いちばん厚いところ: 約 {:.0} mm", deepest * 2.0));
+                    ui.small(t!("Thickest point: about {:.0} mm", deepest * 2.0));
                 }
                 if !prism && !gable && !pillow {
-                    ui.small(format!("外寸: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
+                    ui.small(t!("Outside: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
                 }
-                ui.small(format!("展開図: {:.0} × {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
+                ui.small(t!("Dieline: {:.0} × {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
                 ui.add_space(6.0);
                 ui.separator();
 
-                ui.strong("型紙の検査");
+                ui.strong(t!("Dieline check"));
                 if self.problems.is_empty() {
-                    ui.label("問題は見つかりませんでした。");
+                    ui.label(t!("No problems were found."));
                 }
                 for (blocking, text) in &self.problems {
                     if *blocking {
-                        ui.colored_label(egui::Color32::from_rgb(240, 120, 100), format!("問題: {text}"));
+                        ui.colored_label(egui::Color32::from_rgb(240, 120, 100), t!("Problem: {text}"));
                     } else {
-                        ui.colored_label(egui::Color32::from_rgb(230, 170, 90), format!("注意: {text}"));
+                        ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("Note: {text}"));
                     }
                 }
-                ui.small("閉じていない辺、開け口と留め、のりしろの貼る相手、展開図の重なりを見ています。");
+                ui.small(t!("Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline."));
             });
         });
     }
@@ -535,10 +536,10 @@ impl App {
     pub(super) fn output_list(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("output-list").resizable(false).exact_size(240.0).show(ui, |ui| {
             ui.add_space(4.0);
-            ui.strong("出力");
+            ui.strong(t!("Output"));
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (index, (label, ready)) in OUTPUTS.iter().enumerate() {
-                    let response = ui.add_enabled(*ready, egui::Button::selectable(self.output_kind == index, *label)).on_disabled_hover_text("これから作ります");
+                    let response = ui.add_enabled(*ready, egui::Button::selectable(self.output_kind == index, pakenoba_i18n::tr(label))).on_disabled_hover_text(t!("Coming later"));
                     if response.clicked() {
                         self.output_kind = index;
                     }
@@ -550,18 +551,18 @@ impl App {
     /// 型を変える前の確認。置いた柄が外れることを知らせる。
     pub(super) fn confirm_shape(&mut self, ctx: &egui::Context) {
         let Some(sides) = self.pending_shape else { return };
-        let name = SHAPES.iter().find(|(s, _)| *s == sides).map_or("別の型", |(_, name)| name);
+        let name = SHAPES.iter().find(|(s, _)| *s == sides).map_or(t!("another box type"), |(_, name)| pakenoba_i18n::tr(name));
         let count = self.decals.len();
         let response = egui::Modal::new(egui::Id::unique("confirm-shape")).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.strong(format!("型を「{name}」に変えますか"));
+            ui.strong(t!("Change the box type to \"{name}\"?"));
             ui.add_space(4.0);
-            ui.label(format!("型を変えると、面の並びが変わるので、置いた柄 {count} つが箱から外れます。"));
-            ui.label("変えたあとでも、Ctrl+Z で、前の型と柄に戻せます。");
+            ui.label(t!("Changing the box type changes the panels, so {count} placed piece(s) of artwork will come off the box."));
+            ui.label(t!("Even after changing, Ctrl+Z gets the previous box type and artwork back."));
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let change = ui.button("型を変える").clicked();
-                let cancel = ui.button("やめる").clicked();
+                let change = ui.button(t!("Change box type")).clicked();
+                let cancel = ui.button(t!("Cancel")).clicked();
                 (change, cancel)
             })
             .inner
@@ -653,12 +654,12 @@ impl App {
             // ピロー型には上と底の区別がないので、左右の口と呼ぶ。
             let pillow = self.dims.sides == super::PILLOW;
             ui.strong(match (which, pillow) {
-                (0, false) => "開け閉め",
-                (_, false) => "底",
-                (0, true) => "左の口",
-                (_, true) => "右の口",
+                (0, false) => t!("Open / close"),
+                (_, false) => t!("Base"),
+                (0, true) => t!("Left end"),
+                (_, true) => t!("Right end"),
             });
-            if ui.button("閉じる").clicked() {
+            if ui.button(t!("Close")).clicked() {
                 self.fold = 1.0;
                 self.open_to[which] = Some(0.0);
             }
@@ -669,25 +670,25 @@ impl App {
                 self.animate_to = None;
                 self.open_to[which] = None;
             }
-            if ui.button("開ける").clicked() {
+            if ui.button(t!("Open up")).clicked() {
                 self.fold = 1.0;
                 self.open_to[which] = Some(1.0);
             }
         })
         .response
-        .on_disabled_hover_text("この型には、開け閉めの動きがまだ入っていません");
+        .on_disabled_hover_text(t!("This box type does not have an opening motion yet"));
     }
 
     fn fold_controls(&mut self, ui: &mut egui::Ui, slider: f32) {
-        ui.strong("組み立て");
-        if ui.button("展開図").clicked() {
+        ui.strong(t!("Assembly"));
+        if ui.button(t!("Flat")).clicked() {
             self.fold_to(0.0);
         }
         ui.spacing_mut().slider_width = slider;
         if ui.add(egui::Slider::new(&mut self.fold, 0.0..=1.0).show_value(false)).changed() {
             self.animate_to = None;
         }
-        if ui.button("箱").clicked() {
+        if ui.button(t!("Box")).clicked() {
             self.fold_to(1.0);
         }
     }
@@ -713,13 +714,13 @@ impl App {
                 }
                 // カーソルの下の面の名前と、いまの型。
                 if let Some(panel) = self.hover.and_then(|i| self.template.panels.get(i)) {
-                    ui.small(format!("カーソルの下: {}", panel.name));
+                    ui.small(t!("Under the cursor: {}", pakenoba_i18n::trc("panel", panel.name)));
                     ui.separator();
                 }
                 ui.label(egui::RichText::new(self.shape_summary()).small().weak());
                 if self.debug {
                     ui.separator();
-                    ui.label(egui::RichText::new(format!("パネル {} 枚　合わせ目 {} か所　三角形 {} 個　描画: {}", self.template.panels.len(), self.surface.seams.len(), self.triangles, self.backend)).small().weak());
+                    ui.label(egui::RichText::new(t!("{} panels  {} seams  {} triangles  renderer: {}", self.template.panels.len(), self.surface.seams.len(), self.triangles, self.backend)).small().weak());
                 }
             });
         });

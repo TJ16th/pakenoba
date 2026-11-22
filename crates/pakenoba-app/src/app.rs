@@ -23,6 +23,7 @@ mod adjust;
 mod vectorize;
 mod views;
 
+use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -109,7 +110,7 @@ pub fn run(initial: Initial) -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "パケノバ",
+        t!("PAKENOBA"),
         options,
         Box::new(move |cc| {
             setup_style(&cc.egui_ctx);
@@ -245,7 +246,7 @@ fn decode_image(bytes: &[u8]) -> Result<Picture, String> {
         let (w, h, rgba) = crate::vector::decode_svg(bytes)?;
         Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: true })
     } else {
-        Err("画像として読めませんでした（扱えるのは PNG、JPEG、PSD、SVG です）".to_owned())
+        Err(t!("Could not read this as an image (PNG, JPEG, PSD and SVG are supported)").to_owned())
     }
 }
 
@@ -254,10 +255,10 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Picture, String> {
     use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA).set_max_width(1 << 15).set_max_height(1 << 15);
     let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    let rgba = decoder.decode().map_err(|e| format!("JPEG を読めませんでした: {e:?}"))?;
-    let (w, h) = decoder.dimensions().ok_or("JPEG の大きさが分かりません")?;
+    let rgba = decoder.decode().map_err(|e| t!("Could not read the JPEG: {e:?}"))?;
+    let (w, h) = decoder.dimensions().ok_or(t!("The JPEG has no size"))?;
     if w == 0 || h == 0 || rgba.len() != w * h * 4 {
-        return Err("JPEG の大きさが合いません".to_owned());
+        return Err(t!("The JPEG size does not match its data").to_owned());
     }
     Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: false })
 }
@@ -266,19 +267,19 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Picture, String> {
 fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let mut reader = decoder.read_info().map_err(|e| format!("PNG を読めませんでした: {e}"))?;
-    let mut buf = vec![0u8; reader.output_buffer_size().ok_or("画像が大きすぎます")?];
-    let info = reader.next_frame(&mut buf).map_err(|e| format!("PNG を読めませんでした: {e}"))?;
+    let mut reader = decoder.read_info().map_err(|e| t!("Could not read the PNG: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().ok_or(t!("The image is too large"))?];
+    let info = reader.next_frame(&mut buf).map_err(|e| t!("Could not read the PNG: {e}"))?;
     let (w, h) = (info.width as usize, info.height as usize);
     let channels = match info.color_type {
         png::ColorType::Grayscale => 1,
         png::ColorType::GrayscaleAlpha => 2,
         png::ColorType::Rgb => 3,
         png::ColorType::Rgba => 4,
-        other => return Err(format!("この形式の PNG は扱えません（{other:?}）")),
+        other => return Err(t!("This kind of PNG is not supported ({other:?})")),
     };
     if w == 0 || h == 0 || buf.len() < w * h * channels {
-        return Err("PNG の大きさが合いません".to_owned());
+        return Err(t!("The PNG size does not match its data").to_owned());
     }
     let rgba: Vec<u8> = buf[..w * h * channels]
         .chunks_exact(channels)
@@ -293,7 +294,7 @@ fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
 }
 
 /// 選べる型。検査を通ったものだけを並べる。
-const SHAPES: [(usize, &str); 7] = [(0, "差し込み箱"), (2, "ゲーブル型"), (PILLOW, "ピロー型"), (3, "三角柱"), (5, "五角柱"), (6, "六角柱"), (8, "八角柱")];
+const SHAPES: [(usize, &str); 7] = [(0, "Tuck-end box"), (2, "Gable box"), (PILLOW, "Pillow box"), (3, "Triangular prism"), (5, "Pentagonal prism"), (6, "Hexagonal prism"), (8, "Octagonal prism")];
 
 /// ワークスペース。左から順に進めば完成する。
 #[derive(Clone, Copy, PartialEq)]
@@ -327,11 +328,11 @@ impl Tool {
     /// ツールチップ。名前とショートカット。押せない道具は、その理由。
     fn tip(self) -> &'static str {
         match self {
-            Tool::Select => "選択 (V)",
-            Tool::Text => "文字 (T)",
-            Tool::Shape => "図形 (U)",
-            Tool::Ai => "生成AI（これから作ります）",
-            Tool::Hand => "手のひら (H)",
+            Tool::Select => t!("Select (V)"),
+            Tool::Text => t!("Text (T)"),
+            Tool::Shape => t!("Shape (U)"),
+            Tool::Ai => t!("Generative AI (coming later)"),
+            Tool::Hand => t!("Hand (H)"),
         }
     }
 }
@@ -612,7 +613,14 @@ impl App {
             answer_export: initial.answer_export.clone(),
             // 自動のテストでは、使う人のフォルダに控えを書かない。
             recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
-            settings: if cfg!(test) { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) },
+            settings: {
+                let settings = if cfg!(test) { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) };
+                // 画面の言語。設定になければ、OS の言語（自動のテストでは、基準の英語のまま）。
+                if !cfg!(test) {
+                    pakenoba_i18n::set(settings.language.as_deref().unwrap_or_else(|| pakenoba_i18n::detect()));
+                }
+                settings
+            },
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,
             layer_drag: None,
@@ -753,7 +761,7 @@ impl App {
         self.open = [0.0; 2];
         (self.animate_to, self.open_to) = (None, [None; 2]);
         if removed > 0 {
-            self.say(format!("型を変えたので、置いた柄 {removed} つを外しました。Ctrl+Z で、前の型と柄に戻せます。"));
+            self.say(t!("Changing the box type removed {removed} placed artwork(s). Press Ctrl+Z to get the previous box type and artwork back."));
         }
     }
 
@@ -779,7 +787,7 @@ impl App {
         }
         let mut gone: Vec<usize> = chosen.iter().copied().filter(|&i| !self.decals[i].layer.locked).collect();
         if gone.is_empty() {
-            self.say("ロックしている柄は消せません。レイヤーの欄で、鍵を外してください。");
+            self.say(t!("Locked artwork cannot be deleted. Unlock it in the Layers panel."));
             return;
         }
         let kept = chosen.len() - gone.len();
@@ -791,9 +799,9 @@ impl App {
         self.select_only(None);
         self.grab = None;
         self.hover_decal = None;
-        let what = if gone.len() == 1 { "柄を消しました".to_owned() } else { format!("柄を {} 個消しました", gone.len()) };
-        let locked = if kept > 0 { format!("（ロックしている {kept} 個は残しました）") } else { String::new() };
-        self.say(format!("{what}{locked}。Ctrl+Z で戻せます。"));
+        let what = if gone.len() == 1 { t!("Deleted the artwork").to_owned() } else { t!("Deleted {} pieces of artwork", gone.len()) };
+        let locked = if kept > 0 { t!(" ({kept} locked piece(s) kept)") } else { String::new() };
+        self.say(t!("{what}{locked}. Press Ctrl+Z to undo."));
     }
 
     /// 柄を 1 つ足して、選ぶ。正面（なければ最初のパネル）の中央に置く。
@@ -810,9 +818,9 @@ impl App {
         let Some(index) = self.import_image(path, false) else { return };
         let (picture, size) = (self.assets[index].picture.clone(), self.assets[index].size);
         if index < known {
-            self.say(format!("{} は、すでに素材の欄にあります。柄として置きました。", self.assets[index].name));
+            self.say(t!("{} is already in the assets panel. Placed it as artwork.", self.assets[index].name));
         } else {
-            self.say(format!("{} を柄として置きました。素材の欄にも入れてあります。", path.display()));
+            self.say(t!("Placed {} as artwork. It is also in the assets panel.", path.display()));
         }
         self.add_decal(picture, size);
     }
@@ -823,7 +831,7 @@ impl App {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.say(format!("{} を開けませんでした: {e}", path.display()));
+                self.say(t!("Could not open {}: {e}", path.display()));
                 return None;
             }
         };
@@ -836,7 +844,7 @@ impl App {
         };
         let Picture::Image { w, h, .. } = &picture else { return None };
         let size = [50.0, 50.0 * *h as f32 / *w as f32];
-        let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
+        let name = path.file_name().map_or_else(|| t!("Image").to_owned(), |n| n.to_string_lossy().into_owned());
         let stored = project::Asset::new(name.clone(), bytes, size, file::now_local());
         // どこから取り込んだ画像でも、最近使ったものに入れる（次の案件でも、すぐ使えるように）。
         self.settings.used_asset(path);
@@ -845,7 +853,7 @@ impl App {
         }
         if let Some(index) = self.assets.iter().position(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())) {
             if checkpoint {
-                self.say(format!("{name} は、すでにこの案件の素材にあります。"));
+                self.say(t!("{name} is already in this project's assets."));
             }
             return Some(index);
         }
@@ -869,8 +877,8 @@ impl App {
                 shown.layer.hidden = false;
                 paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
                 let name = match &decal.layer.name {
-                    Some(name) => format!("{}（{name}）", index + 1),
-                    None => format!("{}（{}）", index + 1, decal.picture.label()),
+                    Some(name) => t!("{} ({name})", index + 1),
+                    None => t!("{} ({})", index + 1, decal.picture.label()),
                 };
                 crate::art::DecalLayer { name, image, visible: !decal.layer.hidden }
             })
@@ -901,10 +909,10 @@ impl App {
     /// いまの型の名前と寸法（例: 「差し込み箱　120 × 60 × 160 mm」）。
     fn shape_summary(&self) -> String {
         let d = self.dims;
-        let name = SHAPES.iter().find(|(sides, _)| *sides == d.sides).map_or("型", |(_, name)| name);
+        let name = SHAPES.iter().find(|(sides, _)| *sides == d.sides).map_or(t!("Structure"), |(_, name)| pakenoba_i18n::tr(name));
         match d.sides {
             PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
-            n if n >= 3 => format!("{name}　一辺 {:.0} × 高さ {:.0} mm", d.w, d.h),
+            n if n >= 3 => t!("{name}  side {:.0} × height {:.0} mm", d.w, d.h),
             _ => format!("{name}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h),
         }
     }
@@ -1125,7 +1133,7 @@ impl eframe::App for App {
             } else if self.library.open {
                 // 「素材」の画面では、箱がないので、取り込むだけ。
                 if self.import_image(path, true).is_some() {
-                    self.say(format!("{} を、この案件の素材に取り込みました。", path.display()));
+                    self.say(t!("Imported {} into this project's assets.", path.display()));
                 }
             } else {
                 self.add_image(path);

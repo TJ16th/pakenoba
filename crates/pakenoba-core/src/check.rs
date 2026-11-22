@@ -9,6 +9,7 @@
 //! - 貼る相手: のりしろや貼りしろの、貼る相手が決まっているか。
 //! - 展開図: 展開図の上で、パネルどうしが重なっていないか（重なっていたら、1 枚の紙から切り出せない）。
 
+use pakenoba_i18n::t;
 use std::fmt;
 
 use crate::math::{dot, normalize, sub};
@@ -35,14 +36,14 @@ pub enum Problem {
 impl Problem {
     /// 人が読める説明。
     pub fn describe(&self, tpl: &Template) -> String {
-        let name = |i: usize| tpl.panels[i].name;
+        let name = |i: usize| pakenoba_i18n::trc("panel", tpl.panels[i].name);
         match *self {
-            Problem::OpenJoint { a, b, length } => format!("「{}」と「{}」の間が、約 {length:.0} mm 閉じていません。のりしろか差し込みが要ります。", name(a), name(b)),
-            Problem::NoOpening => "開け口が決まっていません。".to_owned(),
-            Problem::OpeningNotHeld { lid } => format!("開け口の「{}」が、何にも留められていません。差し込みが要ります。", name(lid)),
-            Problem::TabNotGlued { tab } => format!("「{}」を貼る相手が決まっていません。", name(tab)),
-            Problem::LatchNotDrawn { lid } => format!("開け口の「{}」の留めの形が、まだ型紙に入っていません。", name(lid)),
-            Problem::SheetOverlap { a, b } => format!("展開図の上で、「{}」と「{}」が重なっています。", name(a), name(b)),
+            Problem::OpenJoint { a, b, length } => t!("The edge between \"{}\" and \"{}\" is open for about {length:.0} mm. It needs a glue flap or a tuck.", name(a), name(b)),
+            Problem::NoOpening => t!("No opening is set.").to_owned(),
+            Problem::OpeningNotHeld { lid } => t!("The opening \"{}\" is not held by anything. It needs a tuck.", name(lid)),
+            Problem::TabNotGlued { tab } => t!("Nothing is set for \"{}\" to be glued to.", name(tab)),
+            Problem::LatchNotDrawn { lid } => t!("The closure of the opening \"{}\" is not in the dieline yet.", name(lid)),
+            Problem::SheetOverlap { a, b } => t!("\"{}\" and \"{}\" overlap on the dieline.", name(a), name(b)),
         }
     }
 
@@ -55,12 +56,12 @@ impl Problem {
 impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Problem::OpenJoint { a, b, length } => write!(f, "パネル {a} と {b} の間が {length:.0} mm 閉じていない"),
-            Problem::NoOpening => write!(f, "開け口が決まっていない"),
-            Problem::OpeningNotHeld { lid } => write!(f, "開け口のパネル {lid} が留められていない"),
-            Problem::TabNotGlued { tab } => write!(f, "パネル {tab} を貼る相手が決まっていない"),
-            Problem::LatchNotDrawn { lid } => write!(f, "開け口のパネル {lid} の留めの形が入っていない"),
-            Problem::SheetOverlap { a, b } => write!(f, "展開図の上でパネル {a} と {b} が重なっている"),
+            Problem::OpenJoint { a, b, length } => write!(f, "panels {a} and {b} are open for {length:.0} mm"),
+            Problem::NoOpening => write!(f, "no opening is set"),
+            Problem::OpeningNotHeld { lid } => write!(f, "opening panel {lid} is not held"),
+            Problem::TabNotGlued { tab } => write!(f, "nothing is set for panel {tab} to be glued to"),
+            Problem::LatchNotDrawn { lid } => write!(f, "the closure of opening panel {lid} is not drawn"),
+            Problem::SheetOverlap { a, b } => write!(f, "panels {a} and {b} overlap on the dieline"),
         }
     }
 }

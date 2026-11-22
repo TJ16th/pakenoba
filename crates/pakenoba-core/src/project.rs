@@ -17,6 +17,7 @@
 //! 読むときは、できるだけ開く。素材が欠けている、パネルが見つからない、といった部分的な傷は、
 //! その柄や素材だけを外して開き、何を外したかを `Opened::problems` で返す。
 
+use pakenoba_i18n::t;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
@@ -97,7 +98,7 @@ impl Shape {
     }
 
     fn values(&mut self) -> [(&'static str, &mut f32, RangeInclusive<f32>); 6] {
-        [("幅", &mut self.w, WIDTH), ("奥行き", &mut self.d, DEPTH), ("高さ", &mut self.h, HEIGHT), ("紙の厚み", &mut self.t, THICKNESS), ("ふくらみ", &mut self.bulge, BULGE), ("屋根の高さ", &mut self.roof, ROOF)]
+        [(t!("Width"), &mut self.w, WIDTH), (t!("Depth"), &mut self.d, DEPTH), (t!("Height"), &mut self.h, HEIGHT), (t!("Paper thickness"), &mut self.t, THICKNESS), (t!("Bulge"), &mut self.bulge, BULGE), (t!("Roof height"), &mut self.roof, ROOF)]
     }
 }
 
@@ -307,10 +308,10 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Io(e) => write!(f, "ファイルを読み書きできませんでした: {e}"),
-            Error::NotProject => write!(f, "パケノバの案件のファイルではありません"),
-            Error::Newer(found) => write!(f, "新しい版のパケノバで保存された案件です（形式の版 {found}。このパケノバが読めるのは版 {VERSION} まで）"),
-            Error::Broken(what) => write!(f, "案件のファイルが壊れています: {what}"),
+            Error::Io(e) => f.write_str(&t!("Could not read or write the file: {e}")),
+            Error::NotProject => f.write_str(t!("This is not a PAKENOBA project file")),
+            Error::Newer(found) => f.write_str(&t!("This project was saved by a newer version of PAKENOBA (format version {found}; this version reads up to {VERSION})")),
+            Error::Broken(what) => f.write_str(&t!("The project file is damaged: {what}")),
         }
     }
 }
@@ -529,26 +530,26 @@ impl Project {
     fn check(&self, tpl: &Template) -> Result<(), Error> {
         let mut shape = self.shape;
         if let Some((label, ..)) = shape.values().into_iter().find(|(_, value, _)| !value.is_finite()) {
-            return Err(Error::Broken(format!("寸法の「{label}」が数ではありません")));
+            return Err(Error::Broken(t!("Dimension \"{label}\" is not a number")));
         }
         for (index, asset) in self.assets.iter().enumerate() {
             if !asset.size.iter().all(|v| v.is_finite()) {
-                return Err(Error::Broken(format!("素材 {}（{}）の大きさが数ではありません", index + 1, asset.name)));
+                return Err(Error::Broken(t!("The size of asset {} ({}) is not a number", index + 1, asset.name)));
             }
         }
         for (index, placed) in self.decals.iter().enumerate() {
             let number = index + 1;
             let decal = &placed.decal;
             if decal.panel >= tpl.panels.len() {
-                return Err(Error::Broken(format!("柄 {number} の置き場所が、型紙にないパネルを指しています")));
+                return Err(Error::Broken(t!("Artwork {number} points to a panel that is not in the dieline")));
             }
             if ![decal.at[0], decal.at[1], decal.size[0], decal.size[1], decal.angle].iter().all(|v| v.is_finite()) {
-                return Err(Error::Broken(format!("柄 {number} の場所か大きさが数ではありません")));
+                return Err(Error::Broken(t!("The position or size of artwork {number} is not a number")));
             }
             if let Source::Asset(asset) = placed.source
                 && asset >= self.assets.len()
             {
-                return Err(Error::Broken(format!("柄 {number} が、ない素材を指しています")));
+                return Err(Error::Broken(t!("Artwork {number} points to an asset that does not exist")));
             }
         }
         Ok(())
@@ -602,7 +603,7 @@ impl Project {
     pub fn write<W: Write + Seek>(&self, out: W) -> Result<(), Error> {
         let tpl = self.shape.template();
         self.check(&tpl)?;
-        let text = toml::to_string(&self.manifest(&tpl)).map_err(|e| Error::Broken(format!("設定のテキストを作れませんでした: {e}")))?;
+        let text = toml::to_string(&self.manifest(&tpl)).map_err(|e| Error::Broken(t!("Could not make the settings text: {e}")))?;
 
         let mut zip = ZipWriter::new(out);
         zip.start_file(MANIFEST, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
@@ -638,21 +639,21 @@ impl Project {
                 _ => Error::NotProject,
             })?;
             let mut bytes = Vec::new();
-            entry.take(MANIFEST_LIMIT + 1).read_to_end(&mut bytes).map_err(|e| Error::Broken(format!("設定のテキストを取り出せませんでした: {e}")))?;
+            entry.take(MANIFEST_LIMIT + 1).read_to_end(&mut bytes).map_err(|e| Error::Broken(t!("Could not extract the settings text: {e}")))?;
             if bytes.len() as u64 > MANIFEST_LIMIT {
-                return Err(Error::Broken("設定のテキストが大きすぎます".to_owned()));
+                return Err(Error::Broken(t!("The settings text is too large").to_owned()));
             }
-            String::from_utf8(bytes).map_err(|_| Error::Broken("設定のテキストの文字が読めません".to_owned()))?
+            String::from_utf8(bytes).map_err(|_| Error::Broken(t!("The characters of the settings text cannot be read").to_owned()))?
         };
-        let table: toml::Table = toml::from_str(&text).map_err(|e| Error::Broken(format!("設定のテキストを読めませんでした: {}", e.message())))?;
+        let table: toml::Table = toml::from_str(&text).map_err(|e| Error::Broken(t!("Could not read the settings text: {}", e.message())))?;
         if table.get("format").and_then(|v| v.as_str()) != Some(FORMAT) {
             return Err(Error::NotProject);
         }
-        let version = table.get("version").and_then(|v| v.as_integer()).ok_or_else(|| Error::Broken("形式の版が書かれていません".to_owned()))?;
+        let version = table.get("version").and_then(|v| v.as_integer()).ok_or_else(|| Error::Broken(t!("The format version is missing").to_owned()))?;
         match u32::try_from(version) {
             Ok(1) => from_v1(table, &mut zip),
             Ok(found) if found > VERSION => Err(Error::Newer(found)),
-            _ => Err(Error::Broken(format!("形式の版（{version}）が正しくありません"))),
+            _ => Err(Error::Broken(t!("The format version ({version}) is not valid"))),
         }
     }
 
@@ -670,13 +671,13 @@ impl Project {
 fn zip_error(e: zip::result::ZipError) -> Error {
     match e {
         zip::result::ZipError::Io(e) => Error::Io(e),
-        other => Error::Broken(format!("ZIP として書けませんでした: {other}")),
+        other => Error::Broken(t!("Could not write it as ZIP: {other}")),
     }
 }
 
 /// 版 1 の設定のテキストから、案件を組み立てる。
 fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Result<Opened, Error> {
-    let manifest: Manifest = table.try_into().map_err(|e: toml::de::Error| Error::Broken(format!("設定のテキストを読めませんでした: {}", e.message())))?;
+    let manifest: Manifest = table.try_into().map_err(|e: toml::de::Error| Error::Broken(t!("Could not read the settings text: {}", e.message())))?;
     let mut problems = Vec::new();
 
     // 型と寸法。
@@ -686,17 +687,17 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         ("gable", _) => Kind::Gable,
         ("pillow", _) => Kind::Pillow,
         ("prism", Some(n)) if SIDES.contains(&n) => Kind::Prism(n),
-        ("prism", _) => return Err(Error::Broken("角柱の角の数が正しくありません".to_owned())),
-        (other, _) => return Err(Error::Broken(format!("このパケノバが知らない型（{other}）です"))),
+        ("prism", _) => return Err(Error::Broken(t!("The number of sides of the prism is not valid").to_owned())),
+        (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
     };
     let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32 };
     for (label, value, range) in shape.values() {
         if !value.is_finite() {
-            return Err(Error::Broken(format!("寸法の「{label}」が数ではありません")));
+            return Err(Error::Broken(t!("Dimension \"{label}\" is not a number")));
         }
         if !range.contains(value) {
             let fixed = value.clamp(*range.start(), *range.end());
-            problems.push(format!("寸法の「{label}」が範囲の外（{value}）だったので、{fixed} にしました"));
+            problems.push(t!("Dimension \"{label}\" was out of range ({value}), so it was set to {fixed}"));
             *value = fixed;
         }
     }
@@ -709,7 +710,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     // 中身は、同じファイルなら 1 回だけ読む。中身の印は、ファイルの名前から取る（中身の傷は、ZIP の検査で見つかる）。
     let mut load = |zip: &mut ZipArchive<R>, file: &str, size: P2| -> Result<(String, Arc<Vec<u8>>), String> {
         if !is_asset_file(file) || !size.iter().all(|v| v.is_finite()) {
-            return Err("書かれている内容が正しくありません".to_owned());
+            return Err(t!("The contents are not valid").to_owned());
         }
         let bytes = match loaded.get(file) {
             Some(bytes) => bytes.clone(),
@@ -730,7 +731,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             }
             Err(why) => {
                 kept.push(None);
-                problems.push(format!("素材「{}」を読めなかったので、外しました（{why}）", entry.name));
+                problems.push(t!("Asset \"{}\" could not be read, so it was removed ({why})", entry.name));
             }
         }
     }
@@ -739,13 +740,13 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         entry.as_ref().and_then(|entry| match load(zip, &entry.file, [0.0, 0.0]) {
             Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], id, bytes }),
             Err(why) => {
-                problems.push(format!("{what}「{}」を読めなかったので、外しました（{why}）", entry.name));
+                problems.push(t!("{what} \"{}\" could not be read, so it was removed ({why})", entry.name));
                 None
             }
         })
     };
-    let base = base_of(&manifest.base, "展開図の絵");
-    let back_base = base_of(&manifest.back_base, "紙の裏の展開図の絵");
+    let base = base_of(&manifest.base, t!("Dieline artwork"));
+    let back_base = base_of(&manifest.back_base, t!("Dieline artwork for the back of the sheet"));
 
     // 柄。
     let mut decals = Vec::new();
@@ -758,19 +759,19 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
                     "rect" => ShapeKind::Rect,
                     "ellipse" => ShapeKind::Ellipse,
                     other => {
-                        problems.push(format!("柄 {number} の図形の形（{other}）が読めないので、四角にしました"));
+                        problems.push(t!("The shape type of artwork {number} ({other}) cannot be read, so it was made a rectangle"));
                         ShapeKind::Rect
                     }
                 };
                 let mut color = |text: &Option<String>, what: &str| {
                     text.as_ref().map(|t| {
                         from_hex(t).unwrap_or_else(|| {
-                            problems.push(format!("柄 {number} の図形の{what}の色が読めないので、黒にしました"));
+                            problems.push(t!("The {what} color of shape artwork {number} cannot be read, so it was made black"));
                             [0, 0, 0]
                         })
                     })
                 };
-                let (fill, stroke) = (color(&shape.fill, "塗り"), color(&shape.stroke, "線"));
+                let (fill, stroke) = (color(&shape.fill, t!("Fill")), color(&shape.stroke, t!("Stroke")));
                 let clamp = |v: f64, range: &RangeInclusive<f32>, fallback: f32| if v.is_finite() { (v as f32).clamp(*range.start(), *range.end()) } else { fallback };
                 Source::Shape(ShapeSpec { kind, fill, stroke, stroke_width: clamp(shape.stroke_width, &SHAPE_STROKE, 1.0), radius: clamp(shape.radius, &SHAPE_RADIUS, 0.0) })
             }
@@ -779,58 +780,58 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
                 let clamp = |v: f64, range: &RangeInclusive<f32>, what: &str, problems: &mut Vec<String>| {
                     let v = v as f32;
                     if !v.is_finite() {
-                        problems.push(format!("柄 {number} の文字の{what}が正しくないので、ふつうの値にしました"));
+                        problems.push(t!("The {what} of text artwork {number} was not valid, so the normal value was used"));
                         return None;
                     }
                     let c = v.clamp(*range.start(), *range.end());
                     if c != v {
-                        problems.push(format!("柄 {number} の文字の{what}が範囲の外だったので、{c} にしました"));
+                        problems.push(t!("The {what} of text artwork {number} was out of range, so it was set to {c}"));
                     }
                     Some(c)
                 };
                 let color = from_hex(&text.color).unwrap_or_else(|| {
-                    problems.push(format!("柄 {number} の文字の色が読めないので、黒にしました"));
+                    problems.push(t!("The color of text artwork {number} cannot be read, so it was made black"));
                     [0, 0, 0]
                 });
                 let align = TextAlign::from_name(&text.align).unwrap_or_else(|| {
-                    problems.push(format!("柄 {number} の文字の揃えが読めないので、左揃えにしました"));
+                    problems.push(t!("The alignment of text artwork {number} cannot be read, so it was aligned left"));
                     TextAlign::Left
                 });
                 Source::Text(TextSpec {
                     text: text.text.clone(),
                     font: text.font.clone(),
-                    size: clamp(text.size, &TEXT_SIZE, "大きさ", &mut problems).unwrap_or(10.0),
+                    size: clamp(text.size, &TEXT_SIZE, t!("Size"), &mut problems).unwrap_or(10.0),
                     color,
                     align,
-                    spacing: clamp(text.spacing, &TEXT_SPACING, "字間", &mut problems).unwrap_or(0.0),
-                    leading: clamp(text.leading, &TEXT_LEADING, "行送り", &mut problems).unwrap_or(1.5),
+                    spacing: clamp(text.spacing, &TEXT_SPACING, t!("Tracking"), &mut problems).unwrap_or(0.0),
+                    leading: clamp(text.leading, &TEXT_LEADING, t!("Leading"), &mut problems).unwrap_or(1.5),
                 })
             }
             (Some(asset), None) => match kept.get(asset) {
                 Some(Some(now)) => Source::Asset(*now),
                 Some(None) => {
-                    problems.push(format!("柄 {number} は、素材「{}」を読めなかったので、外しました", manifest.assets[asset].name));
+                    problems.push(t!("Artwork {number} was removed because asset \"{}\" could not be read", manifest.assets[asset].name));
                     continue;
                 }
                 None => {
-                    problems.push(format!("柄 {number} は、ない素材を指していたので、外しました"));
+                    problems.push(t!("Artwork {number} was removed because it pointed to an asset that does not exist"));
                     continue;
                 }
             },
             (None, Some(name)) => Source::Builtin(name.clone()),
             _ => {
-                problems.push(format!("柄 {number} は、絵の指定が正しくないので、外しました"));
+                problems.push(t!("Artwork {number} was removed because its picture setting was not valid"));
                 continue;
             }
         };
         let Some(panel) = panel_index(&tpl, &entry.panel, entry.nth) else {
-            problems.push(format!("柄 {number} は、置き場所のパネル「{}」が型紙にないので、外しました", entry.panel));
+            problems.push(t!("Artwork {number} was removed because its panel \"{}\" is not in the dieline", pakenoba_i18n::trc("panel", &entry.panel)));
             continue;
         };
         let decal = Decal { panel, at: [entry.at[0] as f32, entry.at[1] as f32], size: [entry.size[0] as f32, entry.size[1] as f32], angle: entry.angle as f32 };
         let numbers = [decal.at[0], decal.at[1], decal.size[0], decal.size[1], decal.angle];
         if !numbers.iter().all(|v| v.is_finite()) || decal.size[0] <= 0.0 || decal.size[1] <= 0.0 {
-            problems.push(format!("柄 {number} は、場所か大きさが正しくないので、外しました"));
+            problems.push(t!("Artwork {number} was removed because its position or size was not valid"));
             continue;
         }
         decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked } });
@@ -842,11 +843,11 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
 /// ZIP の中のファイルを 1 つ、全部読む。中身の傷（CRC の不一致）も、ここで見つかる。
 fn read_entry<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Vec<u8>, String> {
     let mut entry = zip.by_name(name).map_err(|e| match e {
-        zip::result::ZipError::FileNotFound => "ファイルの中に見つかりません".to_owned(),
-        other => format!("取り出せません: {other}"),
+        zip::result::ZipError::FileNotFound => t!("Not found in the file").to_owned(),
+        other => t!("Cannot extract: {other}"),
     })?;
     let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes).map_err(|e| format!("中身が壊れています: {e}"))?;
+    entry.read_to_end(&mut bytes).map_err(|e| t!("The contents are damaged: {e}"))?;
     Ok(bytes)
 }
 
@@ -855,7 +856,7 @@ fn read_entry<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Vec
 /// `write` が失敗したとき、または途中でアプリが止まったときは、元のファイルはそのまま残る。
 /// 書きかけのファイル（同じフォルダの `<名前>.tmp-<番号>`）は、失敗したら消す。
 pub fn replace_file(path: &Path, write: impl FnOnce(&mut File) -> Result<(), Error>) -> Result<(), Error> {
-    let name = path.file_name().ok_or_else(|| Error::Io(io::Error::new(io::ErrorKind::InvalidInput, "ファイルの名前がありません")))?;
+    let name = path.file_name().ok_or_else(|| Error::Io(io::Error::new(io::ErrorKind::InvalidInput, "The file has no name")))?;
     let mut temp_name = name.to_owned();
     temp_name.push(format!(".tmp-{}", std::process::id()));
     let temp = path.with_file_name(temp_name);
@@ -1127,7 +1128,7 @@ mod tests {
         let opened = Project::read(Cursor::new(wide)).unwrap();
         assert_eq!(opened.project.shape.w, 300.0);
         assert_eq!(opened.problems.len(), 1);
-        assert!(opened.problems[0].contains("幅"), "{:?}", opened.problems);
+        assert!(opened.problems[0].contains("Width"), "{:?}", opened.problems);
         // 柄は、そのまま残る。
         assert_eq!(opened.project.decals, project.decals);
     }

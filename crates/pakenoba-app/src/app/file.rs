@@ -9,6 +9,7 @@
 //! - 傷んだファイルは、読める部分だけを開く。そのときは名前なしの案件として開き、
 //!   元のファイルにそのまま上書きさせない。
 
+use pakenoba_i18n::t;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -86,11 +87,11 @@ pub(super) struct FileState {
 
 impl FileState {
     pub fn new(answer_open: Option<PathBuf>, answer_save: Option<PathBuf>) -> FileState {
-        FileState { path: None, saved: 0, saving: None, pending: None, notice: None, action: None, recent: None, allow_close: false, title: String::new(), suggest: UNTITLED.to_owned(), answer_open, answer_save }
+        FileState { path: None, saved: 0, saving: None, pending: None, notice: None, action: None, recent: None, allow_close: false, title: String::new(), suggest: pakenoba_i18n::tr(UNTITLED).to_owned(), answer_open, answer_save }
     }
 }
 
-const UNTITLED: &str = "名前なし";
+const UNTITLED: &str = "Untitled";
 
 /// 最近使った案件を、いくつ覚えておくか。
 const RECENT: usize = 10;
@@ -164,7 +165,7 @@ impl App {
             .iter()
             .enumerate()
             .map(|(index, placed)| {
-                let source = self.source_of(&placed.picture).ok_or_else(|| format!("柄 {} の絵が、素材の一覧にありません", index + 1))?;
+                let source = self.source_of(&placed.picture).ok_or_else(|| t!("The picture for artwork {} is not in the asset list", index + 1))?;
                 Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -211,7 +212,7 @@ impl App {
 
     /// 上の帯に出す、案件の名前。
     pub(super) fn project_name(&self) -> String {
-        self.file.path.as_deref().map_or_else(|| UNTITLED.to_owned(), file_name)
+        self.file.path.as_deref().map_or_else(|| pakenoba_i18n::tr(UNTITLED).to_owned(), file_name)
     }
 
     pub(super) fn is_saving(&self) -> bool {
@@ -234,7 +235,7 @@ impl App {
             let picture = match super::decode_image(stored.bytes()) {
                 Ok(picture) => picture,
                 Err(why) => {
-                    problems.push(format!("素材「{}」は、絵として表示できません（{why}）。案件の中には残してあります。", stored.name));
+                    problems.push(t!("Asset \"{}\" cannot be shown as a picture ({why}). It is kept in the project.", stored.name));
                     // 中身は残したまま、灰色の四角で代わりに見せる。
                     Picture::Image { w: 2, h: 2, rgba: std::sync::Arc::new([150u8, 150, 150, 255].repeat(4)), vector: false }
                 }
@@ -249,7 +250,7 @@ impl App {
                 Source::Builtin(name) if name == "logo" => Picture::Logo,
                 Source::Builtin(name) if name == "band" => Picture::Band,
                 Source::Builtin(name) => {
-                    problems.push(format!("柄 {} は、このパケノバにない見本（{name}）を使っているので、外しました", index + 1));
+                    problems.push(t!("Artwork {} uses a sample this version of PAKENOBA does not have ({name}), so it was removed", index + 1));
                     continue;
                 }
                 Source::Asset(asset) => match self.assets.get(first + asset) {
@@ -262,12 +263,12 @@ impl App {
                         if let Picture::Text(art) = &picture
                             && art.font_used != spec.font
                         {
-                            problems.push(format!("柄 {}（文字）のフォント「{}」がこの PC にないので、{} で描きました", index + 1, spec.font, art.font_used));
+                            problems.push(t!("The font \"{}\" of artwork {} (text) is not on this PC, so it was drawn with {}", index + 1, spec.font, art.font_used));
                         }
                         picture
                     }
                     Err(e) => {
-                        problems.push(format!("柄 {}（文字）を描けなかったので、外しました（{e}）", index + 1));
+                        problems.push(t!("Artwork {} (text) could not be drawn, so it was removed ({e})", index + 1));
                         continue;
                     }
                 },
@@ -282,7 +283,7 @@ impl App {
         for (side, base) in [project.base, project.back_base].into_iter().enumerate() {
             self.bases[side] = base.and_then(|file| {
                 let name = file.name.clone();
-                BaseArt::read(file, side == 1, sheet).map_err(|_| problems.push(format!("{}の展開図の絵「{name}」を読めなかったので、外しました", if side == 1 { "紙の裏" } else { "紙の表" }))).ok()
+                BaseArt::read(file, side == 1, sheet).map_err(|_| problems.push(t!("The dieline artwork \"{name}\" for the {} could not be read, so it was removed", if side == 1 { t!("back of the sheet") } else { t!("front of the sheet") }))).ok()
             });
         }
         self.refit_bases();
@@ -312,7 +313,7 @@ impl App {
         let opened = match Project::open(path) {
             Ok(opened) => opened,
             Err(e) => {
-                self.file.notice = Some(Notice { title: "案件を開けませんでした".to_owned(), lines: vec![path.display().to_string(), e.to_string()] });
+                self.file.notice = Some(Notice { title: t!("Could not open the project").to_owned(), lines: vec![path.display().to_string(), e.to_string()] });
                 return;
             }
         };
@@ -324,16 +325,16 @@ impl App {
             self.file.suggest = name.clone();
             self.mark_saved();
             self.remember_recent(path);
-            self.say(format!("{name} を開きました"));
+            self.say(t!("Opened {name}"));
         } else {
             // 外したものがあるので、元のファイルにそのまま上書きさせない。名前なしの、未保存の案件として開く。
             self.file.path = None;
-            self.file.suggest = format!("{}（開き直し）", name.trim_end_matches(&format!(".{}", project::EXTENSION)));
+            self.file.suggest = t!("{} (reopened)", name.trim_end_matches(&format!(".{}", project::EXTENSION)));
             self.file.saved = !self.fingerprint();
-            let mut lines = vec![format!("{name} の一部を読めませんでした。読めた部分だけを開いています。")];
-            lines.extend(problems.into_iter().map(|p| format!("・{p}")));
-            lines.push("元のファイルは、そのまま残っています。この状態を残すには、名前を付けて保存してください。".to_owned());
-            self.file.notice = Some(Notice { title: "一部を外して開きました".to_owned(), lines });
+            let mut lines = vec![t!("Part of {name} could not be read. Only the parts that could be read are open.")];
+            lines.extend(problems.into_iter().map(|p| t!("• {p}")));
+            lines.push(t!("The original file is unchanged. To keep this state, use Save As.").to_owned());
+            self.file.notice = Some(Notice { title: t!("Opened with some parts removed").to_owned(), lines });
         }
     }
 
@@ -342,7 +343,7 @@ impl App {
         let opened = match Project::open(backup) {
             Ok(opened) => opened,
             Err(e) => {
-                self.file.notice = Some(Notice { title: "控えを開けませんでした".to_owned(), lines: vec![name.to_owned(), e.to_string(), "控えは、そのまま残してあります。".to_owned()] });
+                self.file.notice = Some(Notice { title: t!("Could not open the backup").to_owned(), lines: vec![name.to_owned(), e.to_string(), t!("The backup has been kept as it is.").to_owned()] });
                 return false;
             }
         };
@@ -350,14 +351,14 @@ impl App {
         problems.extend(self.apply_project(opened.project));
         // 元の場所のフォルダがなくなっていたら、名前なしにする（保存するときに、場所を選んでもらう）。
         self.file.path = original.filter(|p| p.parent().is_some_and(Path::exists));
-        self.file.suggest = self.file.path.as_deref().map_or_else(|| UNTITLED.to_owned(), file_name);
+        self.file.suggest = self.file.path.as_deref().map_or_else(|| pakenoba_i18n::tr(UNTITLED).to_owned(), file_name);
         self.file.saved = !self.fingerprint();
-        let mut lines = vec![format!("{name} を、控えから開きました。保存すると、元の案件のファイルが新しくなります。")];
+        let mut lines = vec![t!("Opened {name} from a backup. Saving updates the original project file.")];
         if self.file.path.is_none() {
-            lines = vec![format!("{name} を、控えから開きました。名前を付けて保存してください。")];
+            lines = vec![t!("Opened {name} from a backup. Please use Save As.")];
         }
-        lines.extend(problems.into_iter().map(|p| format!("・{p}")));
-        self.file.notice = Some(Notice { title: "控えから開きました".to_owned(), lines });
+        lines.extend(problems.into_iter().map(|p| t!("• {p}")));
+        self.file.notice = Some(Notice { title: t!("Opened from a backup").to_owned(), lines });
         true
     }
 
@@ -366,7 +367,7 @@ impl App {
         if let Some(answer) = self.file.answer_open.take() {
             return Some(answer);
         }
-        let mut dialog = rfd::FileDialog::new().set_title("案件を開く").add_filter("パケノバの案件", &[project::EXTENSION]);
+        let mut dialog = rfd::FileDialog::new().set_title(t!("Open project")).add_filter(t!("PAKENOBA project"), &[project::EXTENSION]);
         if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
@@ -378,7 +379,7 @@ impl App {
         if let Some(answer) = self.file.answer_save.take() {
             return Some(with_extension(answer));
         }
-        let mut dialog = rfd::FileDialog::new().set_title("名前を付けて保存").add_filter("パケノバの案件", &[project::EXTENSION]).set_file_name(with_extension(PathBuf::from(&self.file.suggest)).display().to_string());
+        let mut dialog = rfd::FileDialog::new().set_title(t!("Save As")).add_filter(t!("PAKENOBA project"), &[project::EXTENSION]).set_file_name(with_extension(PathBuf::from(&self.file.suggest)).display().to_string());
         if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
@@ -386,7 +387,7 @@ impl App {
         let path = with_extension(picked.clone());
         // 拡張子を足した結果、別のファイルを指すことになった場合。上書きの確認が済んでいないので、止める。
         if path != picked && path.exists() {
-            self.file.notice = Some(Notice { title: "保存しませんでした".to_owned(), lines: vec![format!("{} は、すでにあります。", path.display()), "別の名前を付けるか、拡張子（.pknb）まで入れて、もう一度保存してください。".to_owned()] });
+            self.file.notice = Some(Notice { title: t!("Not saved").to_owned(), lines: vec![t!("{} already exists.", path.display()), t!("Choose another name, or include the extension (.pknb), and save again.").to_owned()] });
             return None;
         }
         Some(path)
@@ -395,7 +396,7 @@ impl App {
     /// 別の案件を開く。保存していない変更があれば、先に確かめる。
     pub(super) fn request_open(&mut self, path: Option<PathBuf>) {
         if self.is_saving() {
-            self.say("保存しています。終わってから、開いてください。");
+            self.say(t!("Saving. Open the project when it has finished."));
         } else if self.unsaved() {
             self.file.pending = Some(Then::Open(path));
         } else {
@@ -435,7 +436,7 @@ impl App {
         let project = match self.project() {
             Ok(project) => project,
             Err(why) => {
-                self.file.notice = Some(Notice { title: "保存できませんでした".to_owned(), lines: vec![why] });
+                self.file.notice = Some(Notice { title: t!("Could not save").to_owned(), lines: vec![why] });
                 return false;
             }
         };
@@ -446,7 +447,7 @@ impl App {
             let _ = sender.send(outcome);
             ctx.request_repaint();
         });
-        self.say(format!("{} を保存しています…", file_name(&path)));
+        self.say(t!("Saving {}…", file_name(&path)));
         self.file.saving = Some(Saving { result, path, print: self.fingerprint(), then });
         true
     }
@@ -467,7 +468,7 @@ impl App {
     /// 新しい案件を始める。保存していない変更があれば、先に確かめる。
     pub(super) fn request_new(&mut self) {
         if self.is_saving() {
-            self.say("保存しています。終わってから、新しい案件を始めてください。");
+            self.say(t!("Saving. Start a new project when it has finished."));
         } else if self.unsaved() {
             self.file.pending = Some(Then::New);
         } else {
@@ -480,11 +481,11 @@ impl App {
         let shape = Dims::for_shape(0, self.dims.t).shape();
         self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None });
         self.file.path = None;
-        self.file.suggest = UNTITLED.to_owned();
+        self.file.suggest = pakenoba_i18n::tr(UNTITLED).to_owned();
         self.mark_saved();
         self.workspace = Workspace::Shape;
         self.library.open = false;
-        self.say("新しい案件を始めました");
+        self.say(t!("Started a new project"));
     }
 
     /// 最近使った案件に入れる（先頭へ。10 件まで）。
@@ -505,14 +506,14 @@ impl App {
             let outcome = match saving.result.try_recv() {
                 Ok(outcome) => Some(outcome),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Err("保存の途中で止まりました".to_owned())),
+                Err(TryRecvError::Disconnected) => Some(Err(t!("Saving stopped partway").to_owned())),
             };
             if let Some(outcome) = outcome {
-                let Saving { path, print, then, .. } = self.file.saving.take().expect("保存中");
+                let Saving { path, print, then, .. } = self.file.saving.take().expect("saving in progress");
                 match outcome {
                     Ok(()) => {
                         self.file.suggest = file_name(&path);
-                        self.say(format!("{} を保存しました", file_name(&path)));
+                        self.say(t!("Saved {}", file_name(&path)));
                         self.remember_recent(&path);
                         self.file.path = Some(path);
                         self.file.saved = print;
@@ -520,7 +521,7 @@ impl App {
                     }
                     Err(why) => {
                         self.message = None;
-                        self.file.notice = Some(Notice { title: "保存できませんでした".to_owned(), lines: vec![path.display().to_string(), why, "前に保存したファイルは、そのまま残っています。".to_owned()] });
+                        self.file.notice = Some(Notice { title: t!("Could not save").to_owned(), lines: vec![path.display().to_string(), why, t!("The previously saved file is unchanged.").to_owned()] });
                     }
                 }
             }
@@ -539,7 +540,7 @@ impl App {
         }
 
         // ウィンドウの題。案件の名前と、未保存の印。
-        let title = format!("{}{} - パケノバ", self.project_name(), if self.unsaved() { " *" } else { "" });
+        let title = t!("{}{} - PAKENOBA", self.project_name(), if self.unsaved() { " *" } else { "" });
         if title != self.file.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.file.title = title;
@@ -571,13 +572,23 @@ impl App {
         }
     }
 
+    /// 画面の言語を変えて、設定に覚える。`None` なら OS の言語に合わせる。
+    pub(super) fn set_language(&mut self, choice: Option<String>) {
+        pakenoba_i18n::set(choice.as_deref().unwrap_or_else(|| pakenoba_i18n::detect()));
+        self.settings.language = choice;
+        if let Err(e) = self.settings.save() {
+            self.say(e);
+        }
+    }
+
     /// 上の帯の「ファイル」のメニュー。
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let saving = self.is_saving();
         let mut chosen = None;
         let mut open = None;
         let mut clear = false;
-        ui.menu_button("ファイル", |ui| {
+        let mut language = None;
+        ui.menu_button(t!("File"), |ui| {
             ui.set_min_width(220.0);
             let mut pick = |ui: &mut egui::Ui, enabled: bool, label: &str, keys: &str, action: FileAction| {
                 if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys)).clicked() {
@@ -585,17 +596,17 @@ impl App {
                     ui.close();
                 }
             };
-            pick(ui, !saving, "新しい案件", "Ctrl+N", FileAction::New);
-            pick(ui, !saving, "開く…", "Ctrl+O", FileAction::Open);
+            pick(ui, !saving, t!("New project"), "Ctrl+N", FileAction::New);
+            pick(ui, !saving, t!("Open…"), "Ctrl+O", FileAction::Open);
             ui.add_enabled_ui(!saving, |ui| {
-                ui.menu_button("最近使った案件", |ui| {
+                ui.menu_button(t!("Recent projects"), |ui| {
                     ui.set_min_width(260.0);
                     if self.settings.recent.is_empty() {
-                        ui.weak("まだありません");
+                        ui.weak(t!("None yet"));
                     }
                     for path in &self.settings.recent {
                         let exists = path.exists();
-                        let label = if exists { file_name(path) } else { format!("{}（見つかりません）", file_name(path)) };
+                        let label = if exists { file_name(path) } else { t!("{} (not found)", file_name(path)) };
                         if ui.add_enabled(exists, egui::Button::new(label)).on_hover_text(path.display().to_string()).on_disabled_hover_text(path.display().to_string()).clicked() {
                             open = Some(path.clone());
                             ui.close();
@@ -603,7 +614,7 @@ impl App {
                     }
                     if !self.settings.recent.is_empty() {
                         ui.separator();
-                        if ui.button("一覧を消す").on_hover_text("ファイルは消えません").clicked() {
+                        if ui.button(t!("Clear list")).on_hover_text(t!("The files are not deleted")).clicked() {
                             clear = true;
                             ui.close();
                         }
@@ -611,9 +622,30 @@ impl App {
                 });
             });
             ui.separator();
-            pick(ui, !saving, "保存", "Ctrl+S", FileAction::Save);
-            pick(ui, !saving, "名前を付けて保存…", "Ctrl+Shift+S", FileAction::SaveAs);
+            pick(ui, !saving, t!("Save"), "Ctrl+S", FileAction::Save);
+            pick(ui, !saving, t!("Save As…"), "Ctrl+Shift+S", FileAction::SaveAs);
+            ui.separator();
+            // 言語。メニューバーを作ったら、「編集」の「環境設定」へ移す。
+            // 読めない言語にしてしまっても見つけられるように、英語の名前も添える。
+            let label = if pakenoba_i18n::current() == "en" { "Language".to_owned() } else { format!("{} / Language", t!("Language")) };
+            ui.menu_button(label, |ui| {
+                let following_os = self.settings.language.is_none();
+                if ui.radio(following_os, t!("Same as the system")).clicked() {
+                    language = Some(None);
+                    ui.close();
+                }
+                for lang in &pakenoba_i18n::LANGS {
+                    let on = self.settings.language.as_deref() == Some(lang.code);
+                    if ui.radio(on, lang.name).clicked() {
+                        language = Some(Some(lang.code.to_owned()));
+                        ui.close();
+                    }
+                }
+            });
         });
+        if let Some(choice) = language {
+            self.set_language(choice);
+        }
         if chosen.is_some() {
             self.file.action = chosen;
         }
@@ -646,7 +678,7 @@ impl App {
                 if self.is_saving() {
                     // すでに保存しているところ。
                 } else if self.file.path.is_some() && !self.unsaved() {
-                    self.say("変更はありません（保存してあります）");
+                    self.say(t!("No changes (already saved)"));
                 } else {
                     self.save(ctx, Then::Nothing);
                 }
@@ -670,7 +702,7 @@ impl App {
                     }
                 });
                 ui.add_space(8.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button("閉じる").clicked()).inner
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button(t!("Close")).clicked()).inner
             });
             if response.inner || response.should_close() {
                 self.file.notice = None;
@@ -682,19 +714,19 @@ impl App {
         let name = self.project_name();
         let response = egui::Modal::new(egui::Id::unique("confirm-unsaved")).show(ctx, |ui| {
             ui.set_width(420.0);
-            ui.strong(format!("「{name}」に、保存していない変更があります"));
+            ui.strong(t!("\"{name}\" has unsaved changes"));
             ui.add_space(4.0);
             ui.label(match then {
-                Then::Close => "保存しないで閉じると、変更は失われます。",
-                Then::Open(_) => "保存しないで別の案件を開くと、変更は失われます。",
-                Then::New => "保存しないで新しい案件を始めると、変更は失われます。",
+                Then::Close => t!("If you close without saving, the changes will be lost."),
+                Then::Open(_) => t!("If you open another project without saving, the changes will be lost."),
+                Then::New => t!("If you start a new project without saving, the changes will be lost."),
                 Then::Nothing => "",
             });
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let save = ui.button("保存する").clicked();
-                let discard = ui.button("保存しない").clicked();
-                let cancel = ui.button("キャンセル").clicked();
+                let save = ui.button(t!("Save")).clicked();
+                let discard = ui.button(t!("Don't save")).clicked();
+                let cancel = ui.button(t!("Cancel")).clicked();
                 (save, discard, cancel)
             })
             .inner

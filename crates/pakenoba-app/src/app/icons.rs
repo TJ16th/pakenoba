@@ -1,5 +1,6 @@
 //! 道具のアイコン。線だけの単色で、その場で描く（アイコンのフォントや画像を持たない）。
 
+use pakenoba_i18n::t;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, pos2, vec2};
 
 use super::Tool;
@@ -11,7 +12,7 @@ pub(super) fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool) -> egui
 
 /// 道具の帯の下の、素材の欄を開け閉めするボタン。
 pub(super) fn assets_button(ui: &mut egui::Ui, open: bool) -> egui::Response {
-    strip_button(ui, true, open, "素材の欄を開く、閉じる", |painter, center, stroke| {
+    strip_button(ui, true, open, t!("Open or close the assets panel"), |painter, center, stroke| {
         // 重ねた 2 枚の紙。
         let p = |x: f32, y: f32| pos2(center.x + x - 10.0, center.y + y - 10.0);
         painter.add(Shape::line(vec![p(6.0, 6.0), p(6.0, 3.5), p(16.5, 3.5), p(16.5, 13.0), p(14.0, 13.0)], stroke));
@@ -85,7 +86,7 @@ fn row_button(ui: &mut egui::Ui, on: bool, tip: &str, icon: impl FnOnce(&egui::P
 
 /// 柄を見せるか隠すかの、目のボタン。
 pub(super) fn eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
-    let tip = if visible { "隠す（箱にも、型紙にも描かない）" } else { "見せる" };
+    let tip = if visible { t!("Hide (not drawn on the box or the dieline)") } else { t!("Show") };
     row_button(ui, visible, tip, |painter, c, stroke| {
         // 目の輪郭（上下 2 本の弧）と、ひとみ。隠しているときは、閉じた目（下の弧だけ）。
         let arc = |sign: f32| -> Vec<Pos2> { (0..=12).map(|k| { let t = k as f32 / 12.0; let x = (t - 0.5) * 13.0; pos2(c.x + x, c.y + sign * 4.2 * (1.0 - (2.0 * t - 1.0).powi(2))) }).collect() };
@@ -99,7 +100,7 @@ pub(super) fn eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
 
 /// 柄をロックするかの、鍵のボタン。
 pub(super) fn lock_button(ui: &mut egui::Ui, locked: bool) -> egui::Response {
-    let tip = if locked { "ロックを外す" } else { "ロックする（箱や展開図の上で、つかめなくする）" };
+    let tip = if locked { t!("Unlock") } else { t!("Lock (cannot be grabbed on the box or the dieline)") };
     row_button(ui, locked, tip, |painter, c, stroke| {
         // 錠の本体と、つる。外しているときは、つるを片側だけ浮かせる。
         painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.2), vec2(9.0, 6.5)), 1.0, stroke, StrokeKind::Middle);

@@ -5,6 +5,7 @@
 //! 作業用のファイルは、使う人のデータのフォルダの `edit` に置く（案件のフォルダは汚さない）。
 //! 文字の柄は、右の欄の文字の入力へ移る。付属の見本は直せない。
 
+use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -71,11 +72,11 @@ impl App {
                 // 文字は、右の欄で打つ。
                 self.focus_text = true;
             }
-            Picture::Shape(_) => self.say("図形は、右の欄か、上の帯（図形の道具）で、形と色を変えます。"),
-            Picture::Logo | Picture::Band => self.say("付属の見本は、外のアプリでは直せません。「この柄だけ差し替える」で、別の画像にできます。"),
+            Picture::Shape(_) => self.say(t!("Change a shape's form and colors in the right panel, or in the options bar with the Shape tool.")),
+            Picture::Logo | Picture::Band => self.say(t!("Built-in samples cannot be edited in another app. Use \"Replace this artwork only\" to switch to another image.")),
             Picture::Image { .. } => match self.asset_of(&self.decals[index].picture.clone()) {
                 Some(asset) => self.start_edit(asset),
-                None => self.say("この柄の素材が見つかりません。"),
+                None => self.say(t!("The asset for this artwork was not found.")),
             },
         }
     }
@@ -87,12 +88,12 @@ impl App {
 
     /// 素材を外のアプリで開く。すでに開いていれば、もう一度開くだけ。
     pub(super) fn start_edit(&mut self, asset: usize) {
-        let Some(stored) = self.assets.get(asset).and_then(|a| a.stored.clone()) else { return self.say("この素材は、外のアプリでは直せません。") };
+        let Some(stored) = self.assets.get(asset).and_then(|a| a.stored.clone()) else { return self.say(t!("This asset cannot be edited in another app.")) };
         let editor = self.editor_for(&self.assets[asset].picture).map(Path::to_path_buf);
         if let Some(job) = self.edits.iter().find(|j| j.asset == asset) {
             let path = job.path.clone();
             if let Err(e) = open_with(editor.as_deref(), &path) {
-                self.say(format!("外のアプリで開けませんでした: {e}"));
+                self.say(t!("Could not open it in the other app: {e}"));
             }
             return;
         }
@@ -101,14 +102,14 @@ impl App {
         let path = dir.join(format!("{}-{}", &stored.id()[..8], self.assets[asset].name));
         let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, stored.bytes().as_slice()));
         if let Err(e) = written {
-            return self.say(format!("作業用のファイルを書けませんでした: {e}"));
+            return self.say(t!("Could not write the working file: {e}"));
         }
         match open_with(editor.as_deref(), &path) {
             Ok(()) => {
                 self.edits.push(EditJob { asset, seen: stamp(&path), pending: None, path });
-                self.say(format!("「{}」を外のアプリで開きました。保存すると、箱に反映します。", self.assets[asset].name));
+                self.say(t!("Opened \"{}\" in another app. Saving there updates the box.", self.assets[asset].name));
             }
-            Err(e) => self.say(format!("外のアプリで開けませんでした: {e}")),
+            Err(e) => self.say(t!("Could not open it in the other app: {e}")),
         }
     }
 
@@ -170,7 +171,7 @@ impl App {
                     stored.name = name.clone();
                 }
             }
-            self.say(format!("外のアプリで直した「{name}」を、箱に反映しました。Ctrl+Z で戻せます。"));
+            self.say(t!("Updated the box with \"{name}\" as edited in the other app. Press Ctrl+Z to undo."));
         }
     }
 
@@ -182,30 +183,30 @@ impl App {
         }
         let editing = self.is_editing(&picture);
         ui.horizontal_wrapped(|ui| {
-            if ui.button(if editing { "外のアプリでもう一度開く" } else { "外のアプリで編集" }).on_hover_text("Ctrl+E。柄をダブルクリックしても開けます。保存すると、箱に反映します").clicked() {
+            if ui.button(if editing { t!("Open in the other app again") } else { t!("Edit in another app") }).on_hover_text(t!("Ctrl+E. You can also double-click the artwork. Saving there updates the box")).clicked() {
                 self.edit_selected();
             }
             if editing
                 && let Some(asset) = self.asset_of(&picture)
-                && ui.small_button("編集をやめる").on_hover_text("作業用のファイルを消します。箱の絵は、いまのまま").clicked()
+                && ui.small_button(t!("Stop editing")).on_hover_text(t!("Deletes the working file. The picture on the box stays as it is")).clicked()
             {
                 self.stop_edit(asset);
             }
         });
         // ベクター（SVG）と画像で、開くアプリを別々に覚える。
         let vector = matches!(picture, Picture::Image { vector: true, .. });
-        let (tip, title) = if vector { ("VectorCraft、Illustrator、Affinity など", "ベクター（SVG）を直すアプリを選ぶ") } else { ("PhotoCraft、Photoshop、Affinity など", "画像を直すアプリを選ぶ") };
+        let (tip, title) = if vector { (t!("VectorCraft, Illustrator, Affinity and others"), t!("Choose the app for editing vectors (SVG)")) } else { (t!("PhotoCraft, Photoshop, Affinity and others"), t!("Choose the app for editing images")) };
         let current = if vector { self.settings.vector_editor.clone() } else { self.settings.editor.clone() };
-        let app = current.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "OS で決まっているアプリ".to_owned(), |n| n.to_string_lossy().into_owned());
+        let app = current.as_ref().and_then(|p| p.file_stem()).map_or_else(|| t!("the system default app").to_owned(), |n| n.to_string_lossy().into_owned());
         let mut chosen = None;
         ui.horizontal_wrapped(|ui| {
-            ui.small(format!("開くアプリ: {app}"));
-            if ui.small_button("選ぶ…").on_hover_text(tip).clicked()
+            ui.small(t!("Opens with: {app}"));
+            if ui.small_button(t!("Choose…")).on_hover_text(tip).clicked()
                 && let Some(path) = rfd::FileDialog::new().set_title(title).pick_file()
             {
                 chosen = Some(Some(path));
             }
-            if current.is_some() && ui.small_button("元に戻す").on_hover_text("OS で決まっているアプリで開く").clicked() {
+            if current.is_some() && ui.small_button(t!("Reset")).on_hover_text(t!("Open with the system default app")).clicked() {
                 chosen = Some(None);
             }
         });

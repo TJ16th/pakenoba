@@ -56,7 +56,7 @@ fn main() -> ExitCode {
                 // 「パネルの番号,横の位置,縦の位置,回転（度）」。位置はパネルの中での割合（0〜1）。
                 let v: Vec<f32> = args[i + 1].split(',').filter_map(|x| x.trim().parse().ok()).collect();
                 if v.len() != 4 {
-                    println!("{} は「パネルの番号,横の位置,縦の位置,回転（度）」で指定します。", args[i]);
+                    println!("{} takes \"panel number,horizontal position,vertical position,rotation (degrees)\".", args[i]);
                     return ExitCode::FAILURE;
                 }
                 let at = Some([v[0], v[1], v[2], v[3]]);
@@ -74,7 +74,7 @@ fn main() -> ExitCode {
                 // 「立体、表、裏」を出すかどうかを、1 と 0 の 3 文字で（例: 110）。
                 let on: Vec<bool> = args[i + 1].chars().map(|c| c == '1').collect();
                 if on.len() != 3 || !on.contains(&true) {
-                    println!("--views は、立体、表、裏を出すかどうかを、1 と 0 の 3 文字で指定します（例: 110）。");
+                    println!("--views takes three digits, 1 or 0, for whether to show the 3D view, the front and the back (for example 110).");
                     return ExitCode::FAILURE;
                 }
                 initial.views = Some([on[0], on[1], on[2]]);
@@ -85,7 +85,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("使い方: pakenoba [開く案件のファイル（.pknb）] [--fold 0〜1] [--yaw ラジアン] [--pitch ラジアン] [--thickness mm] [--open 0〜1] [--sides 型（0: 差し込み箱、2: ゲーブル型、100: ピロー型、そのほかの 3 以上: 角柱）] [--workspace 0〜2] [--bulge 度] [--width mm] [--height mm] [--no-guides] [--psd ファイル] [--png 柄にする画像] [--logo パネル,横,縦,回転] [--band パネル,横,縦,回転] [--select 柄の番号] [--views 立体・表・裏を出すか（例: 110）] [--back 裏へ移す柄の番号] [--assets 素材の欄を開く（1: 道具の右、2: 道具の左）] [--library 「素材」の画面を開く]");
+                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--no-guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }
@@ -94,7 +94,7 @@ fn main() -> ExitCode {
     match app::run(initial) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("ウィンドウを開けませんでした: {e}");
+            eprintln!("Could not open the window: {e}");
             ExitCode::FAILURE
         }
     }

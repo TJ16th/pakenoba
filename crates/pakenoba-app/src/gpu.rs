@@ -3,6 +3,7 @@
 //! egui の画面とは別のテクスチャに描き（4 倍のマルチサンプルと奥行きバッファつき）、
 //! 結果を egui に画像として渡す。あとで動画書き出しに転用しやすい形。
 
+use pakenoba_i18n::t;
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
@@ -341,7 +342,7 @@ impl BoxRenderer {
     pub fn capture(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, light: V3, holes: [[f32; 4]; 2], background: [f32; 4]) -> Result<Vec<u8>, String> {
         let max = rs.device.limits().max_texture_dimension_2d;
         if size[0] < 2 || size[1] < 2 || size[0] > max || size[1] > max {
-            return Err(format!("この PC では、{} x {} px の画像を描けません（{max} px まで）", size[0], size[1]));
+            return Err(t!("This PC cannot draw a {} x {} px image (up to {max} px)", size[0], size[1]));
         }
         let device = &rs.device;
         let attach = wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -396,9 +397,9 @@ impl BoxRenderer {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = send.send(result);
         });
-        device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| format!("描き終わるのを待てませんでした: {e}"))?;
-        receive.recv().map_err(|_| "読み戻せませんでした".to_owned())?.map_err(|e| format!("読み戻せませんでした: {e}"))?;
-        let mapped = slice.get_mapped_range().map_err(|e| format!("読み戻せませんでした: {e:?}"))?;
+        device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| t!("Could not wait for drawing to finish: {e}"))?;
+        receive.recv().map_err(|_| t!("Could not read the picture back").to_owned())?.map_err(|e| t!("Could not read the picture back: {e}"))?;
+        let mapped = slice.get_mapped_range().map_err(|e| t!("Could not read the picture back: {e:?}"))?;
         let mut rgba = Vec::with_capacity((size[0] * size[1] * 4) as usize);
         for y in 0..size[1] as usize {
             let start = y * row as usize;

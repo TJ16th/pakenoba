@@ -3,6 +3,7 @@
 //! 柄の場所と、隣の面への続き方は、中核（`pakenoba_core::surface`）が決める。ここは、絵を画素にするところ。
 //! いまは展開図の画像に描き込んでいる。あとで、柄ごとに元の解像度のまま描く形に置き換える。
 
+use pakenoba_i18n::t;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -71,12 +72,12 @@ pub enum Picture {
 impl Picture {
     pub fn label(&self) -> &'static str {
         match self {
-            Picture::Logo => "ロゴ",
-            Picture::Band => "帯",
-            Picture::Image { vector: true, .. } => "ベクター",
-            Picture::Image { .. } => "画像",
-            Picture::Text(_) => "文字",
-            Picture::Shape(_) => "図形",
+            Picture::Logo => t!("Logo"),
+            Picture::Band => t!("Band"),
+            Picture::Image { vector: true, .. } => t!("Vector"),
+            Picture::Image { .. } => t!("Image"),
+            Picture::Text(_) => t!("Text"),
+            Picture::Shape(_) => t!("Shape"),
         }
     }
 

@@ -12,6 +12,7 @@
 //! - 保存したら、または変更がなくなったら（元に戻した、保存しないで閉じた）、控えは消す。
 //!   ふつうに閉じたときも消す。
 
+use pakenoba_i18n::t;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -41,7 +42,7 @@ pub(super) struct Orphan {
 impl Orphan {
     /// 画面に出す名前。
     pub fn name(&self) -> String {
-        self.original.as_deref().and_then(Path::file_name).map_or_else(|| "名前なし".to_owned(), |n| n.to_string_lossy().into_owned())
+        self.original.as_deref().and_then(Path::file_name).map_or_else(|| "Untitled".to_owned(), |n| n.to_string_lossy().into_owned())
     }
 }
 
@@ -276,30 +277,30 @@ impl App {
         let mut chosen: Option<(usize, bool)> = None;
         let response = egui::Modal::new(egui::Id::unique("recovery")).show(ctx, |ui| {
             ui.set_width(480.0);
-            ui.strong("前回、保存しないまま終わった案件があります");
+            ui.strong(t!("A project was left unsaved last time"));
             ui.add_space(4.0);
-            ui.label("パケノバが途中で終わったときに残した控えです。開いて、保存し直せます。");
+            ui.label(t!("These are backups PAKENOBA kept when it stopped partway. You can open and save them again."));
             ui.add_space(6.0);
             for (index, orphan) in orphans.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(orphan.name());
-                        let when = file::show_time(&orphan.when).map_or_else(String::new, |t| format!("控えの日時: {t}"));
-                        let place = orphan.original.as_ref().map_or_else(|| "まだ保存したことのない案件".to_owned(), |p| p.display().to_string());
+                        let when = file::show_time(&orphan.when).map_or_else(String::new, |t| t!("Backup time: {t}"));
+                        let place = orphan.original.as_ref().map_or_else(|| t!("a project that has never been saved").to_owned(), |p| p.display().to_string());
                         ui.small(format!("{place}\n{when}"));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("開く").clicked() {
+                        if ui.button(t!("Open")).clicked() {
                             chosen = Some((index, true));
                         }
-                        if ui.button("捨てる").on_hover_text("控えを消します。元に戻せません").clicked() {
+                        if ui.button(t!("Discard")).on_hover_text(t!("Deletes the backup. This cannot be undone")).clicked() {
                             chosen = Some((index, false));
                         }
                     });
                 });
                 ui.separator();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button("あとで決める").on_hover_text("控えは残しておき、次に起動したときにまた聞きます").clicked()).inner
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button(t!("Decide later")).on_hover_text(t!("Keeps the backup and asks again at the next start")).clicked()).inner
         });
         let later = response.inner || response.should_close();
         match chosen {
@@ -416,7 +417,7 @@ mod tests {
         drop(before);
         let mut after = Recovery::start(Some(dir.clone()), 30.0);
         assert_eq!(after.orphans.len(), 1);
-        assert_eq!(after.orphans[0].name(), "名前なし");
+        assert_eq!(after.orphans[0].name(), "Untitled");
         let orphan = after.orphans.remove(0);
         after.discard(&orphan);
         after.finish();

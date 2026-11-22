@@ -5,6 +5,7 @@
 //!
 //! カーソルの下の柄は、立体、表、裏、レイヤーの欄のどこで指していても、すべての表示で同じ柄に色の枠を出す。
 
+use pakenoba_i18n::t;
 use eframe::egui;
 
 use pakenoba_core::surface::panel_at;
@@ -181,17 +182,17 @@ impl App {
     /// 上の帯とプロパティの欄に出す、整列のボタン。
     pub(super) fn align_buttons(&mut self, ui: &mut egui::Ui) {
         let count = self.selection().len();
-        let tip = if count >= 2 { "選んだ柄全体の四角にそろえる" } else { "置いているパネルにそろえる" };
-        for (how, label) in [(Align::Left, "左"), (Align::CenterX, "左右中央"), (Align::Right, "右"), (Align::Top, "上"), (Align::CenterY, "上下中央"), (Align::Bottom, "下")] {
-            if ui.small_button(label).on_hover_text(format!("{label}にそろえる（{tip}）")).clicked() {
+        let tip = if count >= 2 { t!("to the box around all the selected artwork") } else { t!("to the panel it is on") };
+        for (how, label) in [(Align::Left, t!("Left")), (Align::CenterX, t!("Horizontal center")), (Align::Right, t!("Right")), (Align::Top, t!("Top")), (Align::CenterY, t!("Vertical center")), (Align::Bottom, t!("Bottom"))] {
+            if ui.small_button(label).on_hover_text(t!("Align {label} ({tip})")).clicked() {
                 self.align(how);
             }
         }
         if count >= 3 {
-            if ui.small_button("横に等間隔").clicked() {
+            if ui.small_button(t!("Distribute horizontally")).clicked() {
                 self.distribute(true);
             }
-            if ui.small_button("縦に等間隔").clicked() {
+            if ui.small_button(t!("Distribute vertically")).clicked() {
                 self.distribute(false);
             }
         }

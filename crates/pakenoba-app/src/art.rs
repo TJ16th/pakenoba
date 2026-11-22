@@ -2,6 +2,7 @@
 //!
 //! 絵柄は展開図まるごと 1 枚の画像として持つ（左上が展開図の左上）。
 
+use pakenoba_i18n::{every, t, tr};
 use craft_psd::{BlendMode, LayerSpec, PixelData, PsdBuilder, PsdFile};
 
 use pakenoba_core::template::{P2, Role, Template, inside};
@@ -228,8 +229,8 @@ pub fn compose(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decal
     out
 }
 
-/// 立体の上で置いた柄のレイヤーの名前は、この文字で始まる。
-pub const DECAL_LAYER_PREFIX: &str = "立体の柄";
+/// 立体の上で置いた柄のレイヤーの名前は、この文字（の、いまの言語の訳）で始まる。読むときは、どの言語の名前でも見分ける。
+pub const DECAL_LAYER_PREFIX: &str = "3D artwork";
 
 /// 型紙を PSD にする。レイヤーは下から「絵柄」、立体の上で置いた柄（1 つにつき 1 レイヤー）、「ガイド」。
 ///
@@ -256,20 +257,21 @@ fn back_paper(sheet: &SheetArt) -> Vec<u8> {
     sheet.art.chunks_exact(4).flat_map(|p| [BACK_PAPER[0], BACK_PAPER[1], BACK_PAPER[2], p[3]]).collect()
 }
 
-/// 裏の型紙の、いちばん下のレイヤーの名前。読み込むときに、この名前で裏の型紙だと見分ける。
-pub const BACK_PAPER_LAYER: &str = "紙の裏";
+/// 裏の型紙の、いちばん下のレイヤーの名前（の、いまの言語の訳）。読み込むときに、この名前（どの言語でも）で裏の型紙だと見分ける。
+pub const BACK_PAPER_LAYER: &str = "Back of sheet";
 
 /// パケノバが書き出した、裏の型紙の PSD か。
 pub fn psd_is_back(bytes: &[u8]) -> bool {
     PsdFile::from_bytes(bytes).is_ok_and(|file| {
         let names: Vec<String> = file.iter_layers().map(|layer| layer.name()).collect();
-        names.iter().any(|n| n == BACK_PAPER_LAYER) && names.iter().any(|n| is_generated(n))
+        names.iter().any(|n| every(BACK_PAPER_LAYER).contains(&n.as_str())) && names.iter().any(|n| is_generated(n))
     })
 }
 
 /// 型紙を PSD にする。`custom` は、読み込んである展開図の絵（あれば「絵柄」のレイヤーにする）。
 pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
-    build_psd(sheet.w, sheet.h, ("絵柄", custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線、のりしろ）"), sheet.guides.clone()))
+    let guides = t!("{guides} (cut lines, fold lines, glue flaps)", guides = tr(GUIDE_LAYER_PREFIX));
+    build_psd(sheet.w, sheet.h, (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()))
 }
 
 /// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
@@ -281,7 +283,8 @@ pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLay
     let paper: Vec<u8> = custom.map_or_else(|| back_paper(sheet), <[u8]>::to_vec);
     let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
     let decals = decals.iter().map(|layer| DecalLayer { image: flip(&layer.image), ..layer.clone() }).collect();
-    build_psd(sheet.w, sheet.h, (BACK_PAPER_LAYER, flip(&paper)), decals, (format!("{GUIDE_LAYER_PREFIX}（切り線、折り線）"), flip(&sheet.lines)))
+    let guides = t!("{guides} (cut lines, fold lines)", guides = tr(GUIDE_LAYER_PREFIX));
+    build_psd(sheet.w, sheet.h, (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)))
 }
 
 /// 画像を左右に裏返す。
@@ -320,22 +323,22 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
             continue;
         }
         let cropped: Vec<u8> = (y0..y1).flat_map(|y| image[(y * w + x0) * 4..(y * w + x1) * 4].iter().copied()).collect();
-        let mut spec = LayerSpec::new(format!("{DECAL_LAYER_PREFIX} {name}"), x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32, PixelData::Rgba8(cropped));
+        let mut spec = LayerSpec::new(format!("{} {name}", tr(DECAL_LAYER_PREFIX)), x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32, PixelData::Rgba8(cropped));
         spec.visible = visible;
         builder.push_layer(spec);
     }
     builder.push_layer(LayerSpec::new(guides.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(guides.1)));
     builder.composite(PixelData::Rgba8(composite));
-    builder.to_bytes().map_err(|e| format!("PSD を書けませんでした: {e}"))
+    builder.to_bytes().map_err(|e| t!("Could not write the PSD: {e}"))
 }
 
-/// ガイドのレイヤーの名前は、この文字で始まる。読み込むときに、この名前で見分けて除く。
-pub const GUIDE_LAYER_PREFIX: &str = "ガイド";
+/// ガイドのレイヤーの名前は、この文字（の、いまの言語の訳）で始まる。読み込むときに、どの言語の名前でも見分けて除く。
+pub const GUIDE_LAYER_PREFIX: &str = "Guides";
 
 /// このソフトが書き出したレイヤーのうち、読み込むときに除くもの（ガイドと、立体の上で置いた柄）。
 /// 柄は、このソフトの中に動かせる形で残っているので、絵として二重に読み込まない。
 fn is_generated(name: &str) -> bool {
-    name.starts_with(GUIDE_LAYER_PREFIX) || name.starts_with(DECAL_LAYER_PREFIX)
+    every(GUIDE_LAYER_PREFIX).into_iter().chain(every(DECAL_LAYER_PREFIX)).any(|prefix| name.starts_with(prefix))
 }
 
 /// 読み込んだ PSD に入っていたガイドの扱い。
@@ -412,11 +415,11 @@ fn composite_without_guides(file: &PsdFile, w: usize, h: usize) -> Option<Vec<u8
 /// ガイドのレイヤーが入っていれば、それを除いた絵にする。外部アプリでそのまま書き出すと、
 /// 統合画像にはガイドの線が焼き込まれているため。
 pub fn load_psd(bytes: &[u8]) -> Result<LoadedPsd, String> {
-    let file = PsdFile::from_bytes(bytes).map_err(|e| format!("PSD を読めませんでした: {e}"))?;
-    let image = file.composite_rgba8().map_err(|e| format!("統合画像を取り出せませんでした: {e}"))?;
+    let file = PsdFile::from_bytes(bytes).map_err(|e| t!("Could not read the PSD: {e}"))?;
+    let image = file.composite_rgba8().map_err(|e| t!("Could not extract the merged image: {e}"))?;
     let (sw, sh) = (image.width as usize, image.height as usize);
     if sw == 0 || sh == 0 || image.data.len() != sw * sh * 4 {
-        return Err(format!("統合画像の大きさが合いません（{sw}x{sh}）"));
+        return Err(t!("The merged image has the wrong size ({sw}x{sh})"));
     }
     let layer_names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
     let has_guides = layer_names.iter().any(|n| is_generated(n));
@@ -430,11 +433,11 @@ pub fn load_psd(bytes: &[u8]) -> Result<LoadedPsd, String> {
 
 /// 柄の素材にする PSD の、統合した絵（RGBA）と大きさ。
 pub fn psd_picture(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
-    let file = PsdFile::from_bytes(bytes).map_err(|e| format!("PSD を読めませんでした: {e}"))?;
-    let image = file.composite_rgba8().map_err(|e| format!("PSD の統合画像を取り出せませんでした: {e}"))?;
+    let file = PsdFile::from_bytes(bytes).map_err(|e| t!("Could not read the PSD: {e}"))?;
+    let image = file.composite_rgba8().map_err(|e| t!("Could not extract the merged image of the PSD: {e}"))?;
     let (w, h) = (image.width as usize, image.height as usize);
     if w == 0 || h == 0 || image.data.len() != w * h * 4 {
-        return Err(format!("PSD の統合画像の大きさが合いません（{w}x{h}）"));
+        return Err(t!("The merged image of the PSD has the wrong size ({w}x{h})"));
     }
     Ok((w, h, image.data))
 }
@@ -470,6 +473,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 日本語の名前で書いた型紙も_ガイドと裏を見分ける() {
+        // 言語を切り替える前（日本語で書いていたころ）の名前。
+        let (w, h) = (4, 4);
+        let art = vec![255u8; w * h * 4];
+        let bytes = build_psd(w, h, ("紙の裏", art.clone()), vec![DecalLayer::shown("1（ロゴ）", art.clone())], ("ガイド（切り線、折り線）".to_owned(), art)).unwrap();
+        let file = PsdFile::from_bytes(&bytes).unwrap();
+        let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
+        assert_eq!(names[1], "3D artwork 1（ロゴ）");
+        assert!(is_generated("ガイド（切り線、折り線）"));
+        assert!(is_generated("立体の柄 1（ロゴ）"));
+        assert!(is_generated("Guides (cut lines)"));
+        assert!(!is_generated("絵柄"));
+        assert!(psd_is_back(&bytes));
+    }
+
+    #[test]
     fn dieline_psd_round_trips() {
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let sheet = make_sheet_art(&tpl);
@@ -483,7 +502,7 @@ mod tests {
         let loaded = load_psd(&bytes).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.source_size, [sheet.w, sheet.h]);
-        assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "ガイド（切り線、折り線、のりしろ）".to_owned()]);
+        assert_eq!(loaded.layer_names, vec!["Artwork".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
         assert_eq!(fitted.len(), sheet.w * sheet.h * 4);
         // 貼る画像は、絵柄とガイドを重ねたものと同じ大きさになる。
         assert_eq!(compose(&sheet, Some(&fitted), true, |_| {}).len(), sheet.art.len());
@@ -512,14 +531,14 @@ mod tests {
         let bytes = save_psd(&sheet, None, &decals).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let hidden: Vec<String> = file.iter_layers().filter(|l| !l.record.is_visible()).map(|l| l.name()).collect();
-        assert_eq!(hidden, vec!["立体の柄 1（帯）".to_owned()]);
+        assert_eq!(hidden, vec!["3D artwork 1（帯）".to_owned()]);
         let composite = file.composite_rgba8().unwrap();
         for &i in band_pixels.iter().step_by(53) {
             assert_eq!(&composite.data[i * 4..i * 4 + 3], &sheet.art[i * 4..i * 4 + 3], "隠した柄が、統合した絵に入っている");
         }
         // ロゴのレイヤーは、描かれている範囲だけに切り詰められて、元の位置に入っている。
         let file = PsdFile::from_bytes(&bytes).unwrap();
-        let saved = file.iter_layers().find(|l| l.name() == "立体の柄 2（ロゴ）").unwrap().rgba8().unwrap();
+        let saved = file.iter_layers().find(|l| l.name() == "3D artwork 2（ロゴ）").unwrap().rgba8().unwrap();
         let (left, top, width) = (saved.left as usize, saved.top as usize, saved.width as usize);
         assert!(width < 200 && (saved.height as usize) < 200, "切り詰められていない: {width} x {}", saved.height);
         for &i in painted.iter().step_by(131) {
@@ -529,7 +548,7 @@ mod tests {
         }
         let loaded = load_psd(&bytes).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
-        assert_eq!(loaded.layer_names, vec!["絵柄".to_owned(), "立体の柄 1（帯）".to_owned(), "立体の柄 2（ロゴ）".to_owned(), "ガイド（切り線、折り線、のりしろ）".to_owned()]);
+        assert_eq!(loaded.layer_names, vec!["Artwork".to_owned(), "3D artwork 1（帯）".to_owned(), "3D artwork 2（ロゴ）".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // 柄のあった画素でも、読み込んだ絵は元の絵柄のまま（柄が絵として焼き込まれていない）。
         for &i in painted.iter().step_by(97) {
@@ -576,7 +595,7 @@ mod tests {
         let bytes = save_back_psd(&sheet, None, &[DecalLayer::shown("1（ロゴ）", mark)]).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
-        assert_eq!(names, ["紙の裏", "立体の柄 1（ロゴ）", "ガイド（切り線、折り線）"]);
+        assert_eq!(names, ["Back of sheet", "3D artwork 1（ロゴ）", "Guides (cut lines, fold lines)"]);
         // 印は、左右が入れ替わった場所にある。
         let image = file.composite_rgba8().unwrap();
         let at = |x: usize| &image.data[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4];

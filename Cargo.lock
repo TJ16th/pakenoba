@@ -2230,6 +2230,7 @@ dependencies = [
  "fontique",
  "gif",
  "pakenoba-core",
+ "pakenoba-i18n",
  "pdf-writer",
  "png",
  "rfd",
@@ -2246,11 +2247,24 @@ name = "pakenoba-core"
 version = "0.0.0"
 dependencies = [
  "bytemuck",
+ "pakenoba-i18n",
  "serde",
  "sha2",
  "toml",
  "zip",
 ]
+
+[[package]]
+name = "pakenoba-i18n"
+version = "0.0.0"
+dependencies = [
+ "pakenoba-i18n-macros",
+ "sys-locale",
+]
+
+[[package]]
+name = "pakenoba-i18n-macros"
+version = "0.0.0"
 
 [[package]]
 name = "parking_lot"

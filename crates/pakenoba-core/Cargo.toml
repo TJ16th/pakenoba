@@ -8,6 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# 画面の文字の多言語化（英語を基準に、言語ごとの訳の表から引く）。
+pakenoba-i18n = { path = "../pakenoba-i18n" }
 # 描画用の頂点を、そのまま GPU へ渡せる形にするため。
 bytemuck = { version = "1", features = ["derive"] }
 # 案件のファイル（.pknb）の読み書き。中身は ZIP で、設定のテキスト（TOML）と素材のファイルが入る。

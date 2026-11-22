@@ -3,6 +3,7 @@
 //! 使う人のデータのフォルダの `pakenoba/settings.toml` に、人が読める形で書く。
 //! 読めないとき（壊れた、新しい版で書かれた）は、空から始めて、元のファイルは上書きしない。
 
+use pakenoba_i18n::t;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,6 +41,9 @@ impl Collection {
 #[derive(Default, Serialize, Deserialize)]
 struct Stored {
     /// 最近使った案件（新しい順）。
+    /// 画面の言語（`en`、`ja` など）。書いていなければ、OS の言語に合わせる。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
     #[serde(default)]
     recent: Vec<PathBuf>,
     /// 最近取り込んだ画像（新しい順）。どの案件でも、素材の欄に出す。
@@ -65,12 +69,13 @@ pub(super) struct Settings {
     pub recent_assets: Vec<PathBuf>,
     pub editor: Option<PathBuf>,
     pub vector_editor: Option<PathBuf>,
+    pub language: Option<String>,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -78,17 +83,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor, language: stored.language },
                 Err(e) => {
-                    eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None }
+                    eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None },
             Err(e) => {
-                eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None }
+                eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None }
             }
         }
     }
@@ -96,8 +101,8 @@ impl Settings {
     /// いまの設定を書く。書けなかったら、そのわけを返す。
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone() }).map_err(|e| e.to_string())?;
-        write_text(file, &format!("# パケノバの設定。アプリが書き換えます。\n{text}")).map_err(|e| format!("設定を保存できませんでした: {e}"))
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone() }).map_err(|e| e.to_string())?;
+        write_text(file, &format!("# PAKENOBA settings. The app rewrites this file.\n{text}")).map_err(|e| t!("Could not save the settings: {e}"))
     }
 
     /// 取り込んだ画像を、最近使ったものの先頭に入れる（20 件まで）。

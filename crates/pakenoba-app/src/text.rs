@@ -4,6 +4,7 @@
 //! 案件にはフォントのファイルを入れない（フォントの使用許諾で、配れないものが多いため）。開いた PC に同じフォントがなければ、
 //! 別のフォントで描き、そう知らせる。字形の組み合わせ（カーニング、合字）はしない。1 文字ずつ、送り幅で並べる。
 
+use pakenoba_i18n::t;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -111,7 +112,7 @@ impl Fonts {
         {
             chain.push((name, face));
         }
-        let Some((first_name, first)) = chain.first().cloned() else { return Err("使えるフォントが見つかりません".to_owned()) };
+        let Some((first_name, first)) = chain.first().cloned() else { return Err(t!("No usable font was found").to_owned()) };
         let font_used = if self.face(&spec.font).is_some() { spec.font.clone() } else { first_name };
 
         let lines: Vec<&str> = spec.text.split('\n').collect();
@@ -121,7 +122,7 @@ impl Fonts {
         };
         let px_per_mm = if area(TEXT_PX_PER_MM) > MAX_PIXELS { TEXT_PX_PER_MM * (MAX_PIXELS / area(TEXT_PX_PER_MM)).sqrt() } else { TEXT_PX_PER_MM };
         let em = (spec.size * px_per_mm).max(1.0);
-        let first_font = first.font().ok_or("フォントを読めませんでした")?;
+        let first_font = first.font().ok_or(t!("Could not read the font"))?;
         let metrics = first_font.metrics(Size::new(em), LocationRef::default());
         let (ascent, descent) = (metrics.ascent.max(em * 0.5), (-metrics.descent).max(0.0));
         let step = em * spec.leading;
@@ -152,7 +153,7 @@ impl Fonts {
         let text_h = ascent + descent + step * (lines.len() as f32 - 1.0);
         let (w, h) = ((text_w + pad * 2.0).ceil() as usize, (text_h + pad * 2.0).ceil() as usize);
         if w == 0 || h == 0 || w > u16::MAX as usize || h > u16::MAX as usize {
-            return Err("文字が大きすぎます".to_owned());
+            return Err(t!("The text is too large").to_owned());
         }
 
         let mut ctx = RenderContext::new(w as u16, h as u16);

@@ -1,0 +1,47 @@
+# English (en) catalog. One row per line: context<TAB>source<TAB>translation (the same format as VectorCraft's catalogs).
+# Interface text is written in English in the code, so this table only holds the names that are not:
+# panel names (context "panel") and box shape names (context "shape"), which are Japanese because
+# they are written into project files.
+panel	のりしろ	Glue flap
+panel	上のフタ	Top lid
+panel	上のフラップ	Top flap
+panel	上の右フラップ	Top right flap
+panel	上の左フラップ	Top left flap
+panel	上の差し込み	Top tuck
+panel	右の三角	Right triangle
+panel	右の側面	Right side
+panel	右の折り込み	Right fold-in
+panel	右側面	Right side
+panel	屋根ののりしろ	Roof glue flap
+panel	左の三角	Left triangle
+panel	左の側面	Left side
+panel	左の折り込み	Left fold-in
+panel	左側面	Left side
+panel	底	Bottom
+panel	底のフタ	Bottom lid
+panel	底のフラップ	Bottom flap
+panel	底の右フラップ	Bottom right flap
+panel	底の左フラップ	Bottom left flap
+panel	底の差し込み	Bottom tuck
+panel	正面	Front
+panel	正面のフラップ	Front flap
+panel	正面の屋根	Front roof
+panel	正面の持ち手	Front handle
+panel	正面の貼りしろ	Front seal
+panel	背面	Back
+panel	背面のフラップ	Back flap
+panel	背面の屋根	Back roof
+panel	背面の持ち手	Back handle
+panel	背面の貼りしろ	Back seal
+panel	側面 1	Side 1
+panel	側面 2	Side 2
+panel	側面 3	Side 3
+panel	側面 4	Side 4
+panel	側面 5	Side 5
+panel	側面 6	Side 6
+panel	側面 7	Side 7
+panel	側面 8	Side 8
+panel	側面 9	Side 9
+panel	側面 10	Side 10
+panel	側面 11	Side 11
+panel	側面 12	Side 12

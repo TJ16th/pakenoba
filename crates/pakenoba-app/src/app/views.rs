@@ -3,6 +3,7 @@
 //! どれを出すかは、上の帯の 3 つのボタンで決める。並べ方は、出ている表示の組み合わせから決まる。
 //! どの表示でも柄を選べて、動かせる。選択は共通。
 
+use pakenoba_i18n::t;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, pos2, vec2};
 use eframe::egui_wgpu;
 
@@ -109,7 +110,7 @@ impl App {
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
             ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, rows));
             if several {
-                tag(ui, rect.min + vec2(8.0, 6.0), "立体");
+                tag(ui, rect.min + vec2(8.0, 6.0), t!("3D"));
             }
         }
         if let Some(rect) = front {
@@ -154,7 +155,7 @@ impl App {
         }
         let Some(rs) = rs else {
             painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
-            painter.text(rect.center(), Align2::CENTER_CENTER, "wgpu を使えないため、箱を表示できません。", FontId::proportional(13.0), Color32::LIGHT_RED);
+            painter.text(rect.center(), Align2::CENTER_CENTER, t!("The box cannot be shown because wgpu is not available."), FontId::proportional(13.0), Color32::LIGHT_RED);
             return None;
         };
         if self.backend.is_empty() {
@@ -494,7 +495,7 @@ impl App {
         painter.rect_filled(Rect::from_min_max(rect.min, area.min), 0.0, ruler_fill);
         painter.text(rect.min + vec2(RULER_LEFT * 0.5, RULER_TOP * 0.5), Align2::CENTER_CENTER, "mm", font, line);
 
-        tag(ui, area.min + vec2(8.0, 6.0), if back { "裏" } else { "表" });
+        tag(ui, area.min + vec2(8.0, 6.0), if back { t!("Back") } else { t!("Front") });
         // ダブルクリック: 柄の上なら、外のアプリで直す（文字なら、右の欄で打つ）。何もないところなら、表示を元に戻す。
         if reset {
             match decal_under {

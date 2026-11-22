@@ -3,6 +3,7 @@
 //! 表の絵は、「出力」で保存した型紙の PSD に描いたもの。裏の絵は、裏の型紙の PSD（裏から見た向き）に描いたもの。
 //! 読み込む、差し替える、外す、のどれも、元に戻せる。案件のファイルには、元の PSD のまま入る。
 
+use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,18 +30,18 @@ impl BaseArt {
     /// PSD を読む。`back` が真なら、裏の型紙（裏から見た向き）として読む。
     pub fn read(file: project::Asset, back: bool, sheet: [usize; 2]) -> Result<BaseArt, String> {
         let loaded = load_psd(file.bytes())?;
-        let merged = if loaded.has_real_merged == Some(false) { "\n注意: この PSD には統合画像が入っていません。" } else { "" };
+        let merged = if loaded.has_real_merged == Some(false) { t!("\nNote: this PSD has no merged image.") } else { "" };
         let ratio_src = loaded.source_size[0] as f32 / loaded.source_size[1] as f32;
         let ratio_sheet = sheet[0] as f32 / sheet[1] as f32;
-        let stretch = if (ratio_src / ratio_sheet - 1.0).abs() > 0.01 { "\n注意: 縦横比が今の展開図と違うので、引き伸ばして貼っています。" } else { "" };
+        let stretch = if (ratio_src / ratio_sheet - 1.0).abs() > 0.01 { t!("\nNote: the aspect ratio differs from the current dieline, so the picture is stretched to fit.") } else { "" };
         let guides = match loaded.guides {
             GuideHandling::NotPresent => "",
-            GuideHandling::Removed => "\nガイドのレイヤー（と、立体の上で置いた柄のレイヤー）は除いて読み込みました。",
-            GuideHandling::Baked => "\n注意: ガイドのレイヤーを除けませんでした（グループ、マスク、通常以外の合成モードがあります）。ガイドを非表示にしてから書き出してください。",
+            GuideHandling::Removed => t!("\nThe guide layers (and the layers of artwork placed in 3D) were left out."),
+            GuideHandling::Baked => t!("\nNote: the guide layers could not be left out (there are groups, masks or blend modes other than Normal). Hide the guides before exporting."),
         };
-        let side = if back { "紙の裏" } else { "紙の表" };
-        let layers = if loaded.layer_names.is_empty() { "なし".to_owned() } else { loaded.layer_names.join("、") };
-        let info = format!("{}（{side}）\n大きさ: {} x {} px\nレイヤー: {layers}{merged}{stretch}{guides}", file.name, loaded.source_size[0], loaded.source_size[1]);
+        let side = if back { t!("back of the sheet") } else { t!("front of the sheet") };
+        let layers = if loaded.layer_names.is_empty() { t!("none").to_owned() } else { loaded.layer_names.join(pakenoba_i18n::tr(", ")) };
+        let info = t!("{} ({side})\nSize: {} x {} px\nLayers: {layers}{merged}{stretch}{guides}", file.name, loaded.source_size[0], loaded.source_size[1]);
         let [w, h] = loaded.source_size;
         // 裏の型紙は裏から見た向きなので、表の向きに直す（柄と同じ座標で重ねるため）。
         let source = if back { mirror(&loaded.source, w, h) } else { loaded.source };
@@ -85,7 +86,7 @@ impl App {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.psd_info = format!("{} を読めませんでした: {e}", path.display());
+                self.psd_info = t!("Could not read {}: {e}", path.display());
                 return self.say(self.psd_info.clone());
             }
         };
@@ -95,18 +96,18 @@ impl App {
 
     /// 決めた側に、PSD を読み込む。
     pub(super) fn load_base(&mut self, path: &Path, bytes: Vec<u8>, side: usize) {
-        let name = path.file_name().map_or_else(|| "展開図の絵".to_owned(), |n| n.to_string_lossy().into_owned());
+        let name = path.file_name().map_or_else(|| t!("Dieline artwork").to_owned(), |n| n.to_string_lossy().into_owned());
         let file = project::Asset::new(name.clone(), bytes, [0.0, 0.0], file::now_local());
         match BaseArt::read(file, side == 1, [self.sheet.w, self.sheet.h]) {
             Ok(base) => {
                 let replaced = self.bases[side].is_some();
                 self.set_base(side, Some(base), true);
-                let where_ = if side == 1 { "紙の裏" } else { "紙の表" };
-                self.say(if replaced { format!("{where_}の展開図の絵を、{name} に差し替えました。Ctrl+Z で戻せます。") } else { format!("{name} を、{where_}の展開図の絵にしました。") });
+                let where_ = if side == 1 { t!("back of the sheet") } else { t!("front of the sheet") };
+                self.say(if replaced { t!("Replaced the dieline artwork on the {where_} with {name}. Press Ctrl+Z to undo.") } else { t!("Made {name} the dieline artwork on the {where_}.") });
             }
             Err(e) => {
                 self.psd_info = format!("{}\n{e}", path.display());
-                self.say(format!("{name} を読めませんでした: {e}"));
+                self.say(t!("Could not read {name}: {e}"));
             }
         }
     }
@@ -116,7 +117,7 @@ impl App {
         if let Some(answer) = self.answer_replace.take() {
             return Some(answer);
         }
-        let title = if side == 1 { "紙の裏の展開図の絵（PSD）を選ぶ" } else { "展開図の絵（PSD）を選ぶ" };
+        let title = if side == 1 { t!("Choose the dieline artwork for the back of the sheet (PSD)") } else { t!("Choose the dieline artwork (PSD)") };
         rfd::FileDialog::new().set_title(title).add_filter("PSD", &["psd", "PSD"]).pick_file()
     }
 
@@ -128,23 +129,23 @@ impl App {
         let mut remove = false;
         let info = base.info.clone();
         // 欄の幅を広げないよう、名前は切り詰めて出し、ボタンは次の行へ回せるようにする。
-        ui.add(egui::Label::new(format!("展開図の絵: {name}")).truncate()).on_hover_text(info);
+        ui.add(egui::Label::new(t!("Dieline artwork: {name}")).truncate()).on_hover_text(info);
         ui.horizontal_wrapped(|ui| {
             ui.add_space(12.0);
-            if ui.small_button("差し替える…").clicked() {
+            if ui.small_button(t!("Replace…")).clicked() {
                 replace = true;
             }
-            if ui.small_button("外す").on_hover_text("Ctrl+Z で戻せます").clicked() {
+            if ui.small_button(t!("Remove")).on_hover_text(t!("Ctrl+Z undoes this")).clicked() {
                 remove = true;
             }
         });
         if remove {
             self.set_base(side, None, true);
-            self.say(format!("展開図の絵（{name}）を外しました。Ctrl+Z で戻せます。"));
+            self.say(t!("Removed the dieline artwork ({name}). Press Ctrl+Z to undo."));
         } else if replace && let Some(path) = self.ask_base(side) {
             match std::fs::read(&path) {
                 Ok(bytes) => self.load_base(&path, bytes, side),
-                Err(e) => self.say(format!("{} を読めませんでした: {e}", path.display())),
+                Err(e) => self.say(t!("Could not read {}: {e}", path.display())),
             }
         }
     }

@@ -1,0 +1,590 @@
+# 日本語（ja）の訳の表。1 行に「文脈<TAB>英語<TAB>訳」。形は VectorCraft の訳の表と同じ。
+# 文脈が空の行は、ふつうの画面の文字。{name} や {} は値の入る場所で、英語の文と同じ名前を使う（順番は変えてよい）。
+# \t はタブ、\n は改行、\\ は \ 。
+
+# pakenoba-app/src/app.rs
+	PAKENOBA	パケノバ
+	Could not read this as an image (PNG, JPEG, PSD and SVG are supported)	画像として読めませんでした（扱えるのは PNG、JPEG、PSD、SVG です）
+	Could not read the JPEG: {e:?}	JPEG を読めませんでした: {e:?}
+	The JPEG has no size	JPEG の大きさが分かりません
+	The JPEG size does not match its data	JPEG の大きさが合いません
+	Could not read the PNG: {e}	PNG を読めませんでした: {e}
+	The image is too large	画像が大きすぎます
+	This kind of PNG is not supported ({other:?})	この形式の PNG は扱えません（{other:?}）
+	The PNG size does not match its data	PNG の大きさが合いません
+	Tuck-end box	差し込み箱
+	Gable box	ゲーブル型
+	Pillow box	ピロー型
+	Triangular prism	三角柱
+	Pentagonal prism	五角柱
+	Hexagonal prism	六角柱
+	Octagonal prism	八角柱
+	Select (V)	選択 (V)
+	Text (T)	文字 (T)
+	Shape (U)	図形 (U)
+	Generative AI (coming later)	生成AI（これから作ります）
+	Hand (H)	手のひら (H)
+	Changing the box type removed {removed} placed artwork(s). Press Ctrl+Z to get the previous box type and artwork back.	型を変えたので、置いた柄 {removed} つを外しました。Ctrl+Z で、前の型と柄に戻せます。
+	Locked artwork cannot be deleted. Unlock it in the Layers panel.	ロックしている柄は消せません。レイヤーの欄で、鍵を外してください。
+	Deleted the artwork	柄を消しました
+	Deleted {} pieces of artwork	柄を {} 個消しました
+	 ({kept} locked piece(s) kept)	（ロックしている {kept} 個は残しました）
+	{what}{locked}. Press Ctrl+Z to undo.	{what}{locked}。Ctrl+Z で戻せます。
+	{} is already in the assets panel. Placed it as artwork.	{} は、すでに素材の欄にあります。柄として置きました。
+	Placed {} as artwork. It is also in the assets panel.	{} を柄として置きました。素材の欄にも入れてあります。
+	Could not open {}: {e}	{} を開けませんでした: {e}
+	Image	画像
+	{name} is already in this project's assets.	{name} は、すでにこの案件の素材にあります。
+	{} ({name})	{}（{name}）
+	{} ({})	{}（{}）
+	Structure	型
+	{name}  side {:.0} × height {:.0} mm	{name}　一辺 {:.0} × 高さ {:.0} mm
+	Imported {} into this project's assets.	{} を、この案件の素材に取り込みました。
+# pakenoba-app/src/app/adjust.rs
+	Clear background	背景を透明に
+	Even out shading	陰影をならす
+	Reduce colors	色数を絞る
+	Margins trimmed	余白を切る
+	No background that could be made transparent was found along the edges.	縁に、透明にできる背景が見つかりませんでした。
+	Everything is transparent, so there is nothing to trim.	すべて透明なので、切り落とせません。
+	There are no transparent margins to trim.	切り落とせる透明な余白がありません。
+	Could not make the adjusted picture: {e}	調整した絵を作れませんでした: {e}
+	{stem} ({}).png	{stem}（{}）.png
+	Applied "{}". It is a new asset, "{name}", and the original asset is unchanged. Press Ctrl+Z to undo.	「{}」をしました。新しい素材「{name}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
+	Image adjustments	画像の調整
+	Make background transparent	背景を透明にする
+	Makes colors similar to the edges, and connected to them, transparent	縁につながっている、縁と同じような色を透明にします
+	How close a color must be to count as the background. Larger values make more of the picture transparent	同じ色とみなす幅。大きいほど、多く透明になります
+	Lightens uneven lighting and shadows in photographs	撮った写真の、照明のむらや影を薄くします
+	Merges similar colors down to this many colors	似た色をまとめて、この数の色にします
+	 colors	 色
+	Trim margins	余白を切り落とす
+	Cuts away the transparent area around the picture. It stays where it appears now	まわりの透明な部分を切り落とします。見える位置は変わりません
+	The original asset is unchanged; only this artwork is switched to a new, adjusted asset.	元の素材は変えず、この柄だけを、調整した新しい素材に差し替えます。
+# pakenoba-app/src/app/assets.rs
+	Logo (sample)	ロゴ（見本）
+	Wrap-around band (sample)	一周する帯（見本）
+	Assets	素材
+	Open large	大きく開く
+	Find and import from your registered folders on the Assets screen	「素材」の画面で、登録したフォルダから探して取り込みます
+	Move the assets panel to the left of the toolbar	素材の欄を、道具の帯の左へ移す
+	Move the assets panel to the right of the toolbar	素材の欄を、道具の帯の右へ移す
+	Position	位置
+	Thumbnail size	絵の大きさ
+	Built-in samples	付属の見本
+	This project's assets	この案件の素材
+	Drop images (PNG, JPEG, PSD, SVG) on the window to add them here.	画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップすると、ここに入ります。
+	Find other assets…	ほかの素材を探す…
+	Find and import from your registered folders (collections) on the Assets screen	「素材」の画面で、登録したフォルダ（コレクション）から探して取り込みます
+	Built-in samples cannot be replaced	付属の見本は、差し替えられません
+	Replace asset…	素材を差し替える…
+	Every piece of artwork that uses this asset gets the new picture	この素材を使っている柄が、すべて新しい絵になります
+	Vector (SVG)	ベクター（SVG）
+	Image: {w} × {h} px	画像: {w} × {h} px
+	Placed size: {:.0} × {:.0} mm	置く大きさ: {:.0} × {:.0} mm
+	Imported: {when}	取り込んだ日時: {when}
+	Used in {uses} place(s) on the box	箱で {uses} か所に使っています
+	Not placed on the box yet	まだ箱に置いていません
+	Place on the front	正面に置く
+	Drag onto the box or the dieline to place it where you drop it	箱や展開図へドラッグすると、落とした場所に置けます
+	Replace…	差し替える…
+	Every piece of artwork that uses this asset gets the new picture (also on right-click)	この素材を使っている柄が、すべて新しい絵になります（右クリックでも）
+	Replace asset… ({uses} place(s))	素材を差し替える…（{uses} か所）
+	Replace this artwork only…	この柄だけ差し替える…
+	Replace this artwork with an image…	この柄を画像に差し替える…
+	Delete	消す
+	Choose the replacement image	差し替える画像を選ぶ
+	Images (PNG, JPEG, PSD, SVG)	画像（PNG、JPEG、PSD、SVG）
+	Nothing was replaced. Could not open {}: {e}	差し替えませんでした。{} を開けませんでした: {e}
+	Nothing was replaced. {e}	差し替えませんでした。{e}
+	Replaced asset "{old_name}" with "{name}" ({count} piece(s) of artwork). Press Ctrl+Z to undo.	素材「{old_name}」を「{name}」に差し替えました（{count} か所の柄）。Ctrl+Z で戻せます。
+	Replaced artwork {} with "{name}". Press Ctrl+Z to undo.	柄 {} を「{name}」に差し替えました。Ctrl+Z で戻せます。
+# pakenoba-app/src/app/base.rs
+	\nNote: this PSD has no merged image.	\n注意: この PSD には統合画像が入っていません。
+	\nNote: the aspect ratio differs from the current dieline, so the picture is stretched to fit.	\n注意: 縦横比が今の展開図と違うので、引き伸ばして貼っています。
+	\nThe guide layers (and the layers of artwork placed in 3D) were left out.	\nガイドのレイヤー（と、立体の上で置いた柄のレイヤー）は除いて読み込みました。
+	\nNote: the guide layers could not be left out (there are groups, masks or blend modes other than Normal). Hide the guides before exporting.	\n注意: ガイドのレイヤーを除けませんでした（グループ、マスク、通常以外の合成モードがあります）。ガイドを非表示にしてから書き出してください。
+	back of the sheet	紙の裏
+	front of the sheet	紙の表
+	none	なし
+	{} ({side})\nSize: {} x {} px\nLayers: {layers}{merged}{stretch}{guides}	{}（{side}）\n大きさ: {} x {} px\nレイヤー: {layers}{merged}{stretch}{guides}
+	Could not read {}: {e}	{} を読めませんでした: {e}
+	Dieline artwork	展開図の絵
+	Replaced the dieline artwork on the {where_} with {name}. Press Ctrl+Z to undo.	{where_}の展開図の絵を、{name} に差し替えました。Ctrl+Z で戻せます。
+	Made {name} the dieline artwork on the {where_}.	{name} を、{where_}の展開図の絵にしました。
+	Could not read {name}: {e}	{name} を読めませんでした: {e}
+	Choose the dieline artwork for the back of the sheet (PSD)	紙の裏の展開図の絵（PSD）を選ぶ
+	Choose the dieline artwork (PSD)	展開図の絵（PSD）を選ぶ
+	Dieline artwork: {name}	展開図の絵: {name}
+	Remove	外す
+	Ctrl+Z undoes this	Ctrl+Z で戻せます
+	Removed the dieline artwork ({name}). Press Ctrl+Z to undo.	展開図の絵（{name}）を外しました。Ctrl+Z で戻せます。
+# pakenoba-app/src/app/edit.rs
+	Change a shape's form and colors in the right panel, or in the options bar with the Shape tool.	図形は、右の欄か、上の帯（図形の道具）で、形と色を変えます。
+	Built-in samples cannot be edited in another app. Use "Replace this artwork only" to switch to another image.	付属の見本は、外のアプリでは直せません。「この柄だけ差し替える」で、別の画像にできます。
+	The asset for this artwork was not found.	この柄の素材が見つかりません。
+	This asset cannot be edited in another app.	この素材は、外のアプリでは直せません。
+	Could not open it in the other app: {e}	外のアプリで開けませんでした: {e}
+	Could not write the working file: {e}	作業用のファイルを書けませんでした: {e}
+	Opened "{}" in another app. Saving there updates the box.	「{}」を外のアプリで開きました。保存すると、箱に反映します。
+	Updated the box with "{name}" as edited in the other app. Press Ctrl+Z to undo.	外のアプリで直した「{name}」を、箱に反映しました。Ctrl+Z で戻せます。
+	Open in the other app again	外のアプリでもう一度開く
+	Edit in another app	外のアプリで編集
+	Ctrl+E. You can also double-click the artwork. Saving there updates the box	Ctrl+E。柄をダブルクリックしても開けます。保存すると、箱に反映します
+	Stop editing	編集をやめる
+	Deletes the working file. The picture on the box stays as it is	作業用のファイルを消します。箱の絵は、いまのまま
+	VectorCraft, Illustrator, Affinity and others	VectorCraft、Illustrator、Affinity など
+	Choose the app for editing vectors (SVG)	ベクター（SVG）を直すアプリを選ぶ
+	PhotoCraft, Photoshop, Affinity and others	PhotoCraft、Photoshop、Affinity など
+	Choose the app for editing images	画像を直すアプリを選ぶ
+	the system default app	OS で決まっているアプリ
+	Opens with: {app}	開くアプリ: {app}
+	Choose…	選ぶ…
+	Reset	元に戻す
+	Open with the system default app	OS で決まっているアプリで開く
+# pakenoba-app/src/app/export.rs
+	Dieline	型紙
+	{stem}_back.psd	{stem}_裏.psd
+	Save the dieline as PSD	型紙を PSD で保存
+	Photoshop (PSD)	Photoshop（PSD）
+	{project}_dieline.psd	{project}_型紙.psd
+	Could not save: {e}	保存できませんでした: {e}
+	Saved: {}	保存しました: {}
+	Saved both the front and the back: {}, {}	表と裏の 2 つを保存しました: {}、{}
+	Saved the front, but could not save the back: {e}	表は保存しましたが、裏を保存できませんでした: {e}
+# pakenoba-app/src/app/file.rs
+	Untitled	名前なし
+	The picture for artwork {} is not in the asset list	柄 {} の絵が、素材の一覧にありません
+	Asset "{}" cannot be shown as a picture ({why}). It is kept in the project.	素材「{}」は、絵として表示できません（{why}）。案件の中には残してあります。
+	Artwork {} uses a sample this version of PAKENOBA does not have ({name}), so it was removed	柄 {} は、このパケノバにない見本（{name}）を使っているので、外しました
+	The font "{}" of artwork {} (text) is not on this PC, so it was drawn with {}	柄 {}（文字）のフォント「{}」がこの PC にないので、{} で描きました
+	Artwork {} (text) could not be drawn, so it was removed ({e})	柄 {}（文字）を描けなかったので、外しました（{e}）
+	The dieline artwork "{name}" for the {} could not be read, so it was removed	{}の展開図の絵「{name}」を読めなかったので、外しました
+	Could not open the project	案件を開けませんでした
+	Opened {name}	{name} を開きました
+	{} (reopened)	{}（開き直し）
+	Part of {name} could not be read. Only the parts that could be read are open.	{name} の一部を読めませんでした。読めた部分だけを開いています。
+	• {p}	・{p}
+	The original file is unchanged. To keep this state, use Save As.	元のファイルは、そのまま残っています。この状態を残すには、名前を付けて保存してください。
+	Opened with some parts removed	一部を外して開きました
+	Could not open the backup	控えを開けませんでした
+	The backup has been kept as it is.	控えは、そのまま残してあります。
+	Opened {name} from a backup. Saving updates the original project file.	{name} を、控えから開きました。保存すると、元の案件のファイルが新しくなります。
+	Opened {name} from a backup. Please use Save As.	{name} を、控えから開きました。名前を付けて保存してください。
+	Opened from a backup	控えから開きました
+	Open project	案件を開く
+	PAKENOBA project	パケノバの案件
+	Save As	名前を付けて保存
+	Not saved	保存しませんでした
+	{} already exists.	{} は、すでにあります。
+	Choose another name, or include the extension (.pknb), and save again.	別の名前を付けるか、拡張子（.pknb）まで入れて、もう一度保存してください。
+	Saving. Open the project when it has finished.	保存しています。終わってから、開いてください。
+	Could not save	保存できませんでした
+	Saving {}…	{} を保存しています…
+	Saving. Start a new project when it has finished.	保存しています。終わってから、新しい案件を始めてください。
+	Started a new project	新しい案件を始めました
+	Saving stopped partway	保存の途中で止まりました
+	Saved {}	{} を保存しました
+	The previously saved file is unchanged.	前に保存したファイルは、そのまま残っています。
+	{}{} - PAKENOBA	{}{} - パケノバ
+	File	ファイル
+	New project	新しい案件
+	Open…	開く…
+	Recent projects	最近使った案件
+	None yet	まだありません
+	{} (not found)	{}（見つかりません）
+	Clear list	一覧を消す
+	The files are not deleted	ファイルは消えません
+	Save	保存する
+	Save As…	名前を付けて保存…
+	No changes (already saved)	変更はありません（保存してあります）
+	Close	閉じる
+	"{name}" has unsaved changes	「{name}」に、保存していない変更があります
+	If you close without saving, the changes will be lost.	保存しないで閉じると、変更は失われます。
+	If you open another project without saving, the changes will be lost.	保存しないで別の案件を開くと、変更は失われます。
+	If you start a new project without saving, the changes will be lost.	保存しないで新しい案件を始めると、変更は失われます。
+	Don't save	保存しない
+	Cancel	キャンセル
+# pakenoba-app/src/app/icons.rs
+	Open or close the assets panel	素材の欄を開く、閉じる
+	Hide (not drawn on the box or the dieline)	隠す（箱にも、型紙にも描かない）
+	Show	見せる
+	Unlock	ロックを外す
+	Lock (cannot be grabbed on the box or the dieline)	ロックする（箱や展開図の上で、つかめなくする）
+# pakenoba-app/src/app/library.rs
+	Could not open: {e}	開けませんでした: {e}
+	Not an image	画像ではありません
+	Register an asset folder	素材のフォルダを登録する
+	{} is already registered.	{} は、すでに登録してあります。
+	Registered {} as an asset folder.	{} を、素材のフォルダとして登録しました。
+	Unregistered {} (the folder's contents are unchanged).	{} の登録を外しました（フォルダの中身は、そのままです）。
+	This project's assets ({mine})	この案件の素材（{mine}）
+	Collections	コレクション
+	+ Register…	＋ 登録…
+	Register a folder that holds assets. It can be used from any project	素材を入れているフォルダを登録します。どの案件からも使えます
+	Register folders that hold assets and they are listed here. Their contents are never moved.	素材を入れているフォルダを登録すると、ここに並びます。フォルダの中身は動かしません。
+	{} ({}{})	{}（{}{}）
+	Rescan	読み直す
+	Lists images added to or changed in the folder again	フォルダに足した画像や、書き換えた画像を、一覧に出し直します
+	Unregister	登録を外す
+	The folder's contents are unchanged	フォルダの中身は、そのままです
+	Design	デザイン
+	Output	出力
+	Back to {back}	{back}に戻る
+	Search by name	名前で探す
+	Clear the search	探す言葉を消す
+	By name	名前順
+	Newest first	新しい順
+	Folder not found: {}	フォルダが見つかりません: {}
+	For an external drive or a network folder, connect it and press "Rescan".	外付けのドライブやネットワークのフォルダなら、つないでから「読み直す」を押してください。
+	There are many images, so only the first {SCAN_LIMIT} are shown. Register a smaller folder to see them all.	画像が多いので、はじめの {SCAN_LIMIT} 個だけ出しています。もっと小さなフォルダを登録すると、すべて出せます。
+	This project has no assets yet.	この案件には、まだ素材がありません。
+	Drop images (PNG, JPEG, PSD, SVG) on the window, or import them from a folder registered under "Collections" on the left.	画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。
+	There are no images (PNG, JPEG, PSD, SVG).	画像（PNG、JPEG、PSD、SVG）がありません。
+	No assets match the search.	探す言葉に合う素材がありません。
+	Unreadable	読めません
+	{name}\nAlready imported into this project	{name}\nこの案件に取り込み済み
+	{name}\nDouble-click to import into this project	{name}\nダブルクリックで、この案件に取り込みます
+	Import into this project	この案件に取り込む
+	Imported {} into this project's assets. In the Design step, drag it from the assets panel onto the box.	{} を、この案件の素材に取り込みました。デザインの工程で、素材の欄から箱へドラッグして置けます。
+	Select an asset to see it large here.	素材を選ぶと、ここに大きく出ます。
+	Resolution: {w} × {h} px	解像度: {w} × {h} px
+	A built-in sample. In the Design step, drag it from the assets panel onto the box.	付属の見本です。デザインの工程で、素材の欄から箱へドラッグして置けます。
+	Folder: {}	フォルダ: {}
+	Modified: {when}	更新日時: {when}
+	File size: {}	ファイルの大きさ: {}
+	This image cannot be read: {e}	この画像は読めません: {e}
+	File location	ファイルの場所
+	Already imported into this project (used in {uses} place(s) on the box)	この案件に取り込み済み（箱で {uses} か所に使っています）
+	Already imported into this project (not placed on the box yet)	この案件に取り込み済み（まだ箱に置いていません）
+	Show in this project's assets	この案件の素材で見る
+	Copies the image into the project. Moving or deleting the original file does not affect the project	画像の中身を案件に写します。元のファイルを動かしたり消したりしても、案件は困りません
+	Recently used	最近使ったもの
+	{name}\nClick or drag to import into this project\n{}	{name}\nクリックかドラッグで、この案件に取り込みます\n{}
+# pakenoba-app/src/app/outputs.rs
+	Dieline (PSD)	型紙（PSD）
+	16:9 image (for slides)	16:9 の画像（スライド用）
+	Box-opening video	箱開け動画
+	Store shelf picture	店の棚に並べた絵
+	Full-size dieline (printed on A4 or A3 sheets)	実寸の型紙（A4 や A3 に分けて印刷）
+	3840 x 2160 (4K)	3840 x 2160（4K）
+	Light gray	明るい灰色
+	White	白
+	Transparent	透明
+	This PC cannot draw the box, so the image cannot be exported.	この PC では箱を描けないので、画像を書き出せません。
+	Save the 16:9 image	16:9 の画像を保存
+	Saved {} ({} x {} px)	{} を保存しました（{} x {} px）
+	Could not save the image: {e}	画像を保存できませんでした: {e}
+	This PC cannot draw the box, so the video cannot be exported.	この PC では箱を描けないので、動画を書き出せません。
+	This box type has no opening motion.	この型には、開け閉めの動きがありません。
+	Save the box-opening video	箱開け動画を保存
+	GIF animation	GIF アニメーション
+	box-opening	箱開け
+	Exporting the video…	動画を書き出しています…
+	Could not export the video: {e}	動画を書き出せませんでした: {e}
+	Exporting the video… frame {} of {}	動画を書き出しています… {} / {} コマ
+	Exporting stopped partway	書き出しの途中で止まりました
+	Saved {} ({} frames)	{} を保存しました（{} コマ）
+	Could not save the video: {e}	動画を保存できませんでした: {e}
+	Save the full-size dieline	実寸の型紙を保存
+	full-size dieline	実寸の型紙
+	Saved {} ({} {pages} sheet(s)). Print at "Actual size" (100%).	{} を保存しました（{} {pages} 枚）。印刷するときは「実際のサイズ」（100%）で刷ってください。
+	Could not save the full-size dieline: {e}	実寸の型紙を保存できませんでした: {e}
+	Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers.	切り線、折り線、のりしろと、置いた柄を、レイヤーに分けた PSD で保存します。
+	Save the dieline as PSD…	型紙を PSD で保存…
+	There is artwork on the back of the sheet too, so the back dieline is saved in the same place with "_back" added to the name. The back dieline is seen from the back (flipped left to right).	紙の裏にも柄があるので、裏の型紙も、同じ場所に「_裏」を付けた名前で保存します。裏の型紙は、裏から見た向き（左右を裏返した向き）です。
+	Saves the box as you see it now as a 16:9 image (PNG). Set the angle and size by dragging and scrolling on the box in the middle.	いま見えている向きの箱を、16:9 の画像（PNG）で保存します。向きと大きさは、中央の箱をドラッグとホイールで合わせます。
+	Size	大きさ
+	Background	背景
+	Save image…	画像を保存…
+	The frame in the middle shows what goes into the image.	中央の枠の中が、画像に入る範囲です。
+	Saves the closed box opening as a GIF animation you can put on a slide. It starts from the current angle. The size is set so the fully open box fits.	閉じた箱が開く動きを、GIF アニメーションで保存します。スライドに貼れます。向きは、いま見えている向きから始めます。大きさは、開けきった箱が収まるように合わせます。
+	Length	長さ
+	 s	 秒
+	Turn slightly while opening	開けながら、少し回り込む
+	Save video…	動画を保存…
+	Saving as MP4 is not available yet.	MP4 での保存は、まだありません。
+	Makes a full-size PDF of the dieline split across sheets of paper. Join them along the overlaps, stick them on card stock and assemble.	展開図を実寸で、紙に分けた PDF にします。重ねしろで貼り合わせて、厚紙に貼って組めます。
+	Paper	用紙
+	Overlap	重ねしろ
+	Paper margin	紙の端の余白
+	{} {} sheets of {} ({} across x {} down; sheets the dieline does not touch are skipped)	{} を{}で {} 枚（横 {} x 縦 {} に分け、展開図がかからない紙は刷らない）
+	landscape	横向き
+	portrait	縦向き
+	Save the full-size dieline as PDF…	実寸の型紙を PDF で保存…
+	When printing, do not scale; print at "Actual size" (100%). Measure the 100 mm scale on the first sheet with a ruler to check.	印刷するときは、拡大・縮小をせず「実際のサイズ」（100%）で刷ってください。1 枚目の 100 mm の目盛りを定規で測ると、確かめられます。
+	This output is for checking the design. It is not production data and does not guarantee die-cutting, trimming or print positions.	この出力はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。
+# pakenoba-app/src/app/panels.rs
+	Saving…	保存しています…
+	There are unsaved changes (Ctrl+S to save)	保存していない変更があります（Ctrl+S で保存）
+	  Assets  	  素材  
+	The screen for finding assets and importing them into this project (press again to go back)	素材を探して、この案件に取り込む画面（もう一度押すと戻ります）
+	Redo	やり直す
+	{} pieces of artwork	{} 個の柄
+	Align	そろえる
+	Arrange	重なり順
+	Bring forward	前面へ
+	Send backward	背面へ
+	Rotate 90°	90 度回す
+	Locked	ロックしています
+	To the panel	パネルに
+	Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline	柄をクリックして選びます。Shift を押しながらで、いくつも選べます（Ctrl+A ですべて）。素材は、左の素材の欄から、箱や展開図へドラッグして置きます
+	Drag to turn the box or move the dieline	ドラッグで、箱を回す、展開図をずらす
+	Back	裏
+	Front	表
+	3D	立体
+	Show or hide the {label} view. Press {key}, or click with Alt held, to show only this view	{label}の表示を出す、隠す。{key} のキーか、Alt を押しながら押すと、この表示だけにする
+	The last view cannot be hidden.	最後の 1 つの表示は隠せません。
+	View	表示
+	Go back to the Structure step to change the box type and dimensions	型の工程へ戻って、形と寸法を変える
+	Properties	プロパティ
+	Select artwork to see its settings here.	柄を選ぶと、ここに設定が出ます。
+	{others} more selected. They move together.	ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。
+	Locked. To move it, unlock it in the Layers panel.	ロックしています。動かすには、レイヤーの欄で鍵を外してください。
+	Type	種類
+	Side of sheet	紙の面
+	 Front 	 表 
+	Place on the front of the sheet (outside of the box)	紙の表（箱の外側）に置く
+	 Back 	 裏 
+	Place on the back of the sheet (inside of the box), such as under the lid	紙の裏（箱の内側）に置く。フタの裏など
+	Position X	位置 X
+	Position Y	位置 Y
+	Width	幅
+	Height	高さ
+	Rotation	回転
+	°	度
+	Moved to the back of the sheet. You can see it in the "Back" view or inside the opened box.	紙の裏へ移しました。「裏」の表示か、箱を開けた内側で見られます。
+	Moved to the front of the sheet.	紙の表へ移しました。
+	On panels: {}	かかっている面: {}
+	Crosses {seams} seam(s).	合わせ目を {seams} 回またいでいます。
+	Delete this artwork	この柄を消す
+	Locked artwork cannot be deleted	ロックしている柄は消せません
+	Layers	レイヤー
+	Guides (cut lines, fold lines, glue flaps)	ガイド（切り線、折り線、のりしろ）
+	Back (inside of the box)	裏（箱の内側）
+	Front (outside of the box)	表（箱の外側）
+	　No artwork	　柄はありません
+	 (being edited elsewhere)	（外で編集中）
+	Double-click to rename. Drag to change the stacking order	ダブルクリックで名前を変える。ドラッグで重なり順を変える
+	Rename	名前を変える
+	Load dieline artwork	展開図の絵を読み込む
+	Draw on a dieline PSD saved from "Output" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with "_back") is laid on the back of the sheet.	「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。裏の型紙（名前に「_裏」が付くもの）に描いた絵は、紙の裏に敷きます。
+	Load	読み込む
+	PSD path	PSD のパス
+	Dimensions (inside)	寸法（内寸）
+	Side	一辺
+	Horizontal length	横の長さ
+	Depth	奥行き
+	Body height	胴の高さ
+	Face height	面の高さ
+	Roof height	屋根の高さ
+	Bulge	ふくらみ
+	Paper thickness	紙の厚み
+	The depth is limited to the width (the side triangles would collide in the middle).	奥行きは幅までに抑えています（側面の三角形が中央でぶつかるため）。
+	Thickest point: about {:.0} mm	いちばん厚いところ: 約 {:.0} mm
+	Outside: {:.1} × {:.1} × {:.1} mm	外寸: {:.1} × {:.1} × {:.1} mm
+	Dieline: {:.0} × {:.0} mm	展開図: {:.0} × {:.0} mm
+	Dieline check	型紙の検査
+	No problems were found.	問題は見つかりませんでした。
+	Problem: {text}	問題: {text}
+	Note: {text}	注意: {text}
+	Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline.	閉じていない辺、開け口と留め、のりしろの貼る相手、展開図の重なりを見ています。
+	Coming later	これから作ります
+	another box type	別の型
+	Change the box type to "{name}"?	型を「{name}」に変えますか
+	Changing the box type changes the panels, so {count} placed piece(s) of artwork will come off the box.	型を変えると、面の並びが変わるので、置いた柄 {count} つが箱から外れます。
+	Even after changing, Ctrl+Z gets the previous box type and artwork back.	変えたあとでも、Ctrl+Z で、前の型と柄に戻せます。
+	Change box type	型を変える
+	Open / close	開け閉め
+	Base	底
+	Left end	左の口
+	Right end	右の口
+	Open up	開ける
+	This box type does not have an opening motion yet	この型には、開け閉めの動きがまだ入っていません
+	Assembly	組み立て
+	Flat	展開図
+	Box	箱
+	Under the cursor: {}	カーソルの下: {}
+	{} panels  {} seams  {} triangles  renderer: {}	パネル {} 枚　合わせ目 {} か所　三角形 {} 個　描画: {}
+# pakenoba-app/src/app/recovery.rs
+	A project was left unsaved last time	前回、保存しないまま終わった案件があります
+	These are backups PAKENOBA kept when it stopped partway. You can open and save them again.	パケノバが途中で終わったときに残した控えです。開いて、保存し直せます。
+	Backup time: {t}	控えの日時: {t}
+	a project that has never been saved	まだ保存したことのない案件
+	Open	開く
+	Discard	捨てる
+	Deletes the backup. This cannot be undone	控えを消します。元に戻せません
+	Decide later	あとで決める
+	Keeps the backup and asks again at the next start	控えは残しておき、次に起動したときにまた聞きます
+# pakenoba-app/src/app/select.rs
+	to the box around all the selected artwork	選んだ柄全体の四角にそろえる
+	to the panel it is on	置いているパネルにそろえる
+	Left	左
+	Horizontal center	左右中央
+	Right	右
+	Top	上
+	Vertical center	上下中央
+	Bottom	下
+	Align {label} ({tip})	{label}にそろえる（{tip}）
+	Distribute horizontally	横に等間隔
+	Distribute vertically	縦に等間隔
+# pakenoba-app/src/app/settings.rs
+	Could not save the settings: {e}	設定を保存できませんでした: {e}
+# pakenoba-app/src/app/shapes.rs
+	Rectangle	四角
+	Ellipse	丸
+	Fill	塗り
+	Fill color (uncheck for no fill)	塗りの色（外すと塗らない）
+	Stroke	線
+	Stroke color (uncheck for no stroke)	線の色（外すと線を引かない）
+	Stroke width (inward from the edge)	線の太さ（縁から内側へ）
+	Corner radius	角の丸み
+	Rounding of the rectangle's corners (radius)	四角の角の丸み（半径）
+	Placed a shape. Change its form, colors and size in the right panel.	図形を置きました。右の欄で、形、色、大きさを変えられます。
+	Form	形
+	The selected shape	選んでいる図形
+	Click the box or the dieline to place a shape there	箱か展開図を押すと、そこに図形を置きます
+# pakenoba-app/src/app/typing.rs
+	Your text	テキスト
+	(font)	（フォント）
+	Fonts used in this project	この案件で使っているフォント
+	Text size (height of one full-width character)	文字の大きさ（全角 1 文字の高さ）
+	Color	色
+	Text color	文字の色
+	Alignment	揃え
+	Center	中央
+	Align {label}	{label}揃え
+	Tracking	字間
+	In 1/1000 of a full-width character. 0 is normal	全角の 1/1000 単位。0 がふつう
+	Leading	行送り
+	 ×	 倍
+	How far to move to the next line, as a multiple of the text size	文字の大きさの何倍で、次の行へ送るか
+	Could not place the text: {e}	文字を置けませんでした: {e}
+	Placed text. Type it in the right panel.	文字を置きました。右の欄で文字を打ちます。
+	Could not draw the text: {e}	文字を描けませんでした: {e}
+	Type text (Enter for a new line)	文字を打つ（改行で次の行）
+	Font	フォント
+	"{}" is not on this PC, so it is drawn with {}.	「{}」がこの PC にないので、{} で描いています。
+	Format of the selected text	選んでいる文字の書式
+	Click the box or the dieline to place text there	箱か展開図を押すと、そこに文字を置きます
+# pakenoba-app/src/app/vectorize.rs
+	Other artwork is being vectorized. Press again when it has finished.	ほかの柄をベクター化しています。終わってから、もう一度押してください。
+	{stem} (vector).svg	{stem}（ベクター）.svg
+	Could not start vectorizing: {e}	ベクター化を始められませんでした: {e}
+	Vectorizing… (VectorCraft Image Trace)	ベクター化しています…（VectorCraft の画像トレース）
+	Vectorizing stopped partway.	ベクター化が途中で止まりました。
+	The artwork changed while it was being vectorized, so the result was not used.	ベクター化している間に柄が変わったので、結果は使いませんでした。
+	Vectorized ({} shapes). It is a new asset, "{}", and the original asset is unchanged. Press Ctrl+Z to undo.	ベクター化しました（形 {} 個）。新しい素材「{}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
+	Vectorize	ベクター化
+	Turns it into line art (SVG) with VectorCraft Image Trace. It stays sharp when enlarged and can be edited in VectorCraft	VectorCraft の画像トレースで、線の絵（SVG）にします。拡大してもぼやけず、VectorCraft で直せます
+	Tracing…	トレースしています…
+	Preset	プリセット
+	Leave out the background	背景を形にしない
+	Does not make shapes from the area connected to the edges in the most common edge color	縁につながっている、縁で一番多い色の部分を、形にしません
+# pakenoba-app/src/app/views.rs
+	The box cannot be shown because wgpu is not available.	wgpu を使えないため、箱を表示できません。
+# pakenoba-app/src/gpu.rs
+	This PC cannot draw a {} x {} px image (up to {max} px)	この PC では、{} x {} px の画像を描けません（{max} px まで）
+	Could not wait for drawing to finish: {e}	描き終わるのを待てませんでした: {e}
+	Could not read the picture back	読み戻せませんでした
+	Could not read the picture back: {e}	読み戻せませんでした: {e}
+	Could not read the picture back: {e:?}	読み戻せませんでした: {e:?}
+# pakenoba-app/src/paint.rs
+	Logo	ロゴ
+	Band	帯
+	Vector	ベクター
+	Text	文字
+	Shape	図形
+# pakenoba-app/src/text.rs
+	No usable font was found	使えるフォントが見つかりません
+	Could not read the font	フォントを読めませんでした
+	The text is too large	文字が大きすぎます
+# pakenoba-app/src/vector.rs
+	Reading the SVG stopped partway	SVG を読む途中で止まりました
+	Could not read the SVG: {e}	SVG を読めませんでした: {e}
+	The SVG has no size	SVG の大きさが分かりません
+	Could not draw the SVG: {}	SVG を描けませんでした: {}
+	Auto Color	自動カラー
+	Flat Logo	フラットロゴ
+	3 Colors	3 色
+	6 Colors	6 色
+	16 Colors	16 色
+	Black and White Logo	白黒ロゴ
+	Line Art	線画
+	Sketched Art	スケッチ
+	Silhouettes	シルエット
+	Technical Drawing	図面
+	Outline (strokes only)	アウトライン（線だけ）
+	Shades of Gray	グレーの濃淡
+	Photo (low fidelity)	写真（粗く）
+	Photo (high fidelity)	写真（細かく）
+	Default (black and white)	デフォルト（白黒）
+	The trace preset was not found	トレースの設定が見つかりません
+	Could not trace: {e}	トレースできませんでした: {e}
+	The image is too large to trace.	画像が大きすぎて、トレースできません。
+	This is not a flat-color logo, so Flat Logo cannot be used. Choose Auto Color or a photo preset.	平らな色のロゴではないので、フラットロゴにできません。自動カラーか写真を選んでください。
+	Could not trace: {other}	トレースできませんでした: {other}
+	Tracing made no shapes. Try another preset or change the background setting.	トレースしても、形が 1 つもできませんでした。プリセットか、背景の設定を変えてみてください。
+# pakenoba-core/src/check.rs
+	The edge between "{}" and "{}" is open for about {length:.0} mm. It needs a glue flap or a tuck.	「{}」と「{}」の間が、約 {length:.0} mm 閉じていません。のりしろか差し込みが要ります。
+	No opening is set.	開け口が決まっていません。
+	The opening "{}" is not held by anything. It needs a tuck.	開け口の「{}」が、何にも留められていません。差し込みが要ります。
+	Nothing is set for "{}" to be glued to.	「{}」を貼る相手が決まっていません。
+	The closure of the opening "{}" is not in the dieline yet.	開け口の「{}」の留めの形が、まだ型紙に入っていません。
+	"{}" and "{}" overlap on the dieline.	展開図の上で、「{}」と「{}」が重なっています。
+# pakenoba-core/src/project.rs
+	Could not read or write the file: {e}	ファイルを読み書きできませんでした: {e}
+	This is not a PAKENOBA project file	パケノバの案件のファイルではありません
+	This project was saved by a newer version of PAKENOBA (format version {found}; this version reads up to {VERSION})	新しい版のパケノバで保存された案件です（形式の版 {found}。このパケノバが読めるのは版 {VERSION} まで）
+	The project file is damaged: {what}	案件のファイルが壊れています: {what}
+	Dimension "{label}" is not a number	寸法の「{label}」が数ではありません
+	The size of asset {} ({}) is not a number	素材 {}（{}）の大きさが数ではありません
+	Artwork {number} points to a panel that is not in the dieline	柄 {number} の置き場所が、型紙にないパネルを指しています
+	The position or size of artwork {number} is not a number	柄 {number} の場所か大きさが数ではありません
+	Artwork {number} points to an asset that does not exist	柄 {number} が、ない素材を指しています
+	Could not make the settings text: {e}	設定のテキストを作れませんでした: {e}
+	Could not extract the settings text: {e}	設定のテキストを取り出せませんでした: {e}
+	The settings text is too large	設定のテキストが大きすぎます
+	The characters of the settings text cannot be read	設定のテキストの文字が読めません
+	Could not read the settings text: {}	設定のテキストを読めませんでした: {}
+	The format version is missing	形式の版が書かれていません
+	The format version ({version}) is not valid	形式の版（{version}）が正しくありません
+	Could not write it as ZIP: {other}	ZIP として書けませんでした: {other}
+	The number of sides of the prism is not valid	角柱の角の数が正しくありません
+	This version of PAKENOBA does not know the shape "{other}"	このパケノバが知らない型（{other}）です
+	Dimension "{label}" was out of range ({value}), so it was set to {fixed}	寸法の「{label}」が範囲の外（{value}）だったので、{fixed} にしました
+	The contents are not valid	書かれている内容が正しくありません
+	Asset "{}" could not be read, so it was removed ({why})	素材「{}」を読めなかったので、外しました（{why}）
+	{what} "{}" could not be read, so it was removed ({why})	{what}「{}」を読めなかったので、外しました（{why}）
+	Dieline artwork for the back of the sheet	紙の裏の展開図の絵
+	The shape type of artwork {number} ({other}) cannot be read, so it was made a rectangle	柄 {number} の図形の形（{other}）が読めないので、四角にしました
+	The {what} color of shape artwork {number} cannot be read, so it was made black	柄 {number} の図形の{what}の色が読めないので、黒にしました
+	The {what} of text artwork {number} was not valid, so the normal value was used	柄 {number} の文字の{what}が正しくないので、ふつうの値にしました
+	The {what} of text artwork {number} was out of range, so it was set to {c}	柄 {number} の文字の{what}が範囲の外だったので、{c} にしました
+	The color of text artwork {number} cannot be read, so it was made black	柄 {number} の文字の色が読めないので、黒にしました
+	The alignment of text artwork {number} cannot be read, so it was aligned left	柄 {number} の文字の揃えが読めないので、左揃えにしました
+	Artwork {number} was removed because asset "{}" could not be read	柄 {number} は、素材「{}」を読めなかったので、外しました
+	Artwork {number} was removed because it pointed to an asset that does not exist	柄 {number} は、ない素材を指していたので、外しました
+	Artwork {number} was removed because its picture setting was not valid	柄 {number} は、絵の指定が正しくないので、外しました
+	Artwork {number} was removed because its panel "{}" is not in the dieline	柄 {number} は、置き場所のパネル「{}」が型紙にないので、外しました
+	Artwork {number} was removed because its position or size was not valid	柄 {number} は、場所か大きさが正しくないので、外しました
+	Not found in the file	ファイルの中に見つかりません
+	Cannot extract: {other}	取り出せません: {other}
+	The contents are damaged: {e}	中身が壊れています: {e}
+# （そのほか）
+	3D artwork	立体の柄
+	Back of sheet	紙の裏
+	Guides	ガイド
+	Artwork	絵柄
+	{guides} (cut lines, fold lines, glue flaps)	{guides}（切り線、折り線、のりしろ）
+	{guides} (cut lines, fold lines)	{guides}（切り線、折り線）
+	Could not write the PSD: {e}	PSD を書けませんでした: {e}
+	Could not read the PSD: {e}	PSD を読めませんでした: {e}
+	Could not extract the merged image: {e}	統合画像を取り出せませんでした: {e}
+	The merged image has the wrong size ({sw}x{sh})	統合画像の大きさが合いません（{sw}x{sh}）
+	Could not extract the merged image of the PSD: {e}	PSD の統合画像を取り出せませんでした: {e}
+	The merged image of the PSD has the wrong size ({w}x{h})	PSD の統合画像の大きさが合いません（{w}x{h}）
+	, 	、
+	Language	言語
+	Same as the system	システムと同じ
+	Undo	元に戻す

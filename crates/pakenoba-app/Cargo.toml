@@ -12,6 +12,8 @@ name = "pakenoba"
 path = "src/main.rs"
 
 [dependencies]
+# 画面の文字の多言語化（英語を基準に、言語ごとの訳の表から引く）。
+pakenoba-i18n = { path = "../pakenoba-i18n" }
 pakenoba-core = { path = "../pakenoba-core" }
 # egui と eframe は本家（crates.io）の版。試作 S01 の結果による。
 eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "system_fonts", "clipboard", "x11", "wayland"] }

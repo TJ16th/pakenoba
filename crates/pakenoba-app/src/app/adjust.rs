@@ -3,6 +3,7 @@
 //! 元の素材は変えない。調整した絵を新しい素材として足し、選んでいる柄 1 つだけを、それに差し替える。
 //! Ctrl+Z で戻せる。見た目の位置と大きさは保つ（余白を切り落としたときも、残った部分は同じ場所に見える）。
 
+use pakenoba_i18n::t;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -30,10 +31,10 @@ pub(super) enum Adjust {
 impl Adjust {
     fn label(self) -> &'static str {
         match self {
-            Adjust::ClearBackground(_) => "背景を透明に",
-            Adjust::FlattenShading => "陰影をならす",
-            Adjust::Posterize(_) => "色数を絞る",
-            Adjust::Trim => "余白を切る",
+            Adjust::ClearBackground(_) => t!("Clear background"),
+            Adjust::FlattenShading => t!("Even out shading"),
+            Adjust::Posterize(_) => t!("Reduce colors"),
+            Adjust::Trim => t!("Margins trimmed"),
         }
     }
 }
@@ -280,7 +281,7 @@ pub(super) fn run(how: Adjust, w: usize, h: usize, rgba: &[u8]) -> Result<Adjust
     match how {
         Adjust::ClearBackground(tolerance) => {
             let rgba = clear_background(w, h, rgba, tolerance)
-                .ok_or("縁に、透明にできる背景が見つかりませんでした。")?;
+                .ok_or(t!("No background that could be made transparent was found along the edges."))?;
             Ok(Adjusted {
                 w,
                 h,
@@ -301,9 +302,9 @@ pub(super) fn run(how: Adjust, w: usize, h: usize, rgba: &[u8]) -> Result<Adjust
             crop: whole,
         }),
         Adjust::Trim => {
-            let crop = opaque_bounds(w, h, rgba).ok_or("すべて透明なので、切り落とせません。")?;
+            let crop = opaque_bounds(w, h, rgba).ok_or(t!("Everything is transparent, so there is nothing to trim."))?;
             if crop == whole {
-                return Err("切り落とせる透明な余白がありません。");
+                return Err(t!("There are no transparent margins to trim."));
             }
             let [x0, y0, cw, ch] = crop;
             let mut out = Vec::with_capacity(cw * ch * 4);
@@ -353,16 +354,16 @@ impl App {
         let bytes =
             match super::outputs::png_bytes(adjusted.w as u32, adjusted.h as u32, &adjusted.rgba) {
                 Ok(bytes) => bytes,
-                Err(e) => return self.say(format!("調整した絵を作れませんでした: {e}")),
+                Err(e) => return self.say(t!("Could not make the adjusted picture: {e}")),
             };
         // 名前は「元の名前（調整）.png」。
         let base = self
             .asset_of(&placed.picture)
-            .map_or_else(|| "画像".to_owned(), |i| self.assets[i].name.clone());
+            .map_or_else(|| t!("Image").to_owned(), |i| self.assets[i].name.clone());
         let stem = base
             .rsplit_once('.')
             .map_or(base.as_str(), |(stem, _)| stem);
-        let name = format!("{stem}（{}）.png", how.label());
+        let name = t!("{stem} ({}).png", how.label());
         // 大きさと位置。切り落とした部分のぶん小さくし、残った部分の中心が同じ場所に見えるようにずらす。
         let template = self.template.clone();
         let mut decal = placed.decal;
@@ -404,7 +405,7 @@ impl App {
         placed.picture = picture;
         placed.decal = decal;
         (self.art_dirty, self.back_dirty) = (true, true);
-        self.say(format!("「{}」をしました。新しい素材「{name}」になり、元の素材はそのままです。Ctrl+Z で戻せます。", how.label()));
+        self.say(t!("Applied \"{}\". It is a new asset, \"{name}\", and the original asset is unchanged. Press Ctrl+Z to undo.", how.label()));
     }
 
     /// 右の欄の、画像の調整。画像の柄を選んでいるときに出す。
@@ -416,7 +417,7 @@ impl App {
             return;
         }
         let mut chosen = None;
-        egui::CollapsingHeader::new("画像の調整")
+        egui::CollapsingHeader::new(t!("Image adjustments"))
             .id_salt("adjust")
             .show(ui, |ui| {
                 ui.add_enabled_ui(
@@ -425,8 +426,8 @@ impl App {
                         let settings = &mut self.adjust;
                         ui.horizontal(|ui| {
                             if ui
-                                .button("背景を透明にする")
-                                .on_hover_text("縁につながっている、縁と同じような色を透明にします")
+                                .button(t!("Make background transparent"))
+                                .on_hover_text(t!("Makes colors similar to the edges, and connected to them, transparent"))
                                 .clicked()
                             {
                                 chosen = Some(Adjust::ClearBackground(settings.tolerance));
@@ -437,19 +438,19 @@ impl App {
                                     .speed(0.5)
                                     .max_decimals(0),
                             )
-                            .on_hover_text("同じ色とみなす幅。大きいほど、多く透明になります");
+                            .on_hover_text(t!("How close a color must be to count as the background. Larger values make more of the picture transparent"));
                         });
                         if ui
-                            .button("陰影をならす")
-                            .on_hover_text("撮った写真の、照明のむらや影を薄くします")
+                            .button(t!("Even out shading"))
+                            .on_hover_text(t!("Lightens uneven lighting and shadows in photographs"))
                             .clicked()
                         {
                             chosen = Some(Adjust::FlattenShading);
                         }
                         ui.horizontal(|ui| {
                             if ui
-                                .button("色数を絞る")
-                                .on_hover_text("似た色をまとめて、この数の色にします")
+                                .button(t!("Reduce colors"))
+                                .on_hover_text(t!("Merges similar colors down to this many colors"))
                                 .clicked()
                             {
                                 chosen = Some(Adjust::Posterize(settings.colors));
@@ -457,20 +458,20 @@ impl App {
                             ui.add(
                                 egui::DragValue::new(&mut settings.colors)
                                     .range(2..=64)
-                                    .suffix(" 色"),
+                                    .suffix(t!(" colors")),
                             );
                         });
                         if ui
-                            .button("余白を切り落とす")
+                            .button(t!("Trim margins"))
                             .on_hover_text(
-                                "まわりの透明な部分を切り落とします。見える位置は変わりません",
+                                t!("Cuts away the transparent area around the picture. It stays where it appears now"),
                             )
                             .clicked()
                         {
                             chosen = Some(Adjust::Trim);
                         }
                         ui.weak(
-                            "元の素材は変えず、この柄だけを、調整した新しい素材に差し替えます。",
+                            t!("The original asset is unchanged; only this artwork is switched to a new, adjusted asset."),
                         );
                     },
                 );

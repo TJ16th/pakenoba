@@ -3,6 +3,7 @@
 //! 図形の道具（U）で箱や展開図を押すと、そこに四角か丸を置く。塗り、線、線の太さ、角の丸みを変えられる。
 //! 図形は、形と色から、その場で描く。大きくしても、ぼやけない。
 
+use pakenoba_i18n::t;
 use eframe::egui;
 
 use pakenoba_core::project::{SHAPE_RADIUS, SHAPE_STROKE, ShapeKind, ShapeSpec};
@@ -53,26 +54,26 @@ fn shape_controls(ui: &mut egui::Ui, spec: &mut ShapeSpec, compact: bool) -> boo
         }
     };
     ui.horizontal(|ui| {
-        for (kind, label) in [(ShapeKind::Rect, "四角"), (ShapeKind::Ellipse, "丸")] {
+        for (kind, label) in [(ShapeKind::Rect, t!("Rectangle")), (ShapeKind::Ellipse, t!("Ellipse"))] {
             changed |= ui.selectable_value(&mut spec.kind, kind, label).changed();
         }
     });
-    row(ui, "塗り");
+    row(ui, t!("Fill"));
     ui.horizontal(|ui| {
         changed |= color_toggle(
             ui,
             &mut spec.fill,
             [8, 126, 139],
-            "塗りの色（外すと塗らない）",
+            t!("Fill color (uncheck for no fill)"),
         );
     });
-    row(ui, "線");
+    row(ui, t!("Stroke"));
     ui.horizontal(|ui| {
         changed |= color_toggle(
             ui,
             &mut spec.stroke,
             [20, 20, 20],
-            "線の色（外すと線を引かない）",
+            t!("Stroke color (uncheck for no stroke)"),
         );
         ui.add_enabled_ui(spec.stroke.is_some(), |ui| {
             changed |= ui
@@ -83,11 +84,11 @@ fn shape_controls(ui: &mut egui::Ui, spec: &mut ShapeSpec, compact: bool) -> boo
                         .max_decimals(1)
                         .suffix(" mm"),
                 )
-                .on_hover_text("線の太さ（縁から内側へ）")
+                .on_hover_text(t!("Stroke width (inward from the edge)"))
                 .changed();
         });
     });
-    row(ui, "角の丸み");
+    row(ui, t!("Corner radius"));
     ui.add_enabled_ui(spec.kind == ShapeKind::Rect, |ui| {
         changed |= ui
             .add(
@@ -97,7 +98,7 @@ fn shape_controls(ui: &mut egui::Ui, spec: &mut ShapeSpec, compact: bool) -> boo
                     .max_decimals(1)
                     .suffix(" mm"),
             )
-            .on_hover_text("四角の角の丸み（半径）")
+            .on_hover_text(t!("Rounding of the rectangle's corners (radius)"))
             .changed();
     });
     if !compact {
@@ -125,7 +126,7 @@ impl App {
         });
         self.select_only(Some(self.decals.len() - 1));
         (self.art_dirty, self.back_dirty) = (true, true);
-        self.say("図形を置きました。右の欄で、形、色、大きさを変えられます。");
+        self.say(t!("Placed a shape. Change its form, colors and size in the right panel."));
     }
 
     /// 図形の柄 `index` の形と色を `spec` に変える。
@@ -161,7 +162,7 @@ impl App {
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label("形");
+                    ui.label(t!("Form"));
                     changed |= shape_controls(ui, &mut spec, false);
                 });
         });
@@ -187,13 +188,13 @@ impl App {
             _ => self.shape_style.clone(),
         };
         let earlier = self.snapshot();
-        ui.label("形");
+        ui.label(t!("Form"));
         let changed = shape_controls(ui, &mut spec, true);
         ui.separator();
         ui.weak(if target.is_some() {
-            "選んでいる図形"
+            t!("The selected shape")
         } else {
-            "箱か展開図を押すと、そこに図形を置きます"
+            t!("Click the box or the dieline to place a shape there")
         });
         if changed {
             if let Some(index) = target {

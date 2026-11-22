@@ -4,6 +4,7 @@
 //! 終わったときに、柄が別の絵に変わっていたら（消した、差し替えた、別の案件を開いた）、結果は使わない。
 //! 元の素材は変えない。Ctrl+Z で戻せる。
 
+use pakenoba_i18n::t;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -71,14 +72,14 @@ impl App {
     /// 画像の柄 `index` のベクター化を始める。
     pub(super) fn start_vectorize(&mut self, index: usize) {
         if self.vectorizing.is_some() {
-            return self.say("ほかの柄をベクター化しています。終わってから、もう一度押してください。");
+            return self.say(t!("Other artwork is being vectorized. Press again when it has finished."));
         }
         let Some(placed) = self.decals.get(index) else { return };
         let Picture::Image { w, h, rgba, vector: false } = &placed.picture else { return };
         let (w, h, rgba, size) = (*w, *h, rgba.clone(), placed.decal.size);
-        let base = self.asset_of(&placed.picture).map_or_else(|| "画像".to_owned(), |i| self.assets[i].name.clone());
+        let base = self.asset_of(&placed.picture).map_or_else(|| t!("Image").to_owned(), |i| self.assets[i].name.clone());
         let stem = base.rsplit_once('.').map_or(base.as_str(), |(stem, _)| stem);
-        let name = format!("{stem}（ベクター）.svg");
+        let name = t!("{stem} (vector).svg");
         let settings = self.trace;
         let (send, result) = std::sync::mpsc::channel();
         let work = move || {
@@ -90,10 +91,10 @@ impl App {
             let _ = send.send(done);
         };
         if let Err(e) = std::thread::Builder::new().name("vectorize".to_owned()).spawn(work) {
-            return self.say(format!("ベクター化を始められませんでした: {e}"));
+            return self.say(t!("Could not start vectorizing: {e}"));
         }
         self.vectorizing = Some(VectorizeJob { index, source: placed.picture.clone(), name, result });
-        self.say("ベクター化しています…（VectorCraft の画像トレース）");
+        self.say(t!("Vectorizing… (VectorCraft Image Trace)"));
     }
 
     /// ベクター化が終わったかを見る。終わっていたら、柄を差し替える。
@@ -103,7 +104,7 @@ impl App {
             Err(TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
             Err(TryRecvError::Disconnected) => {
                 self.vectorizing = None;
-                self.say("ベクター化が途中で止まりました。");
+                self.say(t!("Vectorizing stopped partway."));
             }
             Ok(done) => {
                 let Some(job) = self.vectorizing.take() else { return };
@@ -119,7 +120,7 @@ impl App {
     fn finish_vectorize(&mut self, job: VectorizeJob, done: Done) {
         let still = self.decals.get(job.index).is_some_and(|d| same_picture(&d.picture, &job.source));
         if !still {
-            return self.say("ベクター化している間に柄が変わったので、結果は使いませんでした。");
+            return self.say(t!("The artwork changed while it was being vectorized, so the result was not used."));
         }
         let size = self.decals[job.index].decal.size;
         let stored = project::Asset::new(job.name.clone(), done.svg.into_bytes(), size, file::now_local());
@@ -132,7 +133,7 @@ impl App {
         });
         self.decals[job.index].picture = picture;
         (self.art_dirty, self.back_dirty) = (true, true);
-        self.say(format!("ベクター化しました（形 {} 個）。新しい素材「{}」になり、元の素材はそのままです。Ctrl+Z で戻せます。", done.paths, job.name));
+        self.say(t!("Vectorized ({} shapes). It is a new asset, \"{}\", and the original asset is unchanged. Press Ctrl+Z to undo.", done.paths, job.name));
     }
 
     /// 画像の調整の欄の、ベクター化の行。
@@ -141,27 +142,27 @@ impl App {
         let running = self.vectorizing.as_ref().map(|job| job.index);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(enabled && running.is_none(), |ui| {
-                if ui.button("ベクター化").on_hover_text("VectorCraft の画像トレースで、線の絵（SVG）にします。拡大してもぼやけず、VectorCraft で直せます").clicked() {
+                if ui.button(t!("Vectorize")).on_hover_text(t!("Turns it into line art (SVG) with VectorCraft Image Trace. It stays sharp when enlarged and can be edited in VectorCraft")).clicked() {
                     self.start_vectorize(index);
                 }
             });
             if running == Some(index) {
                 ui.spinner();
-                ui.weak("トレースしています…");
+                ui.weak(t!("Tracing…"));
             }
         });
         ui.add_enabled_ui(enabled, |ui| {
             egui::Grid::new("trace-settings").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                ui.label("プリセット");
-                let current = PRESETS.get(self.trace.preset).map_or("", |p| p.1);
+                ui.label(t!("Preset"));
+                let current = PRESETS.get(self.trace.preset).map_or("", |p| pakenoba_i18n::tr(p.1));
                 egui::ComboBox::from_id_salt("trace-preset").selected_text(current).show_ui(ui, |ui| {
                     for (i, (_, label)) in PRESETS.iter().enumerate() {
-                        ui.selectable_value(&mut self.trace.preset, i, *label);
+                        ui.selectable_value(&mut self.trace.preset, i, pakenoba_i18n::tr(label));
                     }
                 });
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut self.trace.drop_background, "背景を形にしない").on_hover_text("縁につながっている、縁で一番多い色の部分を、形にしません");
+                ui.checkbox(&mut self.trace.drop_background, t!("Leave out the background")).on_hover_text(t!("Does not make shapes from the area connected to the edges in the most common edge color"));
                 ui.end_row();
             });
         });
@@ -218,7 +219,7 @@ mod tests {
         assert_eq!(app.decals[index].decal.size, [40.0, 30.0], "大きさは変わらない");
         assert_eq!(app.assets.len(), assets + 1);
         let asset = app.assets.last().unwrap();
-        assert!(asset.name.ends_with("（ベクター）.svg"));
+        assert!(asset.name.ends_with(" (vector).svg"));
         assert!(crate::vector::is_svg(asset.stored.as_ref().unwrap().bytes()));
         // 保存して開き直すと、SVG から描き直して、同じくベクターの柄。
         let project = app.project().unwrap();

@@ -3,6 +3,7 @@
 //! 素材を、立体や展開図へドラッグして置く。落とした場所が紙の表か裏かで、置く面が決まる。
 //! 登録したフォルダ（コレクション）から探して取り込むのは、「素材」の画面（library.rs）。ここは軽く、この案件の素材と見本だけ。
 
+use pakenoba_i18n::t;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -50,8 +51,8 @@ pub(super) enum Replace {
 /// 付属の見本。
 pub(super) fn bundled() -> Vec<Asset> {
     vec![
-        Asset { name: "ロゴ（見本）".to_owned(), picture: Picture::Logo, size: [46.0, 46.0], thumb: None, bundled: true, stored: None },
-        Asset { name: "一周する帯（見本）".to_owned(), picture: Picture::Band, size: [120.0, 14.0], thumb: None, bundled: true, stored: None },
+        Asset { name: t!("Logo (sample)").to_owned(), picture: Picture::Logo, size: [46.0, 46.0], thumb: None, bundled: true, stored: None },
+        Asset { name: t!("Wrap-around band (sample)").to_owned(), picture: Picture::Band, size: [120.0, 14.0], thumb: None, bundled: true, stored: None },
     ]
 }
 
@@ -127,19 +128,19 @@ impl App {
         egui::Panel::left("assets").resizable(true).default_size(236.0).size_range(170.0..=520.0).show(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.strong("素材");
+                ui.strong(t!("Assets"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("大きく開く").on_hover_text("「素材」の画面で、登録したフォルダから探して取り込みます").clicked() {
+                    if ui.small_button(t!("Open large")).on_hover_text(t!("Find and import from your registered folders on the Assets screen")).clicked() {
                         self.toggle_library();
                     }
-                    let tip = if self.assets_inside { "素材の欄を、道具の帯の左へ移す" } else { "素材の欄を、道具の帯の右へ移す" };
-                    if ui.small_button("位置").on_hover_text(tip).clicked() {
+                    let tip = if self.assets_inside { t!("Move the assets panel to the left of the toolbar") } else { t!("Move the assets panel to the right of the toolbar") };
+                    if ui.small_button(t!("Position")).on_hover_text(tip).clicked() {
                         self.assets_inside = !self.assets_inside;
                     }
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("絵の大きさ");
+                ui.label(t!("Thumbnail size"));
                 ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(40.0, 200.0);
                 ui.add(egui::Slider::new(&mut self.thumb_size, 48.0..=200.0).show_value(false));
             });
@@ -153,10 +154,10 @@ impl App {
                         self.recent_assets(ui);
                     }
                     ui.add_space(6.0);
-                    ui.label(if bundled { "付属の見本" } else { "この案件の素材" });
+                    ui.label(if bundled { t!("Built-in samples") } else { t!("This project's assets") });
                     let list: Vec<usize> = (0..self.assets.len()).filter(|&i| self.assets[i].bundled == bundled).collect();
                     if list.is_empty() {
-                        ui.small("画像（PNG、JPEG、PSD、SVG）をウィンドウにドロップすると、ここに入ります。");
+                        ui.small(t!("Drop images (PNG, JPEG, PSD, SVG) on the window to add them here."));
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -166,7 +167,7 @@ impl App {
                     });
                 }
                 ui.add_space(10.0);
-                if ui.button("ほかの素材を探す…").on_hover_text("「素材」の画面で、登録したフォルダ（コレクション）から探して取り込みます").clicked() {
+                if ui.button(t!("Find other assets…")).on_hover_text(t!("Find and import from your registered folders (collections) on the Assets screen")).clicked() {
                     self.toggle_library();
                 }
             });
@@ -217,8 +218,8 @@ impl App {
         let response = response.on_hover_text(&self.assets[index].name);
         response.context_menu(|ui| {
             if bundled {
-                ui.label("付属の見本は、差し替えられません");
-            } else if ui.button("素材を差し替える…").on_hover_text("この素材を使っている柄が、すべて新しい絵になります").clicked() {
+                ui.label(t!("Built-in samples cannot be replaced"));
+            } else if ui.button(t!("Replace asset…")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture")).clicked() {
                 self.replace_request = Some(Replace::Asset(index));
                 ui.close();
             }
@@ -243,24 +244,24 @@ impl App {
         let size = self.asset_size(asset);
         ui.label(&asset.name);
         if let Picture::Image { vector: true, .. } = &asset.picture {
-            ui.small("ベクター（SVG）");
+            ui.small(t!("Vector (SVG)"));
         } else if let Picture::Image { w, h, .. } = &asset.picture {
-            ui.small(format!("画像: {w} × {h} px"));
+            ui.small(t!("Image: {w} × {h} px"));
         }
-        ui.small(format!("置く大きさ: {:.0} × {:.0} mm", size[0], size[1]));
+        ui.small(t!("Placed size: {:.0} × {:.0} mm", size[0], size[1]));
         if let Some(when) = asset.stored.as_ref().and_then(|s| file::show_time(&s.imported)) {
-            ui.small(format!("取り込んだ日時: {when}"));
+            ui.small(t!("Imported: {when}"));
         }
-        ui.small(if uses > 0 { format!("箱で {uses} か所に使っています") } else { "まだ箱に置いていません".to_owned() });
+        ui.small(if uses > 0 { t!("Used in {uses} place(s) on the box") } else { t!("Not placed on the box yet").to_owned() });
         ui.add_space(2.0);
         let picture = asset.picture.clone();
         let bundled = asset.bundled;
         ui.horizontal(|ui| {
-            if ui.button("正面に置く").on_hover_text("箱や展開図へドラッグすると、落とした場所に置けます").clicked() {
+            if ui.button(t!("Place on the front")).on_hover_text(t!("Drag onto the box or the dieline to place it where you drop it")).clicked() {
                 self.add_decal(picture, size);
                 self.tool = Tool::Select;
             }
-            if !bundled && ui.button("差し替える…").on_hover_text("この素材を使っている柄が、すべて新しい絵になります（右クリックでも）").clicked() {
+            if !bundled && ui.button(t!("Replace…")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture (also on right-click)")).clicked() {
                 self.replace_request = Some(Replace::Asset(index));
             }
         });
@@ -311,24 +312,24 @@ impl App {
         match self.asset_of(&self.decals[index].picture) {
             Some(asset) => {
                 let uses = self.uses(asset);
-                if ui.button(format!("素材を差し替える…（{uses} か所）")).on_hover_text("この素材を使っている柄が、すべて新しい絵になります").clicked() {
+                if ui.button(t!("Replace asset… ({uses} place(s))")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture")).clicked() {
                     self.replace_request = Some(Replace::Asset(asset));
                     ui.close();
                 }
-                if ui.button("この柄だけ差し替える…").clicked() {
+                if ui.button(t!("Replace this artwork only…")).clicked() {
                     self.replace_request = Some(Replace::Decal(index));
                     ui.close();
                 }
             }
             None => {
-                if ui.button("この柄を画像に差し替える…").clicked() {
+                if ui.button(t!("Replace this artwork with an image…")).clicked() {
                     self.replace_request = Some(Replace::Decal(index));
                     ui.close();
                 }
             }
         }
         ui.separator();
-        if ui.button("消す").clicked() {
+        if ui.button(t!("Delete")).clicked() {
             self.delete_selected();
             ui.close();
         }
@@ -339,7 +340,7 @@ impl App {
         if let Some(answer) = self.answer_replace.take() {
             return Some(answer);
         }
-        rfd::FileDialog::new().set_title("差し替える画像を選ぶ").add_filter("画像（PNG、JPEG、PSD、SVG）", &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "psd", "PSD", "svg", "SVG", "svgz", "SVGZ"]).pick_file()
+        rfd::FileDialog::new().set_title(t!("Choose the replacement image")).add_filter(t!("Images (PNG, JPEG, PSD, SVG)"), &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "psd", "PSD", "svg", "SVG", "svgz", "SVGZ"]).pick_file()
     }
 
     /// 頼まれた差し替えを行う。画像を選んでもらい、絵を入れ替える。元に戻せる。
@@ -363,15 +364,15 @@ impl App {
     pub(super) fn replace_with(&mut self, target: Replace, path: &std::path::Path) {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
-            Err(e) => return self.say(format!("差し替えませんでした。{} を開けませんでした: {e}", path.display())),
+            Err(e) => return self.say(t!("Nothing was replaced. Could not open {}: {e}", path.display())),
         };
         let picture = match super::decode_image(&bytes) {
             Ok(picture) => picture,
-            Err(e) => return self.say(format!("差し替えませんでした。{e}")),
+            Err(e) => return self.say(t!("Nothing was replaced. {e}")),
         };
         let Picture::Image { w, h, .. } = &picture else { return };
         let ratio = *h as f32 / *w as f32;
-        let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
+        let name = path.file_name().map_or_else(|| t!("Image").to_owned(), |n| n.to_string_lossy().into_owned());
         match target {
             Replace::Asset(index) => {
                 let Some(asset) = self.assets.get(index).filter(|a| !a.bundled) else { return };
@@ -389,7 +390,7 @@ impl App {
                 let asset = &mut self.assets[index];
                 asset.stored = Some(project::Asset::new(name.clone(), bytes, size, file::now_local()));
                 (asset.name, asset.picture, asset.size, asset.thumb) = (name.clone(), picture, size, None);
-                self.say(format!("素材「{old_name}」を「{name}」に差し替えました（{count} か所の柄）。Ctrl+Z で戻せます。"));
+                self.say(t!("Replaced asset \"{old_name}\" with \"{name}\" ({count} piece(s) of artwork). Press Ctrl+Z to undo."));
             }
             Replace::Decal(index) => {
                 let Some(placed) = self.decals.get(index) else { return };
@@ -408,7 +409,7 @@ impl App {
                 let placed = &mut self.decals[index];
                 placed.picture = picture;
                 placed.decal.size[1] = width * ratio;
-                self.say(format!("柄 {} を「{name}」に差し替えました。Ctrl+Z で戻せます。", index + 1));
+                self.say(t!("Replaced artwork {} with \"{name}\". Press Ctrl+Z to undo.", index + 1));
             }
         }
         self.art_dirty = true;
@@ -619,7 +620,7 @@ mod tests {
         }
         app.decals[2].back = true;
         // 名前は、付けた名前か「種類 番号」。
-        assert_eq!(app.layer_label(0), "ロゴ 1");
+        assert_eq!(app.layer_label(0), "Logo 1");
         app.decals[0].layer.name = Some("表のロゴ".to_owned());
         assert_eq!(app.layer_label(0), "表のロゴ");
         // 隠した柄と、ロックした柄は、箱の上でつかめない。

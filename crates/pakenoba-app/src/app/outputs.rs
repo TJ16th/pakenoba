@@ -7,6 +7,7 @@
 //!
 //! どれも、選んでいる柄の枠、カーソルの下の枠、ガイドの線を消した絵で描く。
 
+use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -24,12 +25,12 @@ use crate::paint::{Canvas, Marks, paint};
 use crate::print::{Paper, PrintSettings, SheetPrint, print_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
-pub(super) const OUTPUTS: [(&str, bool); 5] = [("型紙（PSD）", true), ("16:9 の画像（スライド用）", true), ("箱開け動画", true), ("店の棚に並べた絵", false), ("実寸の型紙（A4 や A3 に分けて印刷）", true)];
+pub(super) const OUTPUTS: [(&str, bool); 5] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true)];
 
 /// 画像の大きさ（16:9）。
-const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160（4K）", [3840, 2160])];
+const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160 (4K)", [3840, 2160])];
 /// 背景の色。最後は透明。
-const BACKGROUNDS: [(&str, [f32; 4]); 3] = [("明るい灰色", [0.93, 0.93, 0.92, 1.0]), ("白", [1.0, 1.0, 1.0, 1.0]), ("透明", [0.0, 0.0, 0.0, 0.0])];
+const BACKGROUNDS: [(&str, [f32; 4]); 3] = [("Light gray", [0.93, 0.93, 0.92, 1.0]), ("White", [1.0, 1.0, 1.0, 1.0]), ("Transparent", [0.0, 0.0, 0.0, 0.0])];
 /// 動画の大きさと、1 秒のコマ数。
 const MOVIE_SIZES: [(&str, [u32; 2]); 2] = [("960 x 540", [960, 540]), ("1280 x 720", [1280, 720])];
 const MOVIE_FPS: u32 = 20;
@@ -118,7 +119,7 @@ impl App {
         if let Some(answer) = self.answer_export.take() {
             return Some(with_extension(answer, ext));
         }
-        let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| "パケノバ".to_owned(), |s| s.to_string_lossy().into_owned());
+        let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| t!("PAKENOBA").to_owned(), |s| s.to_string_lossy().into_owned());
         let mut dialog = rfd::FileDialog::new().set_title(what).add_filter(filter, &[ext]).set_file_name(format!("{project}_{suffix}.{ext}"));
         if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
@@ -166,16 +167,16 @@ impl App {
 
     /// 16:9 の画像を書き出す。
     pub(super) fn export_image(&mut self, ctx: &egui::Context) {
-        let Some(rs) = self.render_state.clone() else { return self.say("この PC では箱を描けないので、画像を書き出せません。") };
-        let Some(path) = self.ask_output("16:9 の画像を保存", "PNG", "png", "画像") else { return };
+        let Some(rs) = self.render_state.clone() else { return self.say(t!("This PC cannot draw the box, so the image cannot be exported.")) };
+        let Some(path) = self.ask_output(t!("Save the 16:9 image"), "PNG", "png", t!("Image")) else { return };
         let size = SHOT_SIZES[self.output.shot_size].1;
         let background = BACKGROUNDS[self.output.background].1;
         let kept = self.clean_art(ctx, &rs);
         let result = self.render_box(&rs, size, self.open, self.yaw, background, false).and_then(|rgba| png_bytes(size[0], size[1], &rgba));
         self.restore_marks(kept);
         match result.and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
-            Ok(()) => self.say(format!("{} を保存しました（{} x {} px）", path.display(), size[0], size[1])),
-            Err(e) => self.say(format!("画像を保存できませんでした: {e}")),
+            Ok(()) => self.say(t!("Saved {} ({} x {} px)", path.display(), size[0], size[1])),
+            Err(e) => self.say(t!("Could not save the image: {e}")),
         }
     }
 
@@ -185,12 +186,12 @@ impl App {
             return;
         }
         if self.render_state.is_none() {
-            return self.say("この PC では箱を描けないので、動画を書き出せません。");
+            return self.say(t!("This PC cannot draw the box, so the video cannot be exported."));
         }
         if !self.template.can_open_at(0) {
-            return self.say("この型には、開け閉めの動きがありません。");
+            return self.say(t!("This box type has no opening motion."));
         }
-        let Some(path) = self.ask_output("箱開け動画を保存", "GIF アニメーション", "gif", "箱開け") else { return };
+        let Some(path) = self.ask_output(t!("Save the box-opening video"), t!("GIF animation"), "gif", t!("box-opening")) else { return };
         let size = MOVIE_SIZES[self.output.movie_size].1;
         let total = ((self.output.movie_seconds * MOVIE_FPS as f32).round() as u32).max(10);
         // コマを受け取って GIF にまとめるスレッド。描く側を待たせすぎないよう、4 コマまでためる。
@@ -213,9 +214,9 @@ impl App {
         match writer {
             Ok(writer) => {
                 self.movie = Some(MovieJob { frame: 0, total, yaw: self.yaw, send: Some(send), writer: Some(writer), path });
-                self.say("動画を書き出しています…");
+                self.say(t!("Exporting the video…"));
             }
-            Err(e) => self.say(format!("動画を書き出せませんでした: {e}")),
+            Err(e) => self.say(t!("Could not export the video: {e}")),
         }
     }
 
@@ -232,7 +233,7 @@ impl App {
             let kept = self.clean_art(ctx, &rs);
             let rendered = self.render_box(&rs, size, [open, 0.0], yaw0 + swing, background, true);
             self.restore_marks(kept);
-            let job = self.movie.as_mut().expect("あった");
+            let job = self.movie.as_mut().expect("movie job present");
             match rendered {
                 Ok(rgba) => {
                     if job.send.as_ref().is_some_and(|send| send.send(rgba).is_err()) {
@@ -240,33 +241,33 @@ impl App {
                     } else {
                         job.frame += 1;
                     }
-                    let progress = format!("動画を書き出しています… {} / {} コマ", job.frame, job.total);
+                    let progress = t!("Exporting the video… frame {} of {}", job.frame, job.total);
                     self.say(progress);
                 }
                 Err(e) => {
                     self.movie = None;
-                    return self.say(format!("動画を書き出せませんでした: {e}"));
+                    return self.say(t!("Could not export the video: {e}"));
                 }
             }
             return;
         }
         // 描き終わった。渡し口を閉じて、書き終わるのを待つ。
-        let job = self.movie.as_mut().expect("あった");
+        let job = self.movie.as_mut().expect("movie job present");
         job.send = None;
         if job.writer.as_ref().is_some_and(|w| !w.is_finished()) {
             return;
         }
-        let job = self.movie.take().expect("あった");
-        let result = job.writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err("書き出しの途中で止まりました".to_owned())));
+        let job = self.movie.take().expect("movie job present");
+        let result = job.writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err(t!("Exporting stopped partway").to_owned())));
         match result {
-            Ok(()) => self.say(format!("{} を保存しました（{} コマ）", job.path.display(), job.total)),
-            Err(e) => self.say(format!("動画を保存できませんでした: {e}")),
+            Ok(()) => self.say(t!("Saved {} ({} frames)", job.path.display(), job.total)),
+            Err(e) => self.say(t!("Could not save the video: {e}")),
         }
     }
 
     /// 実寸の型紙の PDF を書き出す。
     pub(super) fn export_print(&mut self) {
-        let Some(path) = self.ask_output("実寸の型紙を保存", "PDF", "pdf", "実寸の型紙") else { return };
+        let Some(path) = self.ask_output(t!("Save the full-size dieline"), "PDF", "pdf", t!("full-size dieline")) else { return };
         let (w, h) = (self.sheet.w, self.sheet.h);
         // 柄と紙の色だけの絵（ガイドの線は、PDF に線で描く）。
         let art = compose(&self.sheet, self.custom[0].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), false, Canvas { w, h, rgba }));
@@ -277,112 +278,112 @@ impl App {
             Ok(()) => {
                 let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
                 let pages = self.used_tiles(size, &tile(size, &self.output.print)).len();
-                self.say(format!("{} を保存しました（{} {pages} 枚）。印刷するときは「実際のサイズ」（100%）で刷ってください。", path.display(), self.output.print.paper.name()));
+                self.say(t!("Saved {} ({} {pages} sheet(s)). Print at \"Actual size\" (100%).", path.display(), self.output.print.paper.name()));
             }
-            Err(e) => self.say(format!("実寸の型紙を保存できませんでした: {e}")),
+            Err(e) => self.say(t!("Could not save the full-size dieline: {e}")),
         }
     }
 
     /// 右（出力）: 選んだ出力の設定。
     pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("output-settings").resizable(false).exact_size(300.0).show(ui, |ui| {
+        egui::Panel::right("output-settings").resizable(false).exact_size(320.0).show(ui, |ui| {
             ui.add_space(4.0);
-            ui.strong(OUTPUTS[self.output_kind].0);
+            ui.strong(pakenoba_i18n::tr(OUTPUTS[self.output_kind].0));
             let ctx = ui.ctx().clone();
             match self.output_kind {
                 0 => {
-                    ui.label("切り線、折り線、のりしろと、置いた柄を、レイヤーに分けた PSD で保存します。");
-                    if ui.button("型紙を PSD で保存…").clicked() {
+                    ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
+                    if ui.button(t!("Save the dieline as PSD…")).clicked() {
                         self.export_psd();
                     }
                     if self.has_back_decals() {
-                        ui.small("紙の裏にも柄があるので、裏の型紙も、同じ場所に「_裏」を付けた名前で保存します。裏の型紙は、裏から見た向き（左右を裏返した向き）です。");
+                        ui.small(t!("There is artwork on the back of the sheet too, so the back dieline is saved in the same place with \"_back\" added to the name. The back dieline is seen from the back (flipped left to right)."));
                     }
                 }
                 1 => {
-                    ui.label("いま見えている向きの箱を、16:9 の画像（PNG）で保存します。向きと大きさは、中央の箱をドラッグとホイールで合わせます。");
+                    ui.label(t!("Saves the box as you see it now as a 16:9 image (PNG). Set the angle and size by dragging and scrolling on the box in the middle."));
                     egui::Grid::new("shot").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label("大きさ");
-                        egui::ComboBox::from_id_salt("shot-size").selected_text(SHOT_SIZES[self.output.shot_size].0).show_ui(ui, |ui| {
+                        ui.label(t!("Size"));
+                        egui::ComboBox::from_id_salt("shot-size").selected_text(pakenoba_i18n::tr(SHOT_SIZES[self.output.shot_size].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in SHOT_SIZES.iter().enumerate() {
-                                ui.selectable_value(&mut self.output.shot_size, i, *label);
+                                ui.selectable_value(&mut self.output.shot_size, i, pakenoba_i18n::tr(label));
                             }
                         });
                         ui.end_row();
-                        ui.label("背景");
-                        egui::ComboBox::from_id_salt("shot-bg").selected_text(BACKGROUNDS[self.output.background].0).show_ui(ui, |ui| {
+                        ui.label(t!("Background"));
+                        egui::ComboBox::from_id_salt("shot-bg").selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in BACKGROUNDS.iter().enumerate() {
-                                ui.selectable_value(&mut self.output.background, i, *label);
+                                ui.selectable_value(&mut self.output.background, i, pakenoba_i18n::tr(label));
                             }
                         });
                         ui.end_row();
                     });
-                    if ui.button("画像を保存…").clicked() {
+                    if ui.button(t!("Save image…")).clicked() {
                         self.export_image(&ctx);
                     }
-                    ui.small("中央の枠の中が、画像に入る範囲です。");
+                    ui.small(t!("The frame in the middle shows what goes into the image."));
                 }
                 2 => {
-                    ui.label("閉じた箱が開く動きを、GIF アニメーションで保存します。スライドに貼れます。向きは、いま見えている向きから始めます。大きさは、開けきった箱が収まるように合わせます。");
+                    ui.label(t!("Saves the closed box opening as a GIF animation you can put on a slide. It starts from the current angle. The size is set so the fully open box fits."));
                     egui::Grid::new("movie").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label("大きさ");
-                        egui::ComboBox::from_id_salt("movie-size").selected_text(MOVIE_SIZES[self.output.movie_size].0).show_ui(ui, |ui| {
+                        ui.label(t!("Size"));
+                        egui::ComboBox::from_id_salt("movie-size").selected_text(pakenoba_i18n::tr(MOVIE_SIZES[self.output.movie_size].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in MOVIE_SIZES.iter().enumerate() {
-                                ui.selectable_value(&mut self.output.movie_size, i, *label);
+                                ui.selectable_value(&mut self.output.movie_size, i, pakenoba_i18n::tr(label));
                             }
                         });
                         ui.end_row();
-                        ui.label("長さ");
-                        ui.add(egui::DragValue::new(&mut self.output.movie_seconds).range(1.5..=10.0).speed(0.1).max_decimals(1).suffix(" 秒"));
+                        ui.label(t!("Length"));
+                        ui.add(egui::DragValue::new(&mut self.output.movie_seconds).range(1.5..=10.0).speed(0.1).max_decimals(1).suffix(t!(" s")));
                         ui.end_row();
-                        ui.label("背景");
-                        egui::ComboBox::from_id_salt("movie-bg").selected_text(BACKGROUNDS[self.output.background.min(1)].0).show_ui(ui, |ui| {
+                        ui.label(t!("Background"));
+                        egui::ComboBox::from_id_salt("movie-bg").selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background.min(1)].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in BACKGROUNDS.iter().take(2).enumerate() {
-                                ui.selectable_value(&mut self.output.background, i, *label);
+                                ui.selectable_value(&mut self.output.background, i, pakenoba_i18n::tr(label));
                             }
                         });
                         ui.end_row();
                     });
-                    ui.checkbox(&mut self.output.movie_turn, "開けながら、少し回り込む");
+                    ui.checkbox(&mut self.output.movie_turn, t!("Turn slightly while opening"));
                     let busy = self.movie.is_some();
-                    if ui.add_enabled(!busy, egui::Button::new("動画を保存…")).clicked() {
+                    if ui.add_enabled(!busy, egui::Button::new(t!("Save video…"))).clicked() {
                         self.export_movie();
                     }
                     if !self.template.can_open_at(0) {
-                        ui.small("この型には、開け閉めの動きがありません。");
+                        ui.small(t!("This box type has no opening motion."));
                     }
-                    ui.small("MP4 での保存は、まだありません。");
+                    ui.small(t!("Saving as MP4 is not available yet."));
                 }
                 4 => {
-                    ui.label("展開図を実寸で、紙に分けた PDF にします。重ねしろで貼り合わせて、厚紙に貼って組めます。");
+                    ui.label(t!("Makes a full-size PDF of the dieline split across sheets of paper. Join them along the overlaps, stick them on card stock and assemble."));
                     egui::Grid::new("print").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label("用紙");
+                        ui.label(t!("Paper"));
                         ui.horizontal(|ui| {
                             ui.selectable_value(&mut self.output.print.paper, Paper::A4, "A4");
                             ui.selectable_value(&mut self.output.print.paper, Paper::A3, "A3");
                         });
                         ui.end_row();
-                        ui.label("重ねしろ");
+                        ui.label(t!("Overlap"));
                         ui.add(egui::DragValue::new(&mut self.output.print.overlap).range(0.0..=30.0).speed(0.5).max_decimals(0).suffix(" mm"));
                         ui.end_row();
-                        ui.label("紙の端の余白");
+                        ui.label(t!("Paper margin"));
                         ui.add(egui::DragValue::new(&mut self.output.print.margin).range(3.0..=25.0).speed(0.5).max_decimals(0).suffix(" mm"));
                         ui.end_row();
                     });
                     let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
                     let tiling = tile(size, &self.output.print);
                     let used = self.used_tiles(size, &tiling);
-                    ui.label(format!("{} を{}で {} 枚（横 {} x 縦 {} に分け、展開図がかからない紙は刷らない）", self.output.print.paper.name(), if tiling.landscape() { "横向き" } else { "縦向き" }, used.len(), tiling.columns, tiling.rows));
+                    ui.label(t!("{} {} sheets of {} ({} across x {} down; sheets the dieline does not touch are skipped)", self.output.print.paper.name(), if tiling.landscape() { t!("landscape") } else { t!("portrait") }, used.len(), tiling.columns, tiling.rows));
                     self.print_preview(ui, size, &tiling, &used);
-                    if ui.button("実寸の型紙を PDF で保存…").clicked() {
+                    if ui.button(t!("Save the full-size dieline as PDF…")).clicked() {
                         self.export_print();
                     }
-                    ui.small("印刷するときは、拡大・縮小をせず「実際のサイズ」（100%）で刷ってください。1 枚目の 100 mm の目盛りを定規で測ると、確かめられます。");
+                    ui.small(t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
                 }
                 _ => {}
             }
             ui.add_space(6.0);
-            ui.small("この出力はデザイン確認用です。製造、抜型、裁断、印刷位置の保証に使える正式なデータではありません。");
+            ui.small(t!("This output is for checking the design. It is not production data and does not guarantee die-cutting, trimming or print positions."));
         });
     }
 

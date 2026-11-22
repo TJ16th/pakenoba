@@ -6,6 +6,7 @@
 //! 柄としては、SVG を細かい絵（長いほうが [`RASTER_LONG`] px）に描いて持つ。素材には SVG のまま入るので、
 //! 外のアプリ（VectorCraft など）で直せて、案件のファイルの中でも線のまま残る。
 
+use pakenoba_i18n::t;
 use craft_svg::tree::{self, usvg};
 
 /// SVG を描く絵の、長いほうの画素数。200 mm の柄でも 1 mm あたり 12 px（約 300 dpi）。
@@ -30,22 +31,22 @@ fn on_big_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) ->
         .spawn(work)
         .map_err(|e| e.to_string())?
         .join()
-        .map_err(|_| "SVG を読む途中で止まりました".to_owned())
+        .map_err(|_| t!("Reading the SVG stopped partway").to_owned())
 }
 
 /// SVG のファイルの中身を、RGBA（アルファは乗算なし）に描く。大きさは、SVG の縦横の比のまま、長いほうを [`RASTER_LONG`] px に。
 pub fn decode_svg(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
     let bytes = bytes.to_vec();
     on_big_stack(move || {
-        let tree = tree::parse(&bytes, &tree::Limits::default(), &usvg::Options::default()).map_err(|e| format!("SVG を読めませんでした: {e}"))?;
+        let tree = tree::parse(&bytes, &tree::Limits::default(), &usvg::Options::default()).map_err(|e| t!("Could not read the SVG: {e}"))?;
         let size = tree.size();
         let (sw, sh) = (size.width(), size.height());
         if !(sw > 0.0 && sh > 0.0) {
-            return Err("SVG の大きさが分かりません".to_owned());
+            return Err(t!("The SVG has no size").to_owned());
         }
         let scale = RASTER_LONG / sw.max(sh);
         let (w, h) = (((sw * scale).round() as u32).max(1), ((sh * scale).round() as u32).max(1));
-        let pixmap = tree::draw::render(&tree, usvg::Transform::from_scale(w as f32 / sw, h as f32 / sh), w, h, 0, DRAW_BUDGET).map_err(|e| format!("SVG を描けませんでした: {}", e.message))?;
+        let pixmap = tree::draw::render(&tree, usvg::Transform::from_scale(w as f32 / sw, h as f32 / sh), w, h, 0, DRAW_BUDGET).map_err(|e| t!("Could not draw the SVG: {}", e.message))?;
         // resvg の絵はアルファを乗算しているので、戻す。
         let mut rgba = pixmap.data().to_vec();
         for px in rgba.chunks_exact_mut(4) {
@@ -62,21 +63,21 @@ pub fn decode_svg(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
 
 /// トレースのプリセット。VectorCraft（と Illustrator）のプリセット名と、画面に出す名前。
 pub const PRESETS: [(&str, &str); 15] = [
-    ("Auto Color", "自動カラー"),
-    ("Flat Logo", "フラットロゴ"),
-    ("3 Colors", "3 色"),
-    ("6 Colors", "6 色"),
-    ("16 Colors", "16 色"),
-    ("Black and White Logo", "白黒ロゴ"),
-    ("Line Art", "線画"),
-    ("Sketched Art", "スケッチ"),
-    ("Silhouettes", "シルエット"),
-    ("Technical Drawing", "図面"),
-    ("Outline", "アウトライン（線だけ）"),
-    ("Shades of Gray", "グレーの濃淡"),
-    ("Low Fidelity Photo", "写真（粗く）"),
-    ("High Fidelity Photo", "写真（細かく）"),
-    ("Default", "デフォルト（白黒）"),
+    ("Auto Color", "Auto Color"),
+    ("Flat Logo", "Flat Logo"),
+    ("3 Colors", "3 Colors"),
+    ("6 Colors", "6 Colors"),
+    ("16 Colors", "16 Colors"),
+    ("Black and White Logo", "Black and White Logo"),
+    ("Line Art", "Line Art"),
+    ("Sketched Art", "Sketched Art"),
+    ("Silhouettes", "Silhouettes"),
+    ("Technical Drawing", "Technical Drawing"),
+    ("Outline", "Outline (strokes only)"),
+    ("Shades of Gray", "Shades of Gray"),
+    ("Low Fidelity Photo", "Photo (low fidelity)"),
+    ("High Fidelity Photo", "Photo (high fidelity)"),
+    ("Default", "Default (black and white)"),
 ];
 
 /// ベクター化の設定。
@@ -121,20 +122,20 @@ fn border_color(w: usize, h: usize, rgba: &[u8]) -> Option<[u8; 3]> {
 /// RGBA（アルファは乗算なし）の絵を、VectorCraft の画像トレースで SVG にする。`size_mm` は SVG に書く実寸。
 pub fn trace(w: usize, h: usize, rgba: &[u8], settings: TraceSettings, size_mm: [f32; 2]) -> Result<Traced, String> {
     let name = PRESETS.get(settings.preset).map_or("Auto Color", |p| p.0);
-    let mut params = vectorcraft_trace::preset(name).ok_or("トレースの設定が見つかりません")?;
+    let mut params = vectorcraft_trace::preset(name).ok_or(t!("The trace preset was not found"))?;
     if settings.drop_background {
         params.ignore_white = true;
         params.ignore_background = true;
         params.ignore_color = border_color(w, h, rgba).map(hex);
     }
-    let raster = vectorcraft_trace::Raster::new(w as u32, h as u32, rgba.to_vec()).map_err(|e| format!("トレースできませんでした: {e}"))?;
+    let raster = vectorcraft_trace::Raster::new(w as u32, h as u32, rgba.to_vec()).map_err(|e| t!("Could not trace: {e}"))?;
     let result = vectorcraft_trace::trace_within(&raster, &params, MAX_ANCHORS).map_err(|e| match e {
-        vectorcraft_trace::TraceError::TooLarge { .. } => "画像が大きすぎて、トレースできません。".to_owned(),
-        vectorcraft_trace::TraceError::NotFlat { .. } => "平らな色のロゴではないので、フラットロゴにできません。自動カラーか写真を選んでください。".to_owned(),
-        other => format!("トレースできませんでした: {other}"),
+        vectorcraft_trace::TraceError::TooLarge { .. } => t!("The image is too large to trace.").to_owned(),
+        vectorcraft_trace::TraceError::NotFlat { .. } => t!("This is not a flat-color logo, so Flat Logo cannot be used. Choose Auto Color or a photo preset.").to_owned(),
+        other => t!("Could not trace: {other}"),
     })?;
     if result.paths.is_empty() {
-        return Err("トレースしても、形が 1 つもできませんでした。プリセットか、背景の設定を変えてみてください。".to_owned());
+        return Err(t!("Tracing made no shapes. Try another preset or change the background setting.").to_owned());
     }
     // 実寸（mm）と、画素の座標の見る範囲。外のアプリで開くと、柄と同じ大きさで出る。
     let mut svg = String::new();
@@ -143,7 +144,7 @@ pub fn trace(w: usize, h: usize, rgba: &[u8], settings: TraceSettings, size_mm: 
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{:.2}mm\" height=\"{:.2}mm\" viewBox=\"0 0 {w} {h}\">\n",
         size_mm[0], size_mm[1]
     ));
-    svg.push_str("<!-- パケノバ: VectorCraft の画像トレースで作りました -->\n");
+    svg.push_str("<!-- PAKENOBA: traced with VectorCraft's Image Trace -->\n");
     for path in &result.paths {
         let d = craft_svg::write::path_data_fixed(&path.path.to_bezpath(), 2);
         let color = hex(path.color);

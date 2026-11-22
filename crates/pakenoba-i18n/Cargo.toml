@@ -1,0 +1,13 @@
+[package]
+name = "pakenoba-i18n"
+description = "パケノバの多言語化: 英語を基準の言葉にして、言語ごとの訳の表（TSV）から引く"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pakenoba-i18n-macros = { path = "../pakenoba-i18n-macros" }
+# OS の言語を知る（MIT か Apache-2.0。egui の部品がすでに使っている）。
+sys-locale = "0.3"

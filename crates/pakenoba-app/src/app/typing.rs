@@ -3,6 +3,7 @@
 //! 文字の道具（T）で箱や展開図を押すと、そこに文字の柄を置いて、右の欄で文字を打てるようにする。
 //! 文字と書式（フォント、大きさ、色、揃え、字間、行送り）を変えると、絵を描き直す。拡大や縮小をしていれば、その倍率を保つ。
 
+use pakenoba_i18n::t;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -15,7 +16,7 @@ use super::App;
 use crate::paint::{Picture, Placed};
 
 /// 新しく置く文字の、はじめの言葉。
-const FIRST_WORDS: &str = "テキスト";
+const FIRST_WORDS: &str = "Your text";
 
 /// はじめの書式（フォントは、見つかったものを入れる）。
 pub(super) fn default_style() -> TextSpec {
@@ -25,11 +26,11 @@ pub(super) fn default_style() -> TextSpec {
 /// 書式の操作（フォント、大きさ、色、揃え、字間、行送り）。変えたら真。
 fn style_controls(ui: &mut egui::Ui, spec: &mut TextSpec, families: &[String], used: &[String], compact: bool) -> bool {
     let mut changed = false;
-    let font_label = if spec.font.is_empty() { "（フォント）".to_owned() } else { spec.font.clone() };
+    let font_label = if spec.font.is_empty() { t!("(font)").to_owned() } else { spec.font.clone() };
     egui::ComboBox::from_id_salt(if compact { "text-font-bar" } else { "text-font" }).width(if compact { 170.0 } else { 200.0 }).height(360.0).selected_text(font_label).show_ui(ui, |ui| {
         // この案件で使っているフォントを先に、そのあとに、入っているすべてのフォント。
         if !used.is_empty() {
-            ui.weak("この案件で使っているフォント");
+            ui.weak(t!("Fonts used in this project"));
             for name in used {
                 changed |= ui.selectable_value(&mut spec.font, name.clone(), name).changed();
             }
@@ -41,30 +42,30 @@ fn style_controls(ui: &mut egui::Ui, spec: &mut TextSpec, families: &[String], u
     });
     if !compact {
         ui.end_row();
-        ui.label("大きさ");
+        ui.label(t!("Size"));
     }
-    changed |= ui.add(egui::DragValue::new(&mut spec.size).range(TEXT_SIZE).speed(0.1).max_decimals(1).suffix(" mm")).on_hover_text("文字の大きさ（全角 1 文字の高さ）").changed();
+    changed |= ui.add(egui::DragValue::new(&mut spec.size).range(TEXT_SIZE).speed(0.1).max_decimals(1).suffix(" mm")).on_hover_text(t!("Text size (height of one full-width character)")).changed();
     if !compact {
         ui.end_row();
-        ui.label("色");
+        ui.label(t!("Color"));
     }
-    changed |= ui.color_edit_button_srgb(&mut spec.color).on_hover_text("文字の色").changed();
+    changed |= ui.color_edit_button_srgb(&mut spec.color).on_hover_text(t!("Text color")).changed();
     if !compact {
         ui.end_row();
-        ui.label("揃え");
+        ui.label(t!("Alignment"));
     }
     ui.horizontal(|ui| {
-        for (align, label) in [(TextAlign::Left, "左"), (TextAlign::Center, "中央"), (TextAlign::Right, "右")] {
-            changed |= ui.selectable_value(&mut spec.align, align, label).on_hover_text(format!("{label}揃え")).changed();
+        for (align, label) in [(TextAlign::Left, t!("Left")), (TextAlign::Center, t!("Center")), (TextAlign::Right, t!("Right"))] {
+            changed |= ui.selectable_value(&mut spec.align, align, label).on_hover_text(t!("Align {label}")).changed();
         }
     });
     if !compact {
         ui.end_row();
-        ui.label("字間");
-        changed |= ui.add(egui::DragValue::new(&mut spec.spacing).range(TEXT_SPACING).speed(5.0).max_decimals(0)).on_hover_text("全角の 1/1000 単位。0 がふつう").changed();
+        ui.label(t!("Tracking"));
+        changed |= ui.add(egui::DragValue::new(&mut spec.spacing).range(TEXT_SPACING).speed(5.0).max_decimals(0)).on_hover_text(t!("In 1/1000 of a full-width character. 0 is normal")).changed();
         ui.end_row();
-        ui.label("行送り");
-        changed |= ui.add(egui::DragValue::new(&mut spec.leading).range(TEXT_LEADING).speed(0.01).max_decimals(2).suffix(" 倍")).on_hover_text("文字の大きさの何倍で、次の行へ送るか").changed();
+        ui.label(t!("Leading"));
+        changed |= ui.add(egui::DragValue::new(&mut spec.leading).range(TEXT_LEADING).speed(0.01).max_decimals(2).suffix(t!(" ×"))).on_hover_text(t!("How far to move to the next line, as a multiple of the text size")).changed();
         ui.end_row();
     }
     changed
@@ -82,7 +83,7 @@ impl App {
         if self.text_style.font.is_empty() {
             self.text_style.font = self.fonts.default_family().unwrap_or_default();
         }
-        TextSpec { text: FIRST_WORDS.to_owned(), ..self.text_style.clone() }
+        TextSpec { text: pakenoba_i18n::tr(FIRST_WORDS).to_owned(), ..self.text_style.clone() }
     }
 
     /// 文字の柄を、パネル `panel` の、展開図の上の点 `at` を中心に置き、選んで、文字を打てるようにする。
@@ -90,7 +91,7 @@ impl App {
         let spec = self.new_style();
         let picture = match self.text_picture(&spec) {
             Ok(picture) => picture,
-            Err(e) => return self.say(format!("文字を置けませんでした: {e}")),
+            Err(e) => return self.say(t!("Could not place the text: {e}")),
         };
         let Picture::Text(art) = &picture else { return };
         let size = art.size_mm;
@@ -100,7 +101,7 @@ impl App {
         self.decals.push(Placed { decal, picture, back, layer: Default::default() });
         self.select_only(Some(self.decals.len() - 1));
         self.focus_text = true;
-        self.say("文字を置きました。右の欄で文字を打ちます。");
+        self.say(t!("Placed text. Type it in the right panel."));
     }
 
     /// この案件で使っているフォント。
@@ -130,7 +131,7 @@ impl App {
                 decal.picture = picture;
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
-            Err(e) => self.say(format!("文字を描けませんでした: {e}")),
+            Err(e) => self.say(t!("Could not draw the text: {e}")),
         }
     }
 
@@ -141,7 +142,7 @@ impl App {
         let mut spec = art.spec.clone();
         let mut changed = false;
         ui.add_enabled_ui(!locked, |ui| {
-            let edit = ui.add(egui::TextEdit::multiline(&mut spec.text).desired_rows(2).desired_width(f32::INFINITY).hint_text("文字を打つ（改行で次の行）"));
+            let edit = ui.add(egui::TextEdit::multiline(&mut spec.text).desired_rows(2).desired_width(f32::INFINITY).hint_text(t!("Type text (Enter for a new line)")));
             if std::mem::take(&mut self.focus_text) {
                 edit.request_focus();
                 // はじめの言葉は、すぐ打ち替えられるよう、全体を選んでおく。
@@ -154,12 +155,12 @@ impl App {
             let families = self.fonts.families().to_vec();
             let used = self.used_fonts();
             egui::Grid::new("text-style").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("フォント");
+                ui.label(t!("Font"));
                 changed |= style_controls(ui, &mut spec, &families, &used, false);
             });
         });
         if art.font_used != art.spec.font {
-            ui.colored_label(ui.visuals().warn_fg_color, format!("「{}」がこの PC にないので、{} で描いています。", art.spec.font, art.font_used));
+            ui.colored_label(ui.visuals().warn_fg_color, t!("\"{}\" is not on this PC, so it is drawn with {}.", art.spec.font, art.font_used));
         }
         if changed {
             self.retype(index, spec.clone());
@@ -191,7 +192,7 @@ impl App {
         let earlier = self.snapshot();
         let changed = style_controls(ui, &mut spec, &families, &used, true);
         ui.separator();
-        ui.weak(if target.is_some() { "選んでいる文字の書式" } else { "箱か展開図を押すと、そこに文字を置きます" });
+        ui.weak(if target.is_some() { t!("Format of the selected text") } else { t!("Click the box or the dieline to place text there") });
         if changed {
             if let Some(index) = target {
                 self.retype(index, spec.clone());
