@@ -98,12 +98,12 @@ impl App {
         let mut candidate: Option<Placed> = None;
         if let Some(rect) = solid {
             // 開け閉めと組み立ては、立体の表示に付く操作なので、立体の表示のすぐ下に置く。
-            let two_rows = rect.width() < 660.0;
-            let split = rect.bottom() - if two_rows { 66.0 } else { 38.0 };
+            let rows = self.motion_rows(rect.width());
+            let split = rect.bottom() - (10.0 + 28.0 * rows as f32);
             let (view, strip) = (Rect::from_min_max(rect.min, pos2(rect.right(), split)), Rect::from_min_max(pos2(rect.left(), split), rect.max));
             candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, two_rows));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, rows));
             if several {
                 tag(ui, rect.min + vec2(8.0, 6.0), "立体");
             }
@@ -157,7 +157,7 @@ impl App {
             let info = rs.adapter.get_info();
             self.backend = format!("{:?} / {}", info.backend, info.name);
         }
-        let mesh = self.template.build_mesh(self.fold, 1.0 - self.open);
+        let mesh = self.template.build_mesh_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
         self.triangles = mesh.len() / 3;
         let (center, radius) = bounding_sphere(&mesh);
 

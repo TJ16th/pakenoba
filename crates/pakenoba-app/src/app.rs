@@ -39,6 +39,8 @@ pub struct Initial {
     pub workspace: usize,
     /// お客さんが開けた度合い（0 が閉じた状態、1 が開いた状態）。
     pub open: f32,
+    /// 底の開き具合（0 が閉じた状態、1 が開けきった状態）。
+    pub open_bottom: f32,
     /// 手提げ型とピロー型のふくらみ（度）。指定がなければ、型ごとの初期値を使う。
     pub bulge: Option<f32>,
     /// 幅（ピロー型では横の長さ）と高さ（mm）。指定がなければ、型ごとの初期値を使う。
@@ -63,7 +65,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false }
     }
 }
 
@@ -396,8 +398,9 @@ struct App {
     /// 展開図に戻す前の視点。組み立て直すときに、ここへ戻す。
     view_before_flat: Option<(f32, f32)>,
     /// お客さんが開けた度合い（0 が閉じた状態、1 が開いた状態）と、そのアニメーションの行き先。
-    open: f32,
-    open_to: Option<f32>,
+    /// 開け口ごとの開き具合（0 が閉じた状態、1 が開けきった状態）。1 つめが主な開け口（上）、2 つめが底。
+    open: [f32; 2],
+    open_to: [Option<f32>; 2],
     yaw: f32,
     pitch: f32,
     zoom: f32,
@@ -472,8 +475,8 @@ impl App {
             animate_to: None,
             view_to: None,
             view_before_flat: None,
-            open: initial.open.clamp(0.0, 1.0),
-            open_to: None,
+            open: [initial.open.clamp(0.0, 1.0), initial.open_bottom.clamp(0.0, 1.0)],
+            open_to: [None; 2],
             yaw: initial.yaw,
             pitch: initial.pitch,
             zoom: 1.0,
@@ -594,8 +597,8 @@ impl App {
         let removed = self.decals.len();
         self.dims = Dims::for_shape(sides, self.dims.t);
         self.fold = 1.0;
-        self.open = 0.0;
-        (self.animate_to, self.open_to) = (None, None);
+        self.open = [0.0; 2];
+        (self.animate_to, self.open_to) = (None, [None; 2]);
         if removed > 0 {
             self.say(format!("型を変えたので、置いた柄 {removed} つを外しました。Ctrl+Z で、前の型と柄に戻せます。"));
         }
@@ -826,13 +829,14 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
-        if let Some(target) = self.open_to {
+        for which in 0..2 {
+            let Some(target) = self.open_to[which] else { continue };
             let step = ui.input(|i| i.stable_dt).min(0.05) / 0.6;
-            if (target - self.open).abs() <= step {
-                self.open = target;
-                self.open_to = None;
+            if (target - self.open[which]).abs() <= step {
+                self.open[which] = target;
+                self.open_to[which] = None;
             } else {
-                self.open += step * (target - self.open).signum();
+                self.open[which] += step * (target - self.open[which]).signum();
                 ui.ctx().request_repaint();
             }
         }

@@ -239,7 +239,7 @@ pub struct Surface {
 fn face_ups(tpl: &Template) -> Vec<[f32; 2]> {
     let world = tpl.world_at(1.0);
     // 閉じると隠れるパネル（差し込み、内側のフラップなど）は、お客さんが見るのは開けたときなので、開けた姿で決める。
-    let (closed, open) = (tpl.transforms(1.0, 1.0), tpl.transforms(1.0, 0.0));
+    let (closed, open) = (tpl.transforms(1.0, 1.0), tpl.transforms_at(1.0, [0.0, 0.0]));
     (0..tpl.panels.len())
         .map(|index| {
             let place = if tpl.panels[index].hidden_when_closed() { &open[index] } else { &closed[index] };

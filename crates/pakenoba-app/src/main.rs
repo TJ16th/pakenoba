@@ -23,6 +23,7 @@ fn main() -> ExitCode {
             ("--sides", Some(v)) => initial.sides = v as usize,
             ("--workspace", Some(v)) => initial.workspace = v as usize,
             ("--open", Some(v)) => initial.open = v,
+            ("--open-bottom", Some(v)) => initial.open_bottom = v,
             ("--bulge", Some(v)) => initial.bulge = Some(v.clamp(0.0, 90.0)),
             ("--width", Some(v)) => initial.width = Some(v.clamp(40.0, 300.0)),
             ("--height", Some(v)) => initial.height = Some(v.clamp(40.0, 300.0)),

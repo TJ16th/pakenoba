@@ -464,44 +464,94 @@ impl App {
 
     /// 立体の表示の下に置く、動きの操作。開け閉め（買った人の動き）と、組み立て（展開図から箱まで）。
     /// 幅が足りないときは、2 行に分ける。
-    pub(super) fn motion_controls(&mut self, ui: &mut egui::Ui, two_rows: bool) {
-        let width = ui.available_width();
-        if two_rows {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| self.open_controls(ui, (width - 190.0).clamp(60.0, 320.0)));
-                ui.horizontal(|ui| self.fold_controls(ui, (width - 190.0).clamp(60.0, 320.0)));
-            });
+    /// 開け閉めと組み立ての操作を、何行に分けるか。底も開く型では、操作が 1 つ多い。
+    pub(super) fn motion_rows(&self, width: f32) -> usize {
+        if self.template.can_open_at(1) {
+            if width >= 900.0 {
+                1
+            } else if width >= 520.0 {
+                2
+            } else {
+                3
+            }
+        } else if width >= 660.0 {
+            1
         } else {
-            ui.horizontal(|ui| {
-                // 開け閉めを左に、大きく置く。デザイン中にいちばん動かすため。
-                let spare = (width - 420.0).max(120.0);
-                self.open_controls(ui, (spare * 0.62).clamp(60.0, 320.0));
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-                self.fold_controls(ui, (spare * 0.38).clamp(50.0, 200.0));
-            });
+            2
         }
     }
 
-    fn open_controls(&mut self, ui: &mut egui::Ui, slider: f32) {
-        let can_open = self.template.can_open();
+    pub(super) fn motion_controls(&mut self, ui: &mut egui::Ui, rows: usize) {
+        let width = ui.available_width();
+        let bottom = self.template.can_open_at(1);
+        let gap = |ui: &mut egui::Ui| {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+        };
+        // 開け閉めを左に、大きく置く。デザイン中にいちばん動かすため。
+        match (rows, bottom) {
+            (1, false) => {
+                let spare = (width - 420.0).max(120.0);
+                ui.horizontal(|ui| {
+                    self.open_controls(ui, 0, (spare * 0.62).clamp(60.0, 320.0));
+                    gap(ui);
+                    self.fold_controls(ui, (spare * 0.38).clamp(50.0, 200.0));
+                });
+            }
+            (1, true) => {
+                let spare = (width - 640.0).max(150.0);
+                ui.horizontal(|ui| {
+                    self.open_controls(ui, 0, (spare * 0.44).clamp(50.0, 280.0));
+                    gap(ui);
+                    self.open_controls(ui, 1, (spare * 0.26).clamp(40.0, 180.0));
+                    gap(ui);
+                    self.fold_controls(ui, (spare * 0.30).clamp(40.0, 200.0));
+                });
+            }
+            (2, true) => {
+                let spare = (width - 400.0).max(100.0);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        self.open_controls(ui, 0, (spare * 0.6).clamp(40.0, 280.0));
+                        gap(ui);
+                        self.open_controls(ui, 1, (spare * 0.4).clamp(40.0, 180.0));
+                    });
+                    ui.horizontal(|ui| self.fold_controls(ui, (width - 190.0).clamp(60.0, 320.0)));
+                });
+            }
+            _ => {
+                let slider = (width - 190.0).clamp(60.0, 320.0);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| self.open_controls(ui, 0, slider));
+                    if bottom {
+                        ui.horizontal(|ui| self.open_controls(ui, 1, slider));
+                    }
+                    ui.horizontal(|ui| self.fold_controls(ui, slider));
+                });
+            }
+        }
+    }
+
+    /// 開け閉めの操作。`which` は、0 が主な開け口（上のフタ、屋根）、1 が底。
+    fn open_controls(&mut self, ui: &mut egui::Ui, which: usize, slider: f32) {
+        let can_open = self.template.can_open_at(which);
         ui.add_enabled_ui(can_open, |ui| {
-            ui.strong("開け閉め");
+            ui.strong(if which == 0 { "開け閉め" } else { "底" });
             if ui.button("閉じる").clicked() {
                 self.fold = 1.0;
-                self.open_to = Some(0.0);
+                self.open_to[which] = Some(0.0);
             }
             ui.spacing_mut().slider_width = slider;
-            if ui.add(egui::Slider::new(&mut self.open, 0.0..=1.0).show_value(false)).changed() {
+            if ui.add(egui::Slider::new(&mut self.open[which], 0.0..=1.0).show_value(false)).changed() {
                 // 開け閉めは、組み上がった箱に対する動き。
                 self.fold = 1.0;
                 self.animate_to = None;
-                self.open_to = None;
+                self.open_to[which] = None;
             }
             if ui.button("開ける").clicked() {
                 self.fold = 1.0;
-                self.open_to = Some(1.0);
+                self.open_to[which] = Some(1.0);
             }
         })
         .response

@@ -146,6 +146,8 @@ pub struct Panel {
     pub slices: usize,
     /// 箱の中での役割。
     pub role: Role,
+    /// このパネルの折り線が、どの開け閉めで動くか。0 が主な開け口（上のフタ、ゲーブル型の屋根）、1 が底。
+    pub opening: usize,
 }
 
 /// パネルの役割。
@@ -187,7 +189,7 @@ pub struct Opening {
 
 impl Panel {
     fn flat(name: &'static str, outline: Vec<P2>, hinge: Option<Hinge>, role: Role) -> Panel {
-        Panel { name, outline, hinge, bend: None, curved: None, slices: 0, role }
+        Panel { name, outline, hinge, bend: None, curved: None, slices: 0, role, opening: 0 }
     }
 
     /// 組み上がって閉じると隠れる部分（のりしろ、差し込み、内側のフラップなど）か。
@@ -456,21 +458,32 @@ impl Template {
 
     /// 折り線の今の角度。組み立てで折るぶんと、開け閉めで動くぶんの合計。
     /// 開け閉めの動きは、組み立てが終わってから効く。
-    fn hinge_angle(&self, hinge: &Hinge, fold: f32, closing: f32) -> f32 {
+    fn hinge_angle(&self, panel: &Panel, hinge: &Hinge, fold: f32, closing: [f32; 2]) -> f32 {
         let assembled = progress((0.95, 1.0), fold);
-        let theta = self.open_angle * closing.clamp(0.0, 1.0) * assembled;
-        let opened = (1.0 - closing.clamp(0.0, 1.0)) * assembled;
+        let closing = closing[panel.opening.min(1)].clamp(0.0, 1.0);
+        let theta = self.open_angle * closing * assembled;
+        let opened = (1.0 - closing) * assembled;
         hinge.angle * progress(hinge.window, fold) + hinge.motion.angle(theta, opened)
     }
 
-    /// お客さんが開け閉めする動きを持つ型か。
+    /// お客さんが開け閉めする動きを持つ型か（主な開け口）。
     pub fn can_open(&self) -> bool {
-        self.panels.iter().filter_map(|panel| panel.hinge.as_ref()).any(|hinge| !matches!(hinge.motion, Motion::Fixed))
+        self.can_open_at(0)
+    }
+
+    /// その開け口に、開け閉めの動きがあるか。0 が主な開け口（上のフタ、ゲーブル型の屋根）、1 が底。
+    pub fn can_open_at(&self, opening: usize) -> bool {
+        self.panels.iter().filter(|panel| panel.opening == opening).filter_map(|panel| panel.hinge.as_ref()).any(|hinge| !matches!(hinge.motion, Motion::Fixed))
     }
 
     /// 各パネルの置かれ方。`fold` は組み立ての進み具合（0 が展開図、1 が組み上がった箱）。
-    /// `closing` は開け閉め（0 が開いた状態、1 が閉じた状態）で、開け閉めの動きを持つ型だけに効く。
+    /// `closing` は主な開け口の開け閉め（0 が開いた状態、1 が閉じた状態）。底は閉じたまま。
     pub fn transforms(&self, fold: f32, closing: f32) -> Vec<Placement> {
+        self.transforms_at(fold, [closing, 1.0])
+    }
+
+    /// 各パネルの置かれ方。`closing` は、開け口ごとの開け閉め（1 つめが主な開け口、2 つめが底。0 が開いた状態、1 が閉じた状態）。
+    pub fn transforms_at(&self, fold: f32, closing: [f32; 2]) -> Vec<Placement> {
         let mut out: Vec<Placement> = Vec::with_capacity(self.panels.len());
         for panel in &self.panels {
             if let Some(curved) = &panel.curved {
@@ -499,7 +512,7 @@ impl Template {
                     let (origin, dir) = self.hinge_axis(panel, hinge);
                     // 親が丸まっているときは、折り線の位置での向きを土台にする（折り線は親の巻く軸と平行である前提）。
                     let parent = out[hinge.parent].at(lerp(hinge.a, hinge.b, 0.5));
-                    let base = parent.then_after(&Affine::rotation_about(origin, dir, self.hinge_angle(hinge, fold, closing)));
+                    let base = parent.then_after(&Affine::rotation_about(origin, dir, self.hinge_angle(panel, hinge, fold, closing)));
                     let bend = panel.bend.as_ref().and_then(|b| self.bend_now(panel, b, Some((hinge.a, hinge.b)), fold));
                     Placement { base, bend, mirror: None }
                 }
@@ -528,8 +541,13 @@ impl Template {
 
     /// 三角形の並び（3 頂点ずつ）で、厚みのある紙の形を作る。
     pub fn build_mesh(&self, fold: f32, closing: f32) -> Vec<Vertex> {
+        self.build_mesh_at(fold, [closing, 1.0])
+    }
+
+    /// `build_mesh` と同じだが、開け口ごとの開け閉めを指定する（1 つめが主な開け口、2 つめが底）。
+    pub fn build_mesh_at(&self, fold: f32, closing: [f32; 2]) -> Vec<Vertex> {
         let t = self.thickness;
-        let placements = self.transforms(fold, closing);
+        let placements = self.transforms_at(fold, closing);
         let world = self.world_at(fold);
         let mut out = Vec::new();
         let mut emit = |frame: &Affine, p: V3, normal: V3, uv: [f32; 2], kind: f32| {
@@ -585,7 +603,7 @@ impl Template {
             }
             // 折り線のすき間を円弧で埋める。谷折りは外側に、山折りは内側にできる。
             if let Some(hinge) = &panel.hinge {
-                let angle = self.hinge_angle(hinge, fold, closing);
+                let angle = self.hinge_angle(panel, hinge, fold, closing);
                 if angle.abs() > 1e-4 {
                     let parent = placements[hinge.parent].at(lerp(hinge.a, hinge.b, 0.5));
                     let (origin, dir) = self.hinge_axis(panel, hinge);
@@ -760,22 +778,29 @@ mod tests {
         }
     }
 
-    /// 開け閉めのどの途中でも、内側のフラップが、フタを突き抜けないことを確かめる。開けきったときに、フラップが起きていることも見る。
-    fn flaps_open_after_the_lid(tpl: &Template, label: &str) {
+    /// 開け閉めのどの途中でも、内側のフラップが、フタを突き抜けないことを確かめる。開けきったときに、フラップが動いていることも見る。
+    /// `end` は、0 が上、1 が底。もう一方の端は、動かない。
+    fn flaps_open_after_the_lid(tpl: &Template, end: usize, label: &str) {
         let t = tpl.thickness;
-        let lid = index(tpl, "上のフタ");
-        let flaps: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with("上の") && tpl.panels[i].name.ends_with("フラップ")).collect();
+        let (prefix, other) = [("上の", "底の"), ("底の", "上の")][end];
+        let pose = |opened: f32| tpl.transforms_at(1.0, if end == 0 { [1.0 - opened, 1.0] } else { [1.0, 1.0 - opened] });
+        let lid = index(tpl, &format!("{prefix}フタ"));
+        let flaps: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with(prefix) && tpl.panels[i].name.ends_with("フラップ")).collect();
         assert!(!flaps.is_empty(), "{label}");
-        let top = |now: &[Placement], i: usize| tpl.panels[i].outline.iter().map(|p| now[i].point([p[0], p[1], 0.0])[1]).fold(f32::NEG_INFINITY, f32::max);
-        let closed = tpl.transforms(1.0, 1.0);
+        assert!(tpl.can_open_at(end), "{label}");
+        // フタのつけ根の中央と、フタの真ん中（紙の座標）。
+        let hinge = tpl.panels[lid].hinge.as_ref().unwrap();
+        let root = lerp(hinge.a, hinge.b, 0.5);
+        let outline = &tpl.panels[lid].outline;
+        let middle = outline.iter().fold([0.0, 0.0], |m, p| [m[0] + p[0] / outline.len() as f32, m[1] + p[1] / outline.len() as f32]);
+        let closed = pose(0.0);
         for step in 0..=60 {
             let opened = step as f32 / 60.0;
-            let now = tpl.transforms(1.0, 1.0 - opened);
+            let now = pose(opened);
             // フタの内側の面（紙の座標で、厚みの向きが t の側）の、つけ根の上の 1 点。内側へ向かう向きと、つけ根から先へ向かう向き。
-            let root = tpl.panels[lid].outline.iter().copied().fold([0.0, f32::INFINITY], |m, p| if p[1] < m[1] { p } else { m });
             let origin = now[lid].point([root[0], root[1], t]);
             let inward = sub(now[lid].point([root[0], root[1], t + 1.0]), origin);
-            let outward_along = sub(now[lid].point([root[0], root[1] + 1.0, t]), origin);
+            let outward_along = sub(now[lid].point([middle[0], middle[1], t]), origin);
             for &flap in &flaps {
                 for &p in &tpl.panels[flap].outline {
                     for n in [0.0, t] {
@@ -788,25 +813,62 @@ mod tests {
                 }
             }
         }
-        let open = tpl.transforms(1.0, 0.0);
+        let open = pose(1.0);
+        let moved = |i: usize| tpl.panels[i].outline.iter().map(|p| crate::math::length(sub(open[i].point([p[0], p[1], 0.0]), closed[i].point([p[0], p[1], 0.0])))).fold(0.0, f32::max);
         for &flap in &flaps {
-            assert!(top(&open, flap) > top(&closed, flap) + 2.0, "{label}: {} が起きない", tpl.panels[flap].name);
+            assert!(moved(flap) > 2.0, "{label}: {} が開かない", tpl.panels[flap].name);
         }
-        // 底のフラップは動かない。
-        for i in (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with("底の")) {
-            let p = tpl.panels[i].outline[0];
-            close(open[i].point([p[0], p[1], 0.0]), closed[i].point([p[0], p[1], 0.0]));
+        assert!(moved(lid) > 10.0, "{label}: フタが開かない");
+        // もう一方の端は動かない。
+        for i in (0..tpl.panels.len()).filter(|&i| tpl.panels[i].name.starts_with(other)) {
+            assert!(moved(i) < 1e-3, "{label}: {} が動いた", tpl.panels[i].name);
         }
     }
 
     #[test]
     fn 内側のフラップは_フタが起きたあとに開く() {
-        for (w, d, h, t) in [(W, D, H, T), (200.0, 160.0, 85.0, 0.5), (60.0, 20.0, 200.0, 0.5), (200.0, 150.0, 50.0, 2.0)] {
-            flaps_open_after_the_lid(&Template::tuck_box(w, d, h, t), &format!("差し込み箱 {w}×{d}×{h}"));
+        for end in [0, 1] {
+            for (w, d, h, t) in [(W, D, H, T), (200.0, 160.0, 85.0, 0.5), (60.0, 20.0, 200.0, 0.5), (200.0, 150.0, 50.0, 2.0)] {
+                flaps_open_after_the_lid(&Template::tuck_box(w, d, h, t), end, &format!("差し込み箱 {w}×{d}×{h} の{}", ["上", "底"][end]));
+            }
+            for n in [5, 6, 8] {
+                flaps_open_after_the_lid(&Template::prism(n, 70.0, 160.0, 0.5), end, &format!("{n} 角柱の{}", ["上", "底"][end]));
+            }
         }
-        for n in [5, 6, 8] {
-            flaps_open_after_the_lid(&Template::prism(n, 70.0, 160.0, 0.5), &format!("{n} 角柱"));
+        // ゲーブル型の底も、差し込み箱と同じ作りで開く。
+        flaps_open_after_the_lid(&Template::gable(160.0, 100.0, 110.0, 45.0, 0.5), 1, "ゲーブル型の底");
+    }
+
+    #[test]
+    fn 底の差し込みも_正面を突き抜けずに開く() {
+        for (w, d, h, t) in [(W, D, H, T), (120.0, 60.0, 160.0, 0.5), (60.0, 20.0, 200.0, 0.5), (200.0, 150.0, 50.0, 1.0)] {
+            let tpl = Template::tuck_box(w, d, h, t);
+            let tuck = index(&tpl, "底の差し込み");
+            for step in 0..=40 {
+                let opened = step as f32 / 40.0;
+                let now = tpl.transforms_at(1.0, [1.0, 1.0 - opened]);
+                for &p in &tpl.panels[tuck].outline {
+                    for n in [0.0, t] {
+                        let q = now[tuck].point([p[0], p[1], n]);
+                        // 正面の下の端より上にある間は、正面の紙（n が 0 から t）の内側にいる。
+                        if q[1] > 0.0 {
+                            assert!(q[2] > t - 0.35, "開き具合 {opened} で、底の差し込みが正面を突き抜ける: {q:?}（厚み {t}）");
+                        }
+                    }
+                }
+            }
+            // 主な開け閉めだけでは、底は動かない。両方を開けることもできる。
+            assert!(tpl.can_open_at(0) && tpl.can_open_at(1) && !tpl.can_open_at(2));
+            let both = tpl.transforms_at(1.0, [0.0, 0.0]);
+            let (top_only, bottom_only) = (tpl.transforms(1.0, 0.0), tpl.transforms_at(1.0, [1.0, 0.0]));
+            for (name, same) in [("上のフタ", &top_only), ("底のフタ", &bottom_only)] {
+                let i = index(&tpl, name);
+                let p = tpl.panels[i].outline[2];
+                close(both[i].point([p[0], p[1], 0.0]), same[i].point([p[0], p[1], 0.0]));
+            }
         }
+        // 開け閉めの動きを持たない型は、底も開かない。
+        assert!(!Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians()).can_open_at(1));
     }
 
     #[test]

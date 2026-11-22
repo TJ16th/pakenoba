@@ -57,6 +57,7 @@ impl Template {
             (-1.0f32, ["底の左フラップ", "底の右フラップ", "底のフタ", "底の差し込み"], [(0.40, 0.54), (0.46, 0.60), (0.54, 0.70)]),
             (1.0f32, ["上の左フラップ", "上の右フラップ", "上のフタ", "上の差し込み"], [(0.70, 0.82), (0.74, 0.88), (0.84, 1.0)]),
         ] {
+            let first = panels.len();
             let side_edge = if sign > 0.0 { h } else { 0.0 };
             let lid_edge = if sign > 0.0 { h + t } else { -t };
             let (dust_window, tuck_window, lid_window) = (windows[0], windows[1], windows[2]);
@@ -68,8 +69,8 @@ impl Template {
                 panels.push(Panel::flat(
                     name,
                     ccw(vec![[u0, side_edge], [u1, side_edge], [u1 - taper, side_edge + sign * dust], [u0 + taper, side_edge + sign * dust]]),
-                    // お客さんが開けるのは、上だけ。フタを起こしたあとで、左右のフラップを外へ起こす。
-                    Some(Hinge { parent, a: [u0, side_edge], b: [u1, side_edge], angle: quarter, window: dust_window, motion: if sign > 0.0 { Motion::Flap(FLAP_LIFT) } else { Motion::Fixed } }),
+                    // フタを起こしたあとで、左右のフラップを外へ起こす。
+                    Some(Hinge { parent, a: [u0, side_edge], b: [u1, side_edge], angle: quarter, window: dust_window, motion: Motion::Flap(FLAP_LIFT) }),
                     Role::Flap,
                 ));
             }
@@ -77,9 +78,9 @@ impl Template {
             // フタ。背面につながり、奥行きより紙 1 枚ぶん短い。
             let lid_far = lid_edge + sign * (d - t);
             let lid_index = panels.len();
-            // お客さんが開けるのは、上のフタ。差し込みは、正面の内側に沿って抜ける。
+            // 上も底も、同じ作りで、同じように開く。差し込みは、正面の内側に沿って抜ける。
             let clear = (tuck / (d - t)).min(1.0).asin();
-            let (lid_motion, tuck_motion) = if sign > 0.0 { (Motion::Lift(LID_LIFT), Motion::Slide { lift: LID_LIFT, clear }) } else { (Motion::Fixed, Motion::Fixed) };
+            let (lid_motion, tuck_motion) = (Motion::Lift(LID_LIFT), Motion::Slide { lift: LID_LIFT, clear });
             panels.push(Panel::flat(names[2], rect(u_b, lid_edge, u_b + w, lid_far), Some(Hinge { parent: 3, a: [u_b, lid_edge], b: [u_b + w, lid_edge], angle: quarter, window: lid_window, motion: lid_motion }), Role::Face));
 
             // 差し込み（ベロ）。フタの先につながり、正面の内側に入る。
@@ -90,6 +91,10 @@ impl Template {
                 Some(Hinge { parent: lid_index, a: [s0, lid_far], b: [s1, lid_far], angle: quarter, window: tuck_window, motion: tuck_motion }),
                 Role::Tuck,
             ));
+            // 底のパネルは、底の開け閉め（開け口 1）で動く。
+            if sign < 0.0 {
+                panels[first..].iter_mut().for_each(|panel| panel.opening = 1);
+            }
         }
 
         let (min, max) = bounds(&panels);
@@ -149,13 +154,14 @@ impl Template {
         {
             let side_edge = if sign > 0.0 { h } else { 0.0 };
             let lid_edge = if sign > 0.0 { h + t } else { -t };
+            let first = panels.len();
             for wall in (1..n).filter(|wall| !tuck_walls.contains(wall)) {
                 let a = wall_start(wall) + 0.5;
                 let b = (if wall == n - 1 { last_end } else { wall_start(wall + 1) }) - 0.5;
                 panels.push(Panel::flat(
                     flap_name,
                     ccw(vec![[a, side_edge], [b, side_edge], [b - inset, side_edge + sign * flap], [a + inset, side_edge + sign * flap]]),
-                    Some(Hinge { parent: wall, a: [a, side_edge], b: [b, side_edge], angle: quarter, window: flap_window, motion: if sign > 0.0 { Motion::Flap(FLAP_LIFT) } else { Motion::Fixed } }),
+                    Some(Hinge { parent: wall, a: [a, side_edge], b: [b, side_edge], angle: quarter, window: flap_window, motion: Motion::Flap(FLAP_LIFT) }),
                     Role::Flap,
                 ));
             }
@@ -170,9 +176,8 @@ impl Template {
             let amount: Vec<f32> = (0..n).map(|i| if tuck_walls.contains(&i) { t } else { 0.0 }).collect();
             let lid = inset_edges(&lid, &amount, sign);
             let lid_index = panels.len();
-            // お客さんが開けるのは、上のフタ。
-            let top = sign > 0.0;
-            panels.push(Panel::flat(lid_name, ccw(lid.clone()), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: if top { Motion::Lift(LID_LIFT) } else { Motion::Fixed } }), Role::Face));
+            // 上も底も、同じ作りで、同じように開く。
+            panels.push(Panel::flat(lid_name, ccw(lid.clone()), Some(Hinge { parent: 0, a: [u0, lid_edge], b: [u0 + side, lid_edge], angle: quarter, window: lid_window, motion: Motion::Lift(LID_LIFT) }), Role::Face));
             // 差し込み（ベロ）。フタの辺から外へ伸び、折って側面の内側に入る。
             for &i in &tuck_walls {
                 let (a, b) = (lid[i], lid[(i + 1) % n]);
@@ -185,8 +190,12 @@ impl Template {
                 let tip = |p: P2, along: f32| [p[0] + dir[0] * along + out[0] * tuck, p[1] + dir[1] * along + out[1] * tuck];
                 // 差し込みが側面の内側から抜けきるのは、フタのつけ根にいちばん近い端が、差し込みの高さだけ上がったとき。
                 let nearest = (a[1] - lid_edge).abs().min((b[1] - lid_edge).abs()).max(1e-3);
-                let motion = if top { Motion::Slide { lift: LID_LIFT, clear: (tuck / nearest).min(1.0).asin() } } else { Motion::Fixed };
+                let motion = Motion::Slide { lift: LID_LIFT, clear: (tuck / nearest).min(1.0).asin() };
                 panels.push(Panel::flat(tuck_name, ccw(vec![a, b, tip(b, -taper), tip(a, taper)]), Some(Hinge { parent: lid_index, a, b, angle: quarter, window: tuck_window, motion }), Role::Tuck));
+            }
+            // 底のパネルは、底の開け閉め（開け口 1）で動く。
+            if sign < 0.0 {
+                panels[first..].iter_mut().for_each(|panel| panel.opening = 1);
             }
         }
 
@@ -235,8 +244,8 @@ impl Template {
         let top = d + l;
 
         let mut panels = vec![Panel::flat("底", rect(0.0, 0.0, w, d), None, Role::Face)];
-        panels.push(Panel { name: "正面", outline: rect(0.0, d, w, top), hinge: Some(Hinge { parent: 0, a: [0.0, d], b: [w, d], angle: rise, window: MAIN, motion: Motion::Fixed }), bend: bend(), curved: None, slices: 0, role: Role::Face });
-        panels.push(Panel { name: "背面", outline: rect(0.0, -l, w, 0.0), hinge: Some(Hinge { parent: 0, a: [0.0, 0.0], b: [w, 0.0], angle: rise, window: MAIN, motion: Motion::Fixed }), bend: bend(), curved: None, slices: 0, role: Role::Face });
+        panels.push(Panel { name: "正面", outline: rect(0.0, d, w, top), hinge: Some(Hinge { parent: 0, a: [0.0, d], b: [w, d], angle: rise, window: MAIN, motion: Motion::Fixed }), bend: bend(), curved: None, slices: 0, role: Role::Face, opening: 0 });
+        panels.push(Panel { name: "背面", outline: rect(0.0, -l, w, 0.0), hinge: Some(Hinge { parent: 0, a: [0.0, 0.0], b: [w, 0.0], angle: rise, window: MAIN, motion: Motion::Fixed }), bend: bend(), curved: None, slices: 0, role: Role::Face, opening: 0 });
         for (name, parent, edge, sign) in [("正面の持ち手", 1usize, top, 1.0f32), ("背面の持ち手", 2usize, -l, -1.0f32)] {
             panels.push(Panel::flat(
                 name,
@@ -313,27 +322,30 @@ impl Template {
             Role::GlueTab,
         ));
 
-        // 底は差し込み箱と同じ。
+        // 底は差し込み箱と同じ。底の開け閉め（開け口 1）で、同じように開く。
+        let first_bottom = panels.len();
         let clear = t + 0.5;
         for (name, parent, u0, u1) in [("底の左フラップ", 1usize, u_l, u_f - clear), ("底の右フラップ", 2usize, u_r + clear, u_b - 0.5)] {
             let taper = (u1 - u0) * 0.15;
             panels.push(Panel::flat(
                 name,
                 ccw(vec![[u0, 0.0], [u1, 0.0], [u1 - taper, -dust], [u0 + taper, -dust]]),
-                Some(Hinge { parent, a: [u0, 0.0], b: [u1, 0.0], angle: quarter, window: (0.50, 0.70), motion: fixed }),
+                Some(Hinge { parent, a: [u0, 0.0], b: [u1, 0.0], angle: quarter, window: (0.50, 0.70), motion: Motion::Flap(FLAP_LIFT) }),
                 Role::Flap,
             ));
         }
         let lid_far = -t - (d - t);
         let bottom_lid = panels.len();
-        panels.push(Panel::flat("底のフタ", rect(u_b, -t, u_b + w, lid_far), Some(Hinge { parent: 3, a: [u_b, -t], b: [u_b + w, -t], angle: quarter, window: (0.75, 1.0), motion: fixed }), Role::Face));
+        panels.push(Panel::flat("底のフタ", rect(u_b, -t, u_b + w, lid_far), Some(Hinge { parent: 3, a: [u_b, -t], b: [u_b + w, -t], angle: quarter, window: (0.75, 1.0), motion: Motion::Lift(LID_LIFT) }), Role::Face));
         let (s0, s1) = (u_b + 0.5, u_b + w - 0.5);
+        let slide = Motion::Slide { lift: LID_LIFT, clear: (tuck / (d - t)).min(1.0).asin() };
         panels.push(Panel::flat(
             "底の差し込み",
             ccw(vec![[s0, lid_far], [s1, lid_far], [s1 - tuck_taper, lid_far - tuck], [s0 + tuck_taper, lid_far - tuck]]),
-            Some(Hinge { parent: bottom_lid, a: [s0, lid_far], b: [s1, lid_far], angle: quarter, window: (0.60, 0.80), motion: fixed }),
+            Some(Hinge { parent: bottom_lid, a: [s0, lid_far], b: [s1, lid_far], angle: quarter, window: (0.60, 0.80), motion: slide }),
             Role::Tuck,
         ));
+        panels[first_bottom..].iter_mut().for_each(|panel| panel.opening = 1);
 
         // 屋根と持ち手。組み立てでは折らず、開け閉めで動く。
         let ridge = h + slope;
@@ -462,6 +474,7 @@ impl Template {
             curved: None,
             slices: SLICES,
             role: Role::Face,
+                opening: 0,
         }];
         panels.push(Panel {
             name: "背面",
@@ -471,6 +484,7 @@ impl Template {
             curved: None,
             slices: SLICES,
             role: Role::Face,
+                opening: 0,
         });
 
         // 貼りしろと持ち手。上で合わさった 2 枚の縁を、端から端まで山折りでまっすぐ上に立てて、背中合わせに貼る。
@@ -501,7 +515,7 @@ impl Template {
         for (name, parent, sign, shift, hidden) in [("正面のフラップ", 0usize, 1.0f32, 0.0f32, false), ("背面のフラップ", 1usize, -1.0f32, under, true)] {
             for side in [-1.0f32, 1.0] {
                 let (outline, crease, line) = flap(sign, shift, side);
-                panels.push(Panel { name, outline, hinge: None, bend: None, curved: Some(CurvedFold { parent, crease, line }), slices: SLICES, role: if hidden { Role::Flap } else { Role::Face } });
+                panels.push(Panel { name, outline, hinge: None, bend: None, curved: Some(CurvedFold { parent, crease, line }), slices: SLICES, role: if hidden { Role::Flap } else { Role::Face }, opening: 0 });
             }
         }
 
