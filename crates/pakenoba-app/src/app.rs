@@ -9,6 +9,7 @@ mod file;
 mod history;
 mod icons;
 mod panels;
+mod recovery;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -70,11 +71,15 @@ pub struct Initial {
     pub answer_save: Option<PathBuf>,
     /// 同じく、差し替える画像を選ぶダイアログの答え。
     pub answer_replace: Option<PathBuf>,
+    /// 落ちたときの控えを置くフォルダ。指定がなければ、使う人のデータのフォルダの中。
+    pub recovery_dir: Option<PathBuf>,
+    /// 控えを書く間隔（秒）。
+    pub backup_seconds: f64,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, recovery_dir: None, backup_seconds: 30.0 }
     }
 }
 
@@ -410,6 +415,8 @@ struct App {
     replace_request: Option<assets::Replace>,
     /// 画面を撮って確かめるとき用。差し替える画像を選ぶダイアログの答え。
     answer_replace: Option<PathBuf>,
+    /// 落ちたときの控え。
+    recovery: recovery::Recovery,
     show_guides: bool,
     /// 柄や絵が変わったので、箱に貼る画像を作り直す。
     art_dirty: bool,
@@ -500,6 +507,8 @@ impl App {
             file: file::FileState::new(initial.answer_open.clone(), initial.answer_save.clone()),
             replace_request: None,
             answer_replace: initial.answer_replace.clone(),
+            // 自動のテストでは、使う人のフォルダに控えを書かない。
+            recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
             show_guides: initial.guides,
             art_dirty: true,
             front_rgba: Vec::new(),
@@ -898,6 +907,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// ふつうに終わるとき。落ちたときの控えを消す。
+    fn on_exit(&mut self) {
+        self.recovery.finish();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
@@ -955,6 +969,7 @@ impl eframe::App for App {
             self.editing = false;
         }
         self.file_frame(ui.ctx());
+        self.recovery_frame(ui.ctx());
         self.file_shortcuts(ui.ctx());
         self.shortcuts(ui.ctx());
         self.top_bar(ui);
@@ -964,6 +979,7 @@ impl eframe::App for App {
         self.status_bar(ui);
         self.confirm_shape(ui.ctx());
         self.file_dialogs(ui.ctx());
+        self.recovery_dialog(ui.ctx());
         match self.workspace {
             Workspace::Shape => {
                 self.shape_list(ui);

@@ -128,7 +128,7 @@ impl App {
     }
 
     /// いまの状態を、案件のファイルに書く形にする。
-    fn project(&self) -> Result<Project, String> {
+    pub(super) fn project(&self) -> Result<Project, String> {
         let assets = self
             .assets
             .iter()
@@ -291,6 +291,30 @@ impl App {
             lines.push("元のファイルは、そのまま残っています。この状態を残すには、名前を付けて保存してください。".to_owned());
             self.file.notice = Some(Notice { title: "一部を外して開きました".to_owned(), lines });
         }
+    }
+
+    /// 落ちたときの控えを開く。元の案件の場所につなぎ、保存していない状態にする。開けたら真。
+    pub(super) fn open_backup(&mut self, backup: &Path, original: Option<PathBuf>, name: &str) -> bool {
+        let opened = match Project::open(backup) {
+            Ok(opened) => opened,
+            Err(e) => {
+                self.file.notice = Some(Notice { title: "控えを開けませんでした".to_owned(), lines: vec![name.to_owned(), e.to_string(), "控えは、そのまま残してあります。".to_owned()] });
+                return false;
+            }
+        };
+        let mut problems = opened.problems;
+        problems.extend(self.apply_project(opened.project));
+        // 元の場所のフォルダがなくなっていたら、名前なしにする（保存するときに、場所を選んでもらう）。
+        self.file.path = original.filter(|p| p.parent().is_some_and(Path::exists));
+        self.file.suggest = self.file.path.as_deref().map_or_else(|| UNTITLED.to_owned(), file_name);
+        self.file.saved = !self.fingerprint();
+        let mut lines = vec![format!("{name} を、控えから開きました。保存すると、元の案件のファイルが新しくなります。")];
+        if self.file.path.is_none() {
+            lines = vec![format!("{name} を、控えから開きました。名前を付けて保存してください。")];
+        }
+        lines.extend(problems.into_iter().map(|p| format!("・{p}")));
+        self.file.notice = Some(Notice { title: "控えから開きました".to_owned(), lines });
+        true
     }
 
     /// 開くファイルを選んでもらう。

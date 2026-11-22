@@ -36,6 +36,8 @@ fn main() -> ExitCode {
             ("--thickness", Some(v)) => initial.thickness = v.clamp(0.3, 6.0),
             ("--answer-open", _) if i + 1 < args.len() => initial.answer_open = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--answer-save", _) if i + 1 < args.len() => initial.answer_save = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--recovery-dir", _) if i + 1 < args.len() => initial.recovery_dir = Some(std::path::PathBuf::from(&args[i + 1])),
+            ("--backup-seconds", Some(v)) => initial.backup_seconds = v as f64,
             ("--answer-replace", _) if i + 1 < args.len() => initial.answer_replace = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--psd", _) if i + 1 < args.len() => initial.psd = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--png", _) if i + 1 < args.len() => initial.png = Some(std::path::PathBuf::from(&args[i + 1])),
