@@ -18,6 +18,8 @@ mod recovery;
 mod select;
 mod settings;
 mod typing;
+mod shapes;
+mod adjust;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -315,7 +317,7 @@ impl Tool {
 
     /// まだ作っていない道具は、押せない。
     fn ready(self) -> bool {
-        matches!(self, Tool::Select | Tool::Text | Tool::Hand)
+        matches!(self, Tool::Select | Tool::Text | Tool::Shape | Tool::Hand)
     }
 
     /// ツールチップ。名前とショートカット。押せない道具は、その理由。
@@ -323,7 +325,7 @@ impl Tool {
         match self {
             Tool::Select => "選択 (V)",
             Tool::Text => "文字 (T)",
-            Tool::Shape => "図形（これから作ります）",
+            Tool::Shape => "図形 (U)",
             Tool::Ai => "生成AI（これから作ります）",
             Tool::Hand => "手のひら (H)",
         }
@@ -498,6 +500,10 @@ struct App {
     fonts: crate::text::Fonts,
     /// 次に置く文字の書式。
     text_style: pakenoba_core::project::TextSpec,
+    /// 次に置く図形の形と色。
+    shape_style: pakenoba_core::project::ShapeSpec,
+    /// 画像の調整の欄の値。
+    adjust: adjust::AdjustSettings,
     /// 文字を置いた直後。右の欄の文字の入力に、カーソルを置く。
     focus_text: bool,
     /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
@@ -611,6 +617,8 @@ impl App {
             movie: None,
             fonts: Default::default(),
             text_style: typing::default_style(),
+            shape_style: shapes::default_shape(),
+            adjust: Default::default(),
             focus_text: false,
             show_guides: initial.guides,
             art_dirty: true,
@@ -997,10 +1005,10 @@ impl App {
             return;
         }
         let (plain, command, shift, pressed) = ctx.input(|i| {
-            let pressed = [egui::Key::V, egui::Key::E, egui::Key::T, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
+            let pressed = [egui::Key::V, egui::Key::E, egui::Key::T, egui::Key::U, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
             (i.modifiers.is_none(), i.modifiers.command, i.modifiers.shift, pressed)
         });
-        let [v, e, t, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
+        let [v, e, t, u, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
             self.zoom = 1.0;
@@ -1037,6 +1045,9 @@ impl App {
         }
         if t {
             self.tool = Tool::Text;
+        }
+        if u {
+            self.tool = Tool::Shape;
         }
         for (pressed, view) in [(one, View::Solid), (two, View::Front), (three, View::Back)] {
             if pressed {

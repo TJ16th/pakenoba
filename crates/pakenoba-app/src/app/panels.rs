@@ -112,7 +112,8 @@ impl App {
                         ui.weak("ドラッグで、箱を回す、展開図をずらす");
                     }
                     Tool::Text => self.text_bar(ui),
-                    Tool::Shape | Tool::Ai => {}
+                    Tool::Shape => self.shape_bar(ui),
+                    Tool::Ai => {}
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
@@ -188,6 +189,8 @@ impl App {
             ui.weak("ロックしています。動かすには、レイヤーの欄で鍵を外してください。");
         }
         self.text_properties(ui, index, locked);
+        self.shape_properties(ui, index, locked);
+        self.adjust_controls(ui, index, locked);
         self.edit_controls(ui, index);
         let earlier = self.snapshot();
         let template = &self.template;

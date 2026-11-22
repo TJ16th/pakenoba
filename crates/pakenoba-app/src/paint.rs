@@ -64,6 +64,8 @@ pub enum Picture {
     Image { w: usize, h: usize, rgba: Arc<Vec<u8>> },
     /// 文字（文字と書式から描いた絵）。
     Text(Arc<crate::text::TextArt>),
+    /// 図形（形と色から、その場で描く。拡大してもぼやけない）。
+    Shape(pakenoba_core::project::ShapeSpec),
 }
 
 impl Picture {
@@ -73,6 +75,7 @@ impl Picture {
             Picture::Band => "帯",
             Picture::Image { .. } => "画像",
             Picture::Text(_) => "文字",
+            Picture::Shape(_) => "図形",
         }
     }
 
@@ -109,7 +112,43 @@ impl Picture {
                 [rgb[0], rgb[1], rgb[2], 1.0]
             }
             Picture::Text(art) => Picture::sample_rgba(art.w, art.h, &art.rgba, q, size),
+            Picture::Shape(spec) => Picture::sample_shape(spec, q, half),
             Picture::Image { w, h, rgba } => Picture::sample_rgba(*w, *h, rgba, q, size),
+        }
+    }
+
+    /// 図形の、柄の座標 `q` での色。縁からの距離（内側が負）で、塗りと線を決める。縁は 1 画素ぶんでなだらかにする。
+    fn sample_shape(spec: &pakenoba_core::project::ShapeSpec, q: P2, half: P2) -> [f32; 4] {
+        use pakenoba_core::project::ShapeKind;
+        let d = match spec.kind {
+            ShapeKind::Rect => {
+                let r = spec.radius.min(half[0]).min(half[1]).max(0.0);
+                let (dx, dy) = (q[0].abs() - (half[0] - r), q[1].abs() - (half[1] - r));
+                (dx.max(0.0).hypot(dy.max(0.0)) + dx.max(dy).min(0.0)) - r
+            }
+            ShapeKind::Ellipse => {
+                // 楕円までの距離の近似（中心からの正規化した距離で、短いほうの半径に合わせる）。
+                let n = (q[0] / half[0].max(1e-3)).hypot(q[1] / half[1].max(1e-3));
+                (n - 1.0) * half[0].min(half[1])
+            }
+        };
+        let cover = |edge: f32| (0.5 - edge * PX_PER_MM).clamp(0.0, 1.0);
+        let inside = cover(d);
+        if inside <= 0.0 {
+            return [0.0; 4];
+        }
+        let fill = spec.fill.map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]);
+        let stroke = spec.stroke.map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]);
+        // 線は、縁から内側へ太さのぶん。太さのぶん縮めた形の外側が線。
+        let on_line = if stroke.is_some() { 1.0 - cover(d + spec.stroke_width) } else { 0.0 };
+        match (fill, stroke) {
+            (Some(f), Some(s)) => {
+                let t = on_line;
+                [f[0] + (s[0] - f[0]) * t, f[1] + (s[1] - f[1]) * t, f[2] + (s[2] - f[2]) * t, inside]
+            }
+            (Some(f), None) => [f[0], f[1], f[2], inside],
+            (None, Some(s)) => [s[0], s[1], s[2], inside * on_line],
+            (None, None) => [0.0; 4],
         }
     }
 

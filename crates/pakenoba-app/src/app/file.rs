@@ -143,6 +143,7 @@ impl App {
                 .position(|asset| matches!(&asset.picture, Picture::Image { rgba: other, .. } if std::sync::Arc::ptr_eq(rgba, other)))
                 .map(Source::Asset),
             Picture::Text(art) => Some(Source::Text(art.spec.clone())),
+            Picture::Shape(spec) => Some(Source::Shape(spec.clone())),
         }
     }
 
@@ -191,6 +192,7 @@ impl App {
                 Some(Source::Builtin(name)) => (0u8, name).hash(&mut hasher),
                 Some(Source::Asset(index)) => (1u8, index).hash(&mut hasher),
                 Some(Source::Text(spec)) => (3u8, &spec.text, &spec.font, [spec.size, spec.spacing, spec.leading].map(f32::to_bits), spec.color, spec.align).hash(&mut hasher),
+                Some(Source::Shape(spec)) => (4u8, spec.kind, spec.fill, spec.stroke, [spec.stroke_width, spec.radius].map(f32::to_bits)).hash(&mut hasher),
                 None => 2u8.hash(&mut hasher),
             }
         }
@@ -254,6 +256,7 @@ impl App {
                     Some(asset) => asset.picture.clone(),
                     None => continue,
                 },
+                Source::Shape(spec) => Picture::Shape(spec.clone()),
                 Source::Text(spec) => match self.text_picture(spec) {
                     Ok(picture) => {
                         if let Picture::Text(art) = &picture

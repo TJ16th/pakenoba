@@ -249,8 +249,12 @@ impl App {
         }
         // 文字の道具では、文字の柄を押せば選び、ほかを押せば、そこに文字を置く。
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
+        // 図形の道具では、図形を押せば選び、ほかを押せば、そこに図形を置く。
+        let shape_click = response.clicked() && self.tool == Tool::Shape && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Shape(_)));
         if text_click && let Some((panel, at, back)) = hit {
             self.add_text_at(panel, at, back);
+        } else if shape_click && let Some((panel, at, back)) = hit {
+            self.add_shape_at(panel, at, back);
         } else if response.clicked() && self.tool != Tool::Hand {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
@@ -267,6 +271,8 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+        } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         } else if decal_under.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -410,8 +416,12 @@ impl App {
             self.grab = None;
         }
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
+        // 図形の道具では、図形を押せば選び、ほかを押せば、そこに図形を置く。
+        let shape_click = response.clicked() && self.tool == Tool::Shape && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Shape(_)));
         if text_click && let Some((panel, at)) = hit {
             self.add_text_at(panel, at, back);
+        } else if shape_click && let Some((panel, at)) = hit {
+            self.add_shape_at(panel, at, back);
         } else if response.clicked() && self.tool != Tool::Hand {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
@@ -428,6 +438,8 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+        } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         } else if decal_under.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }

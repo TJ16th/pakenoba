@@ -164,7 +164,37 @@ pub enum Source {
     Asset(usize),
     /// 文字。絵は、開くときにアプリが文字から描き直す。
     Text(TextSpec),
+    /// 図形（四角、丸）。絵は持たず、形と色から描く。
+    Shape(ShapeSpec),
 }
+
+/// 図形の形。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ShapeKind {
+    /// 四角（角を丸められる）。
+    #[default]
+    Rect,
+    /// 丸（楕円）。
+    Ellipse,
+}
+
+/// 図形の柄。大きさは柄の大きさ（`Decal::size`）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeSpec {
+    pub kind: ShapeKind,
+    /// 塗りの色（None なら塗らない）。
+    pub fill: Option<[u8; 3]>,
+    /// 線の色（None なら線を引かない）。
+    pub stroke: Option<[u8; 3]>,
+    /// 線の太さ（mm）。
+    pub stroke_width: f32,
+    /// 四角の角の丸み（半径、mm）。
+    pub radius: f32,
+}
+
+/// 図形の線の太さと、角の丸みの範囲（mm）。
+pub const SHAPE_STROKE: RangeInclusive<f32> = 0.1..=50.0;
+pub const SHAPE_RADIUS: RangeInclusive<f32> = 0.0..=500.0;
 
 /// 文字の柄の中身と書式。
 #[derive(Clone, Debug, PartialEq)]
@@ -384,6 +414,29 @@ struct DecalEntry {
     /// 文字の柄（`asset`、`builtin` のかわりに書く）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<TextEntry>,
+    /// 図形の柄（`asset`、`builtin` のかわりに書く）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape: Option<FigureEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FigureEntry {
+    /// `rect` か `ellipse`。
+    kind: String,
+    /// 塗りの色（`#rrggbb`）。書かなければ塗らない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<String>,
+    /// 線の色（`#rrggbb`）。書かなければ線を引かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stroke: Option<String>,
+    #[serde(default = "normal_stroke")]
+    stroke_width: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    radius: f64,
+}
+
+fn normal_stroke() -> f64 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize)]
@@ -522,16 +575,24 @@ impl Project {
                 .iter()
                 .map(|placed| {
                     let (panel, nth) = panel_ref(tpl, placed.decal.panel);
-                    let (asset, builtin, text) = match &placed.source {
-                        Source::Asset(index) => (Some(*index), None, None),
-                        Source::Builtin(name) => (None, Some(name.clone()), None),
+                    let (asset, builtin, text, shape) = match &placed.source {
+                        Source::Asset(index) => (Some(*index), None, None, None),
+                        Source::Builtin(name) => (None, Some(name.clone()), None, None),
                         Source::Text(spec) => (
                             None,
                             None,
                             Some(TextEntry { text: spec.text.clone(), font: spec.font.clone(), size: tidy(spec.size), color: hex(spec.color), align: spec.align.name().to_owned(), spacing: tidy(spec.spacing), leading: tidy(spec.leading) }),
+                            None,
                         ),
+                        Source::Shape(spec) => {
+                            let kind = match spec.kind {
+                                ShapeKind::Rect => "rect",
+                                ShapeKind::Ellipse => "ellipse",
+                            };
+                            (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
+                        }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, text }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, text, shape }
                 })
                 .collect(),
         }
@@ -691,6 +752,28 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     for (index, entry) in manifest.decals.iter().enumerate() {
         let number = index + 1;
         let source = match (entry.asset, &entry.builtin) {
+            (None, None) if entry.shape.is_some() => {
+                let Some(shape) = &entry.shape else { unreachable!() };
+                let kind = match shape.kind.as_str() {
+                    "rect" => ShapeKind::Rect,
+                    "ellipse" => ShapeKind::Ellipse,
+                    other => {
+                        problems.push(format!("柄 {number} の図形の形（{other}）が読めないので、四角にしました"));
+                        ShapeKind::Rect
+                    }
+                };
+                let mut color = |text: &Option<String>, what: &str| {
+                    text.as_ref().map(|t| {
+                        from_hex(t).unwrap_or_else(|| {
+                            problems.push(format!("柄 {number} の図形の{what}の色が読めないので、黒にしました"));
+                            [0, 0, 0]
+                        })
+                    })
+                };
+                let (fill, stroke) = (color(&shape.fill, "塗り"), color(&shape.stroke, "線"));
+                let clamp = |v: f64, range: &RangeInclusive<f32>, fallback: f32| if v.is_finite() { (v as f32).clamp(*range.start(), *range.end()) } else { fallback };
+                Source::Shape(ShapeSpec { kind, fill, stroke, stroke_width: clamp(shape.stroke_width, &SHAPE_STROKE, 1.0), radius: clamp(shape.radius, &SHAPE_RADIUS, 0.0) })
+            }
             (None, None) if entry.text.is_some() => {
                 let Some(text) = &entry.text else { unreachable!() };
                 let clamp = |v: f64, range: &RangeInclusive<f32>, what: &str, problems: &mut Vec<String>| {
@@ -841,6 +924,13 @@ mod tests {
                         align: [TextAlign::Left, TextAlign::Center, TextAlign::Right][panel % 3],
                         spacing: if panel % 2 == 0 { 0.0 } else { -25.5 },
                         leading: 1.25 + k / 10.0,
+                    }),
+                    3 if panel % 2 == 0 => Source::Shape(ShapeSpec {
+                        kind: if panel % 4 == 0 { ShapeKind::Ellipse } else { ShapeKind::Rect },
+                        fill: (panel % 3 != 0).then_some([10, k as u8, 200]),
+                        stroke: Some([0, 0, k as u8]),
+                        stroke_width: 0.75 + k / 4.0,
+                        radius: k,
                     }),
                     n => Source::Asset(n - 2),
                 };

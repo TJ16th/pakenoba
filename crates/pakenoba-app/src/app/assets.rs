@@ -81,6 +81,7 @@ pub(super) fn same_picture(a: &Picture, b: &Picture) -> bool {
         (Picture::Logo, Picture::Logo) | (Picture::Band, Picture::Band) => true,
         (Picture::Image { rgba: x, .. }, Picture::Image { rgba: y, .. }) => Arc::ptr_eq(x, y),
         (Picture::Text(x), Picture::Text(y)) => Arc::ptr_eq(x, y),
+        (Picture::Shape(x), Picture::Shape(y)) => x == y,
         _ => false,
     }
 }

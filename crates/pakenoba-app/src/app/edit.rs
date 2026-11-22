@@ -71,6 +71,7 @@ impl App {
                 // 文字は、右の欄で打つ。
                 self.focus_text = true;
             }
+            Picture::Shape(_) => self.say("図形は、右の欄か、上の帯（図形の道具）で、形と色を変えます。"),
             Picture::Logo | Picture::Band => self.say("付属の見本は、外のアプリでは直せません。「この柄だけ差し替える」で、別の画像にできます。"),
             Picture::Image { .. } => match self.asset_of(&self.decals[index].picture.clone()) {
                 Some(asset) => self.start_edit(asset),

@@ -495,7 +495,8 @@ impl Decal {
         self.at = [(center[0] - lo[0]) / (hi[0] - lo[0]).max(1e-3), (center[1] - lo[1]) / (hi[1] - lo[1]).max(1e-3)];
     }
 
-    fn place(&self, tpl: &Template) -> Aff2 {
+    /// 柄の座標（中心が原点、mm）から、型紙の座標への写し。
+    pub fn place(&self, tpl: &Template) -> Aff2 {
         Aff2::new(self.angle, self.center(tpl))
     }
 }

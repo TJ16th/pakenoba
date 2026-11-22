@@ -101,7 +101,7 @@ fn with_extension(path: PathBuf, ext: &str) -> PathBuf {
 }
 
 /// RGBA を PNG にする。
-fn png_bytes(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+pub(super) fn png_bytes(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, w, h);
     encoder.set_color(png::ColorType::Rgba);
