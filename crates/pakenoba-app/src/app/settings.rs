@@ -1,4 +1,4 @@
-//! 案件をまたいで覚えておく設定。いまは、コレクション（登録したフォルダ）だけ。
+//! 案件をまたいで覚えておく設定。コレクション（登録したフォルダ）と、最近使った案件。
 //!
 //! 使う人のデータのフォルダの `pakenoba/settings.toml` に、人が読める形で書く。
 //! 読めないとき（壊れた、新しい版で書かれた）は、空から始めて、元のファイルは上書きしない。
@@ -36,6 +36,9 @@ impl Collection {
 
 #[derive(Default, Serialize, Deserialize)]
 struct Stored {
+    /// 最近使った案件（新しい順）。
+    #[serde(default)]
+    recent: Vec<PathBuf>,
     #[serde(default)]
     collection: Vec<Collection>,
 }
@@ -46,12 +49,13 @@ pub(super) struct Settings {
     /// 読めなかったときは、書かない（読めなかったファイルを消さないため）。
     writable: bool,
     pub collections: Vec<Collection>,
+    pub recent: Vec<PathBuf>,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new() }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new() }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -59,17 +63,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent },
                 Err(e) => {
                     eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new() }
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new() }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new() },
             Err(e) => {
                 eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new() }
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new() }
             }
         }
     }
@@ -77,7 +81,7 @@ impl Settings {
     /// いまの設定を書く。書けなかったら、そのわけを返す。
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { collection: self.collections.clone() }).map_err(|e| e.to_string())?;
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), collection: self.collections.clone() }).map_err(|e| e.to_string())?;
         write_text(file, &format!("# パケノバの設定。アプリが書き換えます。\n{text}")).map_err(|e| format!("設定を保存できませんでした: {e}"))
     }
 

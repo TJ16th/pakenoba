@@ -551,11 +551,18 @@ impl App {
         }
     }
 
-    /// 開け閉めの操作。`which` は、0 が主な開け口（上のフタ、屋根）、1 が底。
+    /// 開け閉めの操作。`which` は、0 が主な開け口（上のフタ、屋根。ピロー型では左の口）、1 が底（ピロー型では右の口）。
     fn open_controls(&mut self, ui: &mut egui::Ui, which: usize, slider: f32) {
         let can_open = self.template.can_open_at(which);
         ui.add_enabled_ui(can_open, |ui| {
-            ui.strong(if which == 0 { "開け閉め" } else { "底" });
+            // ピロー型には上と底の区別がないので、左右の口と呼ぶ。
+            let pillow = self.dims.sides == super::PILLOW;
+            ui.strong(match (which, pillow) {
+                (0, false) => "開け閉め",
+                (_, false) => "底",
+                (0, true) => "左の口",
+                (_, true) => "右の口",
+            });
             if ui.button("閉じる").clicked() {
                 self.fold = 1.0;
                 self.open_to[which] = Some(0.0);

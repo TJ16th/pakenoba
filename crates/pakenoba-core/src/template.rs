@@ -131,6 +131,9 @@ pub struct CurvedFold {
     pub crease: [P2; 3],
     /// 折り線の形（折れ線で近似したもの）。型紙のガイド線に使う。
     pub line: Vec<P2>,
+    /// お客さんが開けるときに、開け口の動き（0 が閉じた状態、1 が開けきった状態）のどの範囲で開くか。
+    /// None なら、開け閉めでは動かない。
+    pub opens: Option<(f32, f32)>,
 }
 
 /// 紙の一区画。輪郭は凸多角形で、反時計回り。
@@ -473,7 +476,9 @@ impl Template {
 
     /// その開け口に、開け閉めの動きがあるか。0 が主な開け口（上のフタ、ゲーブル型の屋根）、1 が底。
     pub fn can_open_at(&self, opening: usize) -> bool {
-        self.panels.iter().filter(|panel| panel.opening == opening).filter_map(|panel| panel.hinge.as_ref()).any(|hinge| !matches!(hinge.motion, Motion::Fixed))
+        self.panels.iter().filter(|panel| panel.opening == opening).any(|panel| {
+            panel.hinge.as_ref().is_some_and(|hinge| !matches!(hinge.motion, Motion::Fixed)) || panel.curved.as_ref().is_some_and(|c| c.opens.is_some())
+        })
     }
 
     /// 各パネルの置かれ方。`fold` は組み立ての進み具合（0 が展開図、1 が組み上がった箱）。
@@ -502,7 +507,42 @@ impl Template {
                     reflect.t[r] = offset * normal[r];
                 }
                 let flip_thickness = Affine { m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]], t: [0.0, 0.0, 2.0 * t] };
-                let mirror = if dot(normal, normal) > 0.5 { Some((reflect, flip_thickness)) } else { None };
+                // 開けた度合い（0 が閉じた状態）。組み上がってから効く。
+                let opened = match curved.opens {
+                    Some(window) => progress(window, (1.0 - closing[panel.opening.min(1)].clamp(0.0, 1.0)) * progress((0.95, 1.0), fold)),
+                    None => 0.0,
+                };
+                let mirror = if dot(normal, normal) <= 0.5 {
+                    None
+                } else if opened <= 0.0 {
+                    Some((reflect, flip_thickness))
+                } else {
+                    // 開ける動き。折り線の両端を結ぶ軸のまわりに、箱の外側を通って起こす。途中で、フラップのふくらみが平らになって、
+                    // 裏返る（ピロー型の口を押して開けるときと同じ）。閉じきると、上の鏡映と一致する。
+                    //   閉じ具合 w のとき: 軸まわりに πw 回し、軸を含んで鏡映の面に直交する面からの距離を (1 - 2w) 倍する。
+                    //   w = 1 では「π 回す × 直交する面での鏡映」で、鏡映の面での鏡映と同じになる。
+                    let w = 1.0 - opened;
+                    let axis = normalize(sub(q[2], q[0]));
+                    let across = normalize(cross(axis, normal));
+                    let k = 1.0 - 2.0 * w;
+                    let mut squash = Affine::IDENTITY;
+                    for r in 0..3 {
+                        for c in 0..3 {
+                            squash.m[r][c] += (k - 1.0) * across[r] * across[c];
+                        }
+                        squash.t[r] = -(k - 1.0) * dot(across, q[0]) * across[r];
+                    }
+                    // 回す向きは、半分回したところで、フラップが箱の外（折り線のふくらむ側）を向く向き。
+                    let middle = scale(add(q[0], q[2]), 0.5);
+                    let outward = sub(q[1], middle);
+                    let centre = panel.outline.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0], a[1] + p[1]]);
+                    let centre = parent.point([centre[0] / panel.outline.len() as f32, centre[1] / panel.outline.len() as f32, t]);
+                    let reach = sub(centre, q[0]);
+                    let reach = sub(reach, scale(axis, dot(reach, axis)));
+                    let sign = if dot(cross(axis, reach), outward) >= 0.0 { 1.0 } else { -1.0 };
+                    let turn = Affine::rotation_about(q[0], axis, sign * std::f32::consts::PI * w);
+                    Some((turn.then_after(&squash), if k < 0.0 { flip_thickness } else { Affine::IDENTITY }))
+                };
                 out.push(Placement { base: parent.base, bend: parent.bend, mirror });
                 continue;
             }
@@ -867,8 +907,66 @@ mod tests {
                 close(both[i].point([p[0], p[1], 0.0]), same[i].point([p[0], p[1], 0.0]));
             }
         }
-        // 開け閉めの動きを持たない型は、底も開かない。
-        assert!(!Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians()).can_open_at(1));
+        // ピロー型は、左右の口がそれぞれ開く（開け口 0 と 1）。
+        let pillow = Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians());
+        assert!(pillow.can_open_at(0) && pillow.can_open_at(1) && !pillow.can_open_at(2));
+    }
+
+    #[test]
+    fn ピロー型の口は_外を回って開き_閉じきると元の形に戻る() {
+        let tpl = Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians());
+        let flaps: Vec<usize> = (0..tpl.panels.len()).filter(|&i| tpl.panels[i].curved.is_some()).collect();
+        assert_eq!(flaps.len(), 4);
+        let centre = |now: &[Placement], i: usize| {
+            let outline = &tpl.panels[i].outline;
+            let c = outline.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / outline.len() as f32, a[1] + p[1] / outline.len() as f32]);
+            now[i].point([c[0], c[1], 0.0])
+        };
+        let closed = tpl.transforms_at(1.0, [1.0, 1.0]);
+        for &i in &flaps {
+            let opening = tpl.panels[i].opening;
+            let mut almost = [1.0, 1.0];
+            almost[opening] = 0.999;
+            // 閉じきる手前と、閉じた状態が、つながっている。
+            let near = tpl.transforms_at(1.0, almost);
+            for p in &tpl.panels[i].outline {
+                close(near[i].point([p[0], p[1], 0.0]), closed[i].point([p[0], p[1], 0.0]));
+            }
+            // 開けきると、フラップは折り線の外へ伸びる（閉じているときより、箱の中心から遠い）。
+            let mut open = [1.0, 1.0];
+            open[opening] = 0.0;
+            let opened = tpl.transforms_at(1.0, open);
+            let middle = [90.0, 0.0, 0.0];
+            let far = |p: V3| ((p[0] - middle[0]).powi(2)).sqrt();
+            let (before, after) = (centre(&closed, i), centre(&opened, i));
+            assert!(far(after) > far(before) + 10.0, "{} が開かない: {before:?} → {after:?}", tpl.panels[i].name);
+            // 反対の口は、閉じたまま。
+            for &j in flaps.iter().filter(|&&j| tpl.panels[j].opening != opening) {
+                close(centre(&opened, j), centre(&closed, j));
+            }
+        }
+        // 外側の正面のフラップが先に起きる。開けはじめは、内側の背面のフラップは閉じたまま。
+        let early = tpl.transforms_at(1.0, [0.8, 1.0]);
+        for &i in flaps.iter().filter(|&&i| tpl.panels[i].opening == 0) {
+            let moved = crate::math::length(sub(centre(&early, i), centre(&closed, i)));
+            if tpl.panels[i].hidden_when_closed() {
+                assert!(moved < 1e-3, "背面のフラップが先に動いた");
+            } else {
+                assert!(moved > 1.0, "正面のフラップが動かない");
+            }
+        }
+        // 途中でも、フラップは箱の外側を回る（折り線のふくらむ側にある）。
+        for i in flaps {
+            let Some(curved) = &tpl.panels[i].curved else { unreachable!() };
+            let mut half = [1.0, 1.0];
+            half[tpl.panels[i].opening] = if tpl.panels[i].hidden_when_closed() { 0.3 } else { 0.7 };
+            let now = tpl.transforms_at(1.0, half);
+            let parent = &now[curved.parent];
+            let q = curved.crease.map(|c| parent.point([c[0], c[1], tpl.thickness]));
+            let out = sub(q[1], scale(add(q[0], q[2]), 0.5));
+            let c = centre(&now, i);
+            assert!(dot(sub(c, scale(add(q[0], q[2]), 0.5)), out) > 0.0, "{} が箱の内側を通る", tpl.panels[i].name);
+        }
     }
 
     #[test]
@@ -883,8 +981,7 @@ mod tests {
             };
             assert!(top(0.0) > top(1.0) + 30.0, "{n} 角柱のフタが起きない: {} → {}", top(1.0), top(0.0));
         }
-        // 開け閉めの動きを持たない型は、そう答える。
-        assert!(!Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians()).can_open());
+        assert!(Template::pillow(180.0, 110.0, 0.5, 70f32.to_radians()).can_open());
         assert!(Template::gable(160.0, 100.0, 110.0, 45.0, 0.5).can_open());
     }
 

@@ -511,11 +511,12 @@ impl Template {
             ));
         }
 
-        // 左右のフラップ。正面のものが外側に来る。
-        for (name, parent, sign, shift, hidden) in [("正面のフラップ", 0usize, 1.0f32, 0.0f32, false), ("背面のフラップ", 1usize, -1.0f32, under, true)] {
-            for side in [-1.0f32, 1.0] {
+        // 左右のフラップ。正面のものが外側に来る。左の口が開け口 0、右の口が開け口 1（ピロー型には上と底の区別がない）。
+        // 開けるときは、外側の正面のフラップが先に起き、そのあとで内側の背面のフラップが起きる。
+        for (name, parent, sign, shift, hidden, opens) in [("正面のフラップ", 0usize, 1.0f32, 0.0f32, false, (0.0, 0.6)), ("背面のフラップ", 1usize, -1.0f32, under, true, (0.4, 1.0))] {
+            for (side, opening) in [(-1.0f32, 0), (1.0, 1)] {
                 let (outline, crease, line) = flap(sign, shift, side);
-                panels.push(Panel { name, outline, hinge: None, bend: None, curved: Some(CurvedFold { parent, crease, line }), slices: SLICES, role: if hidden { Role::Flap } else { Role::Face }, opening: 0 });
+                panels.push(Panel { name, outline, hinge: None, bend: None, curved: Some(CurvedFold { parent, crease, line, opens: Some(opens) }), slices: SLICES, role: if hidden { Role::Flap } else { Role::Face }, opening });
             }
         }
 

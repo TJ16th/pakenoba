@@ -30,11 +30,14 @@ pub(super) enum Then {
     Close,
     /// 別の案件を開く。None なら、ファイルを選ぶところから。
     Open(Option<PathBuf>),
+    /// 新しい案件を始める。
+    New,
 }
 
 /// ファイルの操作。メニューとキーから受けて、画面を描き終えてから実行する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FileAction {
+    New,
     Open,
     Save,
     SaveAs,
@@ -67,6 +70,8 @@ pub(super) struct FileState {
     notice: Option<Notice>,
     /// メニューやキーで頼まれた操作。
     pub action: Option<FileAction>,
+    /// 最近使った案件の一覧から選んだもの。
+    recent: Option<PathBuf>,
     /// ウィンドウを閉じてよい（確認が済んだ）。
     allow_close: bool,
     /// いまウィンドウに出している題。
@@ -80,11 +85,23 @@ pub(super) struct FileState {
 
 impl FileState {
     pub fn new(answer_open: Option<PathBuf>, answer_save: Option<PathBuf>) -> FileState {
-        FileState { path: None, saved: 0, saving: None, pending: None, notice: None, action: None, allow_close: false, title: String::new(), suggest: UNTITLED.to_owned(), answer_open, answer_save }
+        FileState { path: None, saved: 0, saving: None, pending: None, notice: None, action: None, recent: None, allow_close: false, title: String::new(), suggest: UNTITLED.to_owned(), answer_open, answer_save }
     }
 }
 
 const UNTITLED: &str = "名前なし";
+
+/// 最近使った案件を、いくつ覚えておくか。
+const RECENT: usize = 10;
+
+/// Windows の canonicalize が付ける `\\?\` を外す（画面に出すときと、ダイアログに渡すときに読みにくいため）。
+fn simplify(path: &Path) -> PathBuf {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => path.to_owned(),
+    }
+}
 
 /// いまの日時を、その土地の時刻と時差つきで（`2026-11-22T09:46:42+09:00`）。素材を取り込んだ日時として覚える。
 pub(super) fn now_local() -> String {
@@ -280,6 +297,7 @@ impl App {
             self.file.path = Some(path.to_owned());
             self.file.suggest = name.clone();
             self.mark_saved();
+            self.remember_recent(path);
             self.say(format!("{name} を開きました"));
         } else {
             // 外したものがあるので、元のファイルにそのまま上書きさせない。名前なしの、未保存の案件として開く。
@@ -416,6 +434,41 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Then::Open(path) => self.open_now(path),
+            Then::New => self.new_now(),
+        }
+    }
+
+    /// 新しい案件を始める。保存していない変更があれば、先に確かめる。
+    pub(super) fn request_new(&mut self) {
+        if self.is_saving() {
+            self.say("保存しています。終わってから、新しい案件を始めてください。");
+        } else if self.unsaved() {
+            self.file.pending = Some(Then::New);
+        } else {
+            self.new_now();
+        }
+    }
+
+    /// 起動したときと同じ、まっさらな案件にする（差し込み箱、柄も素材もなし）。型を選ぶところから始める。
+    pub(super) fn new_now(&mut self) {
+        let shape = Dims::for_shape(0, self.dims.t).shape();
+        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None });
+        self.file.path = None;
+        self.file.suggest = UNTITLED.to_owned();
+        self.mark_saved();
+        self.workspace = Workspace::Shape;
+        self.library.open = false;
+        self.say("新しい案件を始めました");
+    }
+
+    /// 最近使った案件に入れる（先頭へ。10 件まで）。
+    fn remember_recent(&mut self, path: &Path) {
+        let path = std::fs::canonicalize(path).map(|p| simplify(&p)).unwrap_or_else(|_| path.to_owned());
+        self.settings.recent.retain(|p| *p != path);
+        self.settings.recent.insert(0, path);
+        self.settings.recent.truncate(RECENT);
+        if let Err(e) = self.settings.save() {
+            eprintln!("{e}");
         }
     }
 
@@ -434,6 +487,7 @@ impl App {
                     Ok(()) => {
                         self.file.suggest = file_name(&path);
                         self.say(format!("{} を保存しました", file_name(&path)));
+                        self.remember_recent(&path);
                         self.file.path = Some(path);
                         self.file.saved = print;
                         self.proceed(ctx, then);
@@ -472,8 +526,11 @@ impl App {
         let save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
         let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
         let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+        let new = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
         let action = ctx.input_mut(|i| {
-            if i.consume_shortcut(&save_as) {
+            if i.consume_shortcut(&new) {
+                Some(FileAction::New)
+            } else if i.consume_shortcut(&save_as) {
                 Some(FileAction::SaveAs)
             } else if i.consume_shortcut(&save) {
                 Some(FileAction::Save)
@@ -491,28 +548,73 @@ impl App {
     /// 上の帯の「ファイル」のメニュー。
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let saving = self.is_saving();
+        let mut chosen = None;
+        let mut open = None;
+        let mut clear = false;
         ui.menu_button("ファイル", |ui| {
             ui.set_min_width(220.0);
             let mut pick = |ui: &mut egui::Ui, enabled: bool, label: &str, keys: &str, action: FileAction| {
                 if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys)).clicked() {
-                    self.file.action = Some(action);
+                    chosen = Some(action);
                     ui.close();
                 }
             };
+            pick(ui, !saving, "新しい案件", "Ctrl+N", FileAction::New);
             pick(ui, !saving, "開く…", "Ctrl+O", FileAction::Open);
+            ui.add_enabled_ui(!saving, |ui| {
+                ui.menu_button("最近使った案件", |ui| {
+                    ui.set_min_width(260.0);
+                    if self.settings.recent.is_empty() {
+                        ui.weak("まだありません");
+                    }
+                    for path in &self.settings.recent {
+                        let exists = path.exists();
+                        let label = if exists { file_name(path) } else { format!("{}（見つかりません）", file_name(path)) };
+                        if ui.add_enabled(exists, egui::Button::new(label)).on_hover_text(path.display().to_string()).on_disabled_hover_text(path.display().to_string()).clicked() {
+                            open = Some(path.clone());
+                            ui.close();
+                        }
+                    }
+                    if !self.settings.recent.is_empty() {
+                        ui.separator();
+                        if ui.button("一覧を消す").on_hover_text("ファイルは消えません").clicked() {
+                            clear = true;
+                            ui.close();
+                        }
+                    }
+                });
+            });
             ui.separator();
             pick(ui, !saving, "保存", "Ctrl+S", FileAction::Save);
             pick(ui, !saving, "名前を付けて保存…", "Ctrl+Shift+S", FileAction::SaveAs);
         });
+        if chosen.is_some() {
+            self.file.action = chosen;
+        }
+        if let Some(path) = open {
+            self.file.recent = Some(path);
+        }
+        if clear {
+            self.settings.recent.clear();
+            if let Err(e) = self.settings.save() {
+                self.say(e);
+            }
+        }
     }
 
     /// メニューやキーで頼まれた操作を行う。確認のダイアログが出ている間は、受け付けない。
     pub(super) fn run_file_action(&mut self, ctx: &egui::Context) {
-        let Some(action) = self.file.action.take() else { return };
         if self.file.pending.is_some() || self.file.notice.is_some() {
+            (self.file.action, self.file.recent) = (None, None);
             return;
         }
+        if let Some(path) = self.file.recent.take() {
+            self.request_open(Some(path));
+            return;
+        }
+        let Some(action) = self.file.action.take() else { return };
         match action {
+            FileAction::New => self.request_new(),
             FileAction::Open => self.request_open(None),
             FileAction::Save => {
                 if self.is_saving() {
@@ -559,6 +661,7 @@ impl App {
             ui.label(match then {
                 Then::Close => "保存しないで閉じると、変更は失われます。",
                 Then::Open(_) => "保存しないで別の案件を開くと、変更は失われます。",
+                Then::New => "保存しないで新しい案件を始めると、変更は失われます。",
                 Then::Nothing => "",
             });
             ui.add_space(8.0);
@@ -603,5 +706,45 @@ mod tests {
         assert_eq!(with_extension(PathBuf::from("箱.pknb")), PathBuf::from("箱.pknb"));
         assert_eq!(with_extension(PathBuf::from("箱.PKNB")), PathBuf::from("箱.PKNB"));
         assert_eq!(with_extension(PathBuf::from("a/箱.v2")), PathBuf::from("a/箱.v2.pknb"));
+    }
+
+    #[test]
+    fn 新しい案件は_まっさらで_型の工程から始まる() {
+        let mut app = App::new(&super::super::Initial { sides: 6, workspace: 1, ..Default::default() });
+        app.add_decal(Picture::Logo, [40.0, 40.0]);
+        assert!(app.unsaved());
+        app.request_new();
+        assert_eq!(app.file.pending, Some(Then::New), "保存していない変更があれば、先に確かめる");
+        app.file.pending = None;
+        app.new_now();
+        assert!(app.decals.is_empty());
+        assert!(app.assets.iter().all(|a| a.bundled));
+        assert_eq!(app.dims.shape().kind, project::Kind::TuckBox);
+        assert!(app.workspace == Workspace::Shape);
+        assert!(!app.unsaved());
+        assert_eq!(app.project_name(), UNTITLED);
+        assert!(!app.history.can_undo(), "前の案件の履歴は持ち越さない");
+    }
+
+    #[test]
+    fn 最近使った案件は_新しい順に10件まで() {
+        let dir = std::env::temp_dir().join(format!("pakenoba-recent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(&super::super::Initial::default());
+        for i in 0..12 {
+            let path = dir.join(format!("箱{i}.pknb"));
+            app.file.path = None;
+            app.project().unwrap().save(&path).unwrap();
+            app.open_path(&path);
+        }
+        app.open_path(&dir.join("箱3.pknb"));
+        let names: Vec<String> = app.settings.recent.iter().map(|p| file_name(p)).collect();
+        assert_eq!(names.len(), RECENT);
+        assert_eq!(names[0], "箱3.pknb");
+        assert_eq!(names[1], "箱11.pknb");
+        assert!(!names.contains(&"箱1.pknb".to_owned()), "古いものから消える");
+        assert_eq!(names.iter().filter(|n| *n == "箱3.pknb").count(), 1, "同じ案件は 1 つだけ");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
