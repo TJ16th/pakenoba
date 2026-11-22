@@ -16,7 +16,7 @@ use eframe::egui::{self, Color32, Rect, Sense, vec2};
 use pakenoba_core::project;
 
 use super::assets::{Replace, thumbnail};
-use super::{App, Workspace, decode_png, file};
+use super::{App, Workspace, decode_image, file, is_image};
 use crate::paint::Picture;
 
 /// フォルダの中を見る深さと、数の上限（大きすぎるフォルダを登録しても、止まらないように）。
@@ -71,7 +71,7 @@ pub(super) struct Scan {
     pub capped: bool,
 }
 
-/// フォルダの中の PNG を探す。隠しフォルダは見ない。
+/// フォルダの中の画像（PNG、JPEG、PSD）を探す。隠しフォルダは見ない。
 pub(super) fn scan(root: &Path) -> Scan {
     if !root.is_dir() {
         return Scan { entries: Vec::new(), missing: true, capped: false };
@@ -94,7 +94,7 @@ pub(super) fn scan(root: &Path) -> Scan {
                 if depth + 1 < SCAN_DEPTH {
                     stack.push((path, depth + 1));
                 }
-            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
+            } else if is_image(&path) {
                 if entries.len() >= SCAN_LIMIT {
                     capped = true;
                     break;
@@ -148,7 +148,7 @@ pub(super) struct Thumbs {
 /// 画像のファイルから、一覧の絵を作る。
 fn make(path: &Path, px: usize) -> Result<Made, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("開けませんでした: {e}"))?;
-    let picture = decode_png(&bytes)?;
+    let picture = decode_image(&bytes)?;
     let Picture::Image { w, h, .. } = &picture else { return Err("画像ではありません".to_owned()) };
     let size = [*w, *h];
     let rgba = thumbnail(&picture, [50.0, 50.0 * *h as f32 / *w as f32], px);
@@ -531,14 +531,14 @@ impl App {
             },
             Place::Project if !self.assets.iter().any(|a| !a.bundled) => {
                 ui.label("この案件には、まだ素材がありません。");
-                ui.small("画像（PNG）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。");
+                ui.small("画像（PNG、JPEG、PSD）をウィンドウにドロップするか、左の「コレクション」に登録したフォルダから取り込みます。");
                 return;
             }
             _ => {}
         }
         let items = self.library_items();
         if items.is_empty() {
-            ui.label(if self.library.search.trim().is_empty() { "画像（PNG）がありません。" } else { "探す言葉に合う素材がありません。" });
+            ui.label(if self.library.search.trim().is_empty() { "画像（PNG、JPEG、PSD）がありません。" } else { "探す言葉に合う素材がありません。" });
             return;
         }
         let imported = self.project_ids();
@@ -665,7 +665,7 @@ impl App {
 
     /// フォルダの画像を、この案件に取り込む（箱には置かない）。元に戻せる。
     fn import_from_library(&mut self, path: &Path) {
-        if let Some(index) = self.import_png(path, true) {
+        if let Some(index) = self.import_image(path, true) {
             self.say(format!("{} を、この案件の素材に取り込みました。デザインの工程で、素材の欄から箱へドラッグして置けます。", self.assets[index].name));
         }
     }
@@ -763,6 +763,64 @@ impl App {
                 }
             }
             Pick::Asset(_) => {}
+        }
+    }
+}
+
+impl App {
+    /// 素材の欄の「最近使ったもの」。最近取り込んだ画像のうち、この案件にまだないもの（見つからないファイルは出さない）。
+    /// クリックかドラッグで、この案件に取り込む（ドラッグなら、そのまま箱へ運べる）。
+    pub(super) fn recent_assets(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.library.thumbs.receive(&ctx);
+        let imported = self.project_ids();
+        let side = self.thumb_size;
+        let mut shown = Vec::new();
+        for path in self.settings.recent_assets.clone() {
+            if !path.is_file() {
+                continue;
+            }
+            match self.library.thumbs.get(&ctx, &path, TILE_PX) {
+                Thumb::Ready { id, .. } if imported.contains_key(id) => continue,
+                Thumb::Broken(_) => continue,
+                _ => shown.push(path),
+            }
+        }
+        if shown.is_empty() {
+            return;
+        }
+        ui.add_space(6.0);
+        ui.label("最近使ったもの");
+        let mut take = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for path in shown {
+                let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+                checker(ui.painter(), rect);
+                if let Thumb::Ready { texture, .. } = self.library.thumbs.get(&ctx, &path, TILE_PX) {
+                    ui.painter().image(texture.id(), rect.shrink(4.0), Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                }
+                if response.hovered() {
+                    ui.painter().rect_stroke(rect, 6.0, egui::Stroke::new(1.0, ui.visuals().widgets.hovered.fg_stroke.color), egui::StrokeKind::Inside);
+                }
+                let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                let response = response.on_hover_text(format!("{name}\nクリックかドラッグで、この案件に取り込みます\n{}", path.display()));
+                if response.drag_started() {
+                    take = Some((path, true));
+                } else if response.clicked() {
+                    take = Some((path, false));
+                }
+            }
+        });
+        if let Some((path, carry)) = take
+            && let Some(index) = self.import_image(&path, true)
+        {
+            self.asset_selected = Some(index);
+            if carry {
+                self.carry = Some(index);
+            } else {
+                self.say(format!("{} を、この案件の素材に取り込みました。", self.assets[index].name));
+            }
         }
     }
 }
@@ -866,6 +924,10 @@ mod tests {
         // 探す言葉で絞る。
         app.library.search = "赤".to_owned();
         assert!(app.library_items().is_empty());
+        // 取り込んだ画像は、最近使ったものに入り、新しい案件にしても残る。
+        assert_eq!(app.settings.recent_assets.first().and_then(|p| p.file_name()), Some(std::ffi::OsStr::new("青.png")));
+        app.new_now();
+        assert_eq!(app.settings.recent_assets.len(), 1);
         app.remove_collection(0);
         assert!(app.settings.collections.is_empty());
         assert_eq!(app.library.place, Place::Project);

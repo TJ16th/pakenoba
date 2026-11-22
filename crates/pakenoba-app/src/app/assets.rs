@@ -147,11 +147,14 @@ impl App {
             }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 for bundled in [false, true] {
+                    if bundled {
+                        self.recent_assets(ui);
+                    }
                     ui.add_space(6.0);
                     ui.label(if bundled { "付属の見本" } else { "この案件の素材" });
                     let list: Vec<usize> = (0..self.assets.len()).filter(|&i| self.assets[i].bundled == bundled).collect();
                     if list.is_empty() {
-                        ui.small("画像（PNG）をウィンドウにドロップすると、ここに入ります。");
+                        ui.small("画像（PNG、JPEG、PSD）をウィンドウにドロップすると、ここに入ります。");
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -332,7 +335,7 @@ impl App {
         if let Some(answer) = self.answer_replace.take() {
             return Some(answer);
         }
-        rfd::FileDialog::new().set_title("差し替える画像を選ぶ").add_filter("画像（PNG）", &["png", "PNG"]).pick_file()
+        rfd::FileDialog::new().set_title("差し替える画像を選ぶ").add_filter("画像（PNG、JPEG、PSD）", &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "psd", "PSD"]).pick_file()
     }
 
     /// 頼まれた差し替えを行う。画像を選んでもらい、絵を入れ替える。元に戻せる。
@@ -358,7 +361,7 @@ impl App {
             Ok(bytes) => bytes,
             Err(e) => return self.say(format!("差し替えませんでした。{} を開けませんでした: {e}", path.display())),
         };
-        let picture = match super::decode_png(&bytes) {
+        let picture = match super::decode_image(&bytes) {
             Ok(picture) => picture,
             Err(e) => return self.say(format!("差し替えませんでした。{e}")),
         };
@@ -467,7 +470,7 @@ mod tests {
         let path = dir.join("ロゴ 旧版.png");
         std::fs::write(&path, png(4, 4, [200, 0, 0])).unwrap();
         let mut app = App::new(&Initial::default());
-        app.add_png(&path);
+        app.add_image(&path);
         let (picture, size) = (app.decals[0].picture.clone(), app.decals[0].size);
         app.add_decal(picture, size);
         app.decals[1].decal.at = [0.2, 0.8];
@@ -562,5 +565,45 @@ mod tests {
         app.replace_with(Replace::Asset(0), &dir.join("ロゴ 旧版.png"));
         assert_eq!(app.fingerprint(), before);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn jpeg_と_psd_も_柄の素材になり_案件に入る() {
+        let dir = scratch("formats");
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+        // JPEG（RGB、CMYK、白黒）。
+        for (name, size) in [("red.jpg", [12, 6]), ("red-cmyk.jpg", [6, 12]), ("gray.jpg", [4, 4])] {
+            let bytes = std::fs::read(data.join(name)).unwrap();
+            let Ok(Picture::Image { w, h, rgba }) = super::super::decode_image(&bytes) else { panic!("{name} を読めない") };
+            assert_eq!([w, h], size, "{name}");
+            assert_eq!(rgba[3], 255, "{name}");
+            if name.starts_with("red") {
+                assert!(rgba[0] > 180 && rgba[1] < 80 && rgba[2] < 80, "{name} の色: {:?}", &rgba[..4]);
+            }
+        }
+        // 柄の素材にする PSD（型紙ではないもの）と、パケノバが書き出した型紙の PSD。
+        let art = crate::art::tests_psd(6, 3, false);
+        let dieline = crate::art::tests_psd(6, 3, true);
+        assert!(!crate::art::psd_is_dieline(&art));
+        assert!(crate::art::psd_is_dieline(&dieline));
+        std::fs::write(dir.join("地紋.psd"), &art).unwrap();
+        std::fs::copy(data.join("red.jpg"), dir.join("写真.jpg")).unwrap();
+        let mut app = App::new(&Initial::default());
+        app.add_image(&dir.join("地紋.psd"));
+        app.add_image(&dir.join("写真.jpg"));
+        assert_eq!(app.decals.len(), 2);
+        let Picture::Image { w, h, .. } = &app.decals[0].picture else { panic!() };
+        assert_eq!([*w, *h], [6, 3]);
+        // 保存して開くと、元のファイルのまま入っていて、同じ絵に戻る。
+        let project = app.project().unwrap();
+        let names: Vec<&str> = project.assets.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["地紋.psd", "写真.jpg"]);
+        let file = dir.join("箱.pknb");
+        project.save(&file).unwrap();
+        let mut again = App::new(&Initial::default());
+        again.open_path(&file);
+        assert_eq!(again.decals.len(), 2);
+        assert!(again.decals.iter().all(|d| matches!(d.picture, Picture::Image { .. })));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

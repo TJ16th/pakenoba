@@ -215,6 +215,41 @@ impl Dims {
     }
 }
 
+/// 柄の素材にできる画像の拡張子。
+const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "psd"];
+
+/// 柄の素材にできる画像のファイルか（拡張子で見る）。
+fn is_image(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| IMAGE_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+/// 画像のファイルの中身を、RGBA（アルファは乗算なし）にする。PNG、JPEG、PSD（統合した絵）を、中身の先頭で見分ける。
+fn decode_image(bytes: &[u8]) -> Result<Picture, String> {
+    if bytes.starts_with(b"\x89PNG") {
+        decode_png(bytes)
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        decode_jpeg(bytes)
+    } else if bytes.starts_with(b"8BPS") {
+        let (w, h, rgba) = crate::art::psd_picture(bytes)?;
+        Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba) })
+    } else {
+        Err("画像として読めませんでした（扱えるのは PNG、JPEG、PSD です）".to_owned())
+    }
+}
+
+/// JPEG のファイルの中身を、RGBA にする。CMYK の JPEG も、RGB に直して読む。
+fn decode_jpeg(bytes: &[u8]) -> Result<Picture, String> {
+    use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA).set_max_width(1 << 15).set_max_height(1 << 15);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+    let rgba = decoder.decode().map_err(|e| format!("JPEG を読めませんでした: {e:?}"))?;
+    let (w, h) = decoder.dimensions().ok_or("JPEG の大きさが分かりません")?;
+    if w == 0 || h == 0 || rgba.len() != w * h * 4 {
+        return Err("JPEG の大きさが合いません".to_owned());
+    }
+    Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba) })
+}
+
 /// PNG のファイルの中身を、RGBA（アルファは乗算なし）にする。
 fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -560,7 +595,7 @@ impl App {
             app.open_psd(path);
         }
         if let Some(path) = &initial.png {
-            app.add_png(path);
+            app.add_image(path);
         }
         for &index in &initial.back {
             if let Some(decal) = app.decals.get_mut(index) {
@@ -719,9 +754,9 @@ impl App {
     }
 
     /// 画像（PNG）を、この案件の素材に取り込んで、柄として置く。元のファイルの中身も、そのまま持つ（案件のファイルに入れるため）。
-    fn add_png(&mut self, path: &Path) {
+    fn add_image(&mut self, path: &Path) {
         let known = self.assets.len();
-        let Some(index) = self.import_png(path, false) else { return };
+        let Some(index) = self.import_image(path, false) else { return };
         let (picture, size) = (self.assets[index].picture.clone(), self.assets[index].size);
         if index < known {
             self.say(format!("{} は、すでに素材の欄にあります。柄として置きました。", self.assets[index].name));
@@ -731,9 +766,9 @@ impl App {
         self.add_decal(picture, size);
     }
 
-    /// 画像（PNG）を、この案件の素材に取り込む（置かない）。素材の欄での番号を返す。
+    /// 画像（PNG、JPEG、PSD）を、この案件の素材に取り込む（置かない）。素材の欄での番号を返す。
     /// 同じ中身の素材がすでにあれば、増やさずに、その番号を返す。`checkpoint` が真なら、取り込みを元に戻せるようにする。
-    fn import_png(&mut self, path: &Path, checkpoint: bool) -> Option<usize> {
+    fn import_image(&mut self, path: &Path, checkpoint: bool) -> Option<usize> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -741,7 +776,7 @@ impl App {
                 return None;
             }
         };
-        let picture = match decode_png(&bytes) {
+        let picture = match decode_image(&bytes) {
             Ok(picture) => picture,
             Err(e) => {
                 self.say(e);
@@ -752,6 +787,11 @@ impl App {
         let size = [50.0, 50.0 * *h as f32 / *w as f32];
         let name = path.file_name().map_or_else(|| "画像".to_owned(), |n| n.to_string_lossy().into_owned());
         let stored = project::Asset::new(name.clone(), bytes, size, file::now_local());
+        // どこから取り込んだ画像でも、最近使ったものに入れる（次の案件でも、すぐ使えるように）。
+        self.settings.used_asset(path);
+        if let Err(e) = self.settings.save() {
+            eprintln!("{e}");
+        }
         if let Some(index) = self.assets.iter().position(|asset| asset.stored.as_ref().is_some_and(|s| s.id() == stored.id())) {
             if checkpoint {
                 self.say(format!("{name} は、すでにこの案件の素材にあります。"));
@@ -991,21 +1031,22 @@ impl eframe::App for App {
 
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         for path in &dropped {
-            // 案件のファイルは開く。PNG は柄として置く。それ以外は、展開図まるごとの絵（PSD）として読む。
-            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(project::EXTENSION)) {
+            // 案件のファイルは開く。画像（PNG、JPEG、PSD）は柄として置く。
+            // ただし、パケノバが書き出した型紙の PSD（ガイドのレイヤーがある）は、展開図まるごとの絵として読む。
+            let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+            let dieline = ext.as_deref() == Some("psd") && std::fs::read(path).is_ok_and(|bytes| crate::art::psd_is_dieline(&bytes));
+            if ext.as_deref() == Some(project::EXTENSION) {
                 self.request_open(Some(path.clone()));
-            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
-                // 「素材」の画面では、箱がないので、取り込むだけ。
-                if self.library.open {
-                    if self.import_png(path, true).is_some() {
-                        self.say(format!("{} を、この案件の素材に取り込みました。", path.display()));
-                    }
-                } else {
-                    self.add_png(path);
-                }
-            } else {
+            } else if dieline || !is_image(path) {
                 self.psd_path = path.display().to_string();
                 self.open_psd(path);
+            } else if self.library.open {
+                // 「素材」の画面では、箱がないので、取り込むだけ。
+                if self.import_image(path, true).is_some() {
+                    self.say(format!("{} を、この案件の素材に取り込みました。", path.display()));
+                }
+            } else {
+                self.add_image(path);
             }
         }
 

@@ -18,6 +18,8 @@ eframe = { version = "0.37", default-features = false, features = ["wgpu", "defa
 bytemuck = { version = "1", features = ["derive"] }
 # 柄にする画像（PNG）の読み込み。
 png = "0.18"
+# 柄にする画像（JPEG）の読み込み。
+zune-jpeg = "0.5.15"
 # craft-libs は同じコミットにそろえる（混ぜると同じ型が二重になる）。
 craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
 # 案件をまたぐ設定（コレクションの登録）を、人が読める形で覚える。

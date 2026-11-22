@@ -375,6 +375,30 @@ pub fn load_psd(bytes: &[u8], w: usize, h: usize) -> Result<LoadedPsd, String> {
     Ok(LoadedPsd { rgba: fit(&source, [sw, sh], w, h), source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
 }
 
+/// 柄の素材にする PSD の、統合した絵（RGBA）と大きさ。
+pub fn psd_picture(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
+    let file = PsdFile::from_bytes(bytes).map_err(|e| format!("PSD を読めませんでした: {e}"))?;
+    let image = file.composite_rgba8().map_err(|e| format!("PSD の統合画像を取り出せませんでした: {e}"))?;
+    let (w, h) = (image.width as usize, image.height as usize);
+    if w == 0 || h == 0 || image.data.len() != w * h * 4 {
+        return Err(format!("PSD の統合画像の大きさが合いません（{w}x{h}）"));
+    }
+    Ok((w, h, image.data))
+}
+
+/// パケノバが書き出した型紙の PSD か（ガイドのレイヤーがあるか）。そうなら、柄の素材ではなく、展開図まるごとの絵として読む。
+pub fn psd_is_dieline(bytes: &[u8]) -> bool {
+    PsdFile::from_bytes(bytes).is_ok_and(|file| file.iter_layers().any(|layer| is_generated(&layer.name())))
+}
+
+/// テスト用の小さな PSD。`dieline` が真なら、パケノバの型紙と同じガイドのレイヤーを持つ。
+#[cfg(test)]
+pub fn tests_psd(w: usize, h: usize, dieline: bool) -> Vec<u8> {
+    let art = [30u8, 120, 200, 255].repeat(w * h);
+    let guide_name = if dieline { format!("{GUIDE_LAYER_PREFIX}（切り線）") } else { "飾り".to_owned() };
+    build_psd(w, h, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4])).unwrap()
+}
+
 /// 画像を、展開図の大きさ（`w` x `h`）に合わせる。近い画素を拾うだけの単純な拡大縮小。
 pub fn fit(source: &[u8], [sw, sh]: [usize; 2], w: usize, h: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; w * h * 4];

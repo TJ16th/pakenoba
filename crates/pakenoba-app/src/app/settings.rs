@@ -1,4 +1,4 @@
-//! 案件をまたいで覚えておく設定。コレクション（登録したフォルダ）と、最近使った案件。
+//! 案件をまたいで覚えておく設定。コレクション（登録したフォルダ）、最近使った案件、最近取り込んだ画像。
 //!
 //! 使う人のデータのフォルダの `pakenoba/settings.toml` に、人が読める形で書く。
 //! 読めないとき（壊れた、新しい版で書かれた）は、空から始めて、元のファイルは上書きしない。
@@ -21,6 +21,9 @@ pub(super) fn data_dir() -> Option<PathBuf> {
     Some(base.join("pakenoba"))
 }
 
+/// 最近取り込んだ画像を、いくつ覚えておくか。
+const RECENT_ASSETS: usize = 20;
+
 /// 登録したフォルダ 1 つ。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(super) struct Collection {
@@ -39,6 +42,9 @@ struct Stored {
     /// 最近使った案件（新しい順）。
     #[serde(default)]
     recent: Vec<PathBuf>,
+    /// 最近取り込んだ画像（新しい順）。どの案件でも、素材の欄に出す。
+    #[serde(default)]
+    recent_assets: Vec<PathBuf>,
     #[serde(default)]
     collection: Vec<Collection>,
 }
@@ -50,12 +56,13 @@ pub(super) struct Settings {
     writable: bool,
     pub collections: Vec<Collection>,
     pub recent: Vec<PathBuf>,
+    pub recent_assets: Vec<PathBuf>,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new() }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -63,17 +70,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets },
                 Err(e) => {
                     eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new() }
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() },
             Err(e) => {
                 eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new() }
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
             }
         }
     }
@@ -81,8 +88,16 @@ impl Settings {
     /// いまの設定を書く。書けなかったら、そのわけを返す。
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { recent: self.recent.clone(), collection: self.collections.clone() }).map_err(|e| e.to_string())?;
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone() }).map_err(|e| e.to_string())?;
         write_text(file, &format!("# パケノバの設定。アプリが書き換えます。\n{text}")).map_err(|e| format!("設定を保存できませんでした: {e}"))
+    }
+
+    /// 取り込んだ画像を、最近使ったものの先頭に入れる（20 件まで）。
+    pub fn used_asset(&mut self, path: &Path) {
+        let path = fs::canonicalize(path).map(|p| super::file::simplify(&p)).unwrap_or_else(|_| path.to_owned());
+        self.recent_assets.retain(|p| *p != path);
+        self.recent_assets.insert(0, path);
+        self.recent_assets.truncate(RECENT_ASSETS);
     }
 
     /// フォルダを登録する。すでにあれば何もしない（false）。
@@ -141,8 +156,17 @@ mod tests {
         assert!(settings.collections.is_empty());
         assert!(settings.add(dir.join("ロゴ集")));
         assert!(!settings.add(dir.join("ロゴ集")), "同じフォルダは二重に登録しない");
+        settings.recent = vec![dir.join("箱.pknb")];
+        for i in 0..25 {
+            settings.used_asset(&dir.join(format!("絵{i}.png")));
+        }
+        settings.used_asset(&dir.join("絵3.png"));
         settings.save().unwrap();
         let again = Settings::load(Some(file));
+        assert_eq!(again.recent, vec![dir.join("箱.pknb")]);
+        assert_eq!(again.recent_assets.len(), 20);
+        assert_eq!(again.recent_assets[0], dir.join("絵3.png"));
+        assert_eq!(again.recent_assets[1], dir.join("絵24.png"));
         assert_eq!(again.collections, vec![Collection { path: dir.join("ロゴ集") }]);
         assert_eq!(again.collections[0].name(), "ロゴ集");
         fs::remove_dir_all(dir).unwrap();

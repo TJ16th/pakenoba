@@ -1950,6 +1950,7 @@ dependencies = [
  "rfd",
  "serde",
  "toml",
+ "zune-jpeg",
 ]
 
 [[package]]

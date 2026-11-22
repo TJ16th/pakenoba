@@ -95,7 +95,7 @@ const UNTITLED: &str = "名前なし";
 const RECENT: usize = 10;
 
 /// Windows の canonicalize が付ける `\\?\` を外す（画面に出すときと、ダイアログに渡すときに読みにくいため）。
-fn simplify(path: &Path) -> PathBuf {
+pub(super) fn simplify(path: &Path) -> PathBuf {
     let text = path.display().to_string();
     match text.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
@@ -224,7 +224,7 @@ impl App {
         self.replace_request = None;
         let first = self.assets.len();
         for stored in project.assets {
-            let picture = match super::decode_png(stored.bytes()) {
+            let picture = match super::decode_image(stored.bytes()) {
                 Ok(picture) => picture,
                 Err(why) => {
                     problems.push(format!("素材「{}」は、絵として表示できません（{why}）。案件の中には残してあります。", stored.name));
