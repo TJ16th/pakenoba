@@ -47,6 +47,9 @@ struct Stored {
     recent_assets: Vec<PathBuf>,
     #[serde(default)]
     collection: Vec<Collection>,
+    /// 柄の素材を直すアプリ（なければ、OS で決まっているアプリ）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    editor: Option<PathBuf>,
 }
 
 pub(super) struct Settings {
@@ -57,12 +60,13 @@ pub(super) struct Settings {
     pub collections: Vec<Collection>,
     pub recent: Vec<PathBuf>,
     pub recent_assets: Vec<PathBuf>,
+    pub editor: Option<PathBuf>,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -70,17 +74,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor },
                 Err(e) => {
                     eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None },
             Err(e) => {
                 eprintln!("設定（{}）を読めませんでした。今回は覚えません: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new() }
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None }
             }
         }
     }
@@ -88,7 +92,7 @@ impl Settings {
     /// いまの設定を書く。書けなかったら、そのわけを返す。
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone() }).map_err(|e| e.to_string())?;
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone() }).map_err(|e| e.to_string())?;
         write_text(file, &format!("# パケノバの設定。アプリが書き換えます。\n{text}")).map_err(|e| format!("設定を保存できませんでした: {e}"))
     }
 

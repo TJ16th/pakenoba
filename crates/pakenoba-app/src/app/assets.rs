@@ -357,7 +357,7 @@ impl App {
     }
 
     /// 画像のファイルで、差し替える。
-    fn replace_with(&mut self, target: Replace, path: &std::path::Path) {
+    pub(super) fn replace_with(&mut self, target: Replace, path: &std::path::Path) {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) => return self.say(format!("差し替えませんでした。{} を開けませんでした: {e}", path.display())),

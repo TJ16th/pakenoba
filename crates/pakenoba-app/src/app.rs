@@ -6,6 +6,7 @@
 
 mod assets;
 mod base;
+mod edit;
 mod export;
 mod file;
 mod history;
@@ -490,6 +491,9 @@ struct App {
     /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
     solid_aspect: f32,
     movie: Option<outputs::MovieJob>,
+    /// 外のアプリで開いている素材と、最後に見た時刻。
+    edits: Vec<edit::EditJob>,
+    edit_polled: f64,
     /// OS のフォント（文字の柄を描く）。
     fonts: crate::text::Fonts,
     /// 次に置く文字の書式。
@@ -600,6 +604,8 @@ impl App {
             renaming: None,
             layer_drag: None,
             render_state: None,
+            edits: Vec::new(),
+            edit_polled: 0.0,
             output: Default::default(),
             solid_aspect: 16.0 / 9.0,
             movie: None,
@@ -991,10 +997,10 @@ impl App {
             return;
         }
         let (plain, command, shift, pressed) = ctx.input(|i| {
-            let pressed = [egui::Key::V, egui::Key::T, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
+            let pressed = [egui::Key::V, egui::Key::E, egui::Key::T, egui::Key::H, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num0, egui::Key::Z, egui::Key::Y, egui::Key::Delete, egui::Key::Backspace, egui::Key::A, egui::Key::Escape].map(|key| i.key_pressed(key));
             (i.modifiers.is_none(), i.modifiers.command, i.modifiers.shift, pressed)
         });
-        let [v, t, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
+        let [v, e, t, h, one, two, three, zero, z, y, delete, backspace, a, escape] = pressed;
         if command && zero {
             // Ctrl+0: 全体を表示。
             self.zoom = 1.0;
@@ -1008,6 +1014,10 @@ impl App {
         }
         if plain && (delete || backspace) && self.workspace == Workspace::Design {
             self.delete_selected();
+        }
+        // Ctrl+E で、選んでいる柄を外のアプリで直す。
+        if command && e && self.workspace == Workspace::Design {
+            self.edit_selected();
         }
         // Ctrl+A ですべての柄を選び、Esc で選ぶのをやめる。
         if command && a && self.workspace == Workspace::Design {
@@ -1119,6 +1129,7 @@ impl eframe::App for App {
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());
+        self.poll_edits(ui.ctx());
         if self.library.open {
             self.library_screen(ui);
             self.rebuild_if_needed();

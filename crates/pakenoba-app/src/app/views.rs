@@ -312,6 +312,11 @@ impl App {
             painter.line_segment([origin, tip], (2.0, color));
             painter.text(origin + (tip - origin) * 1.38, Align2::CENTER_CENTER, name, FontId::proportional(12.0), color);
         }
+        // ダブルクリック: 柄の上なら、外のアプリで直す（文字なら、右の欄で打つ）。
+        if response.double_clicked() && self.tool != Tool::Hand && let Some((index, _)) = decal_under {
+            self.select_only(Some(index));
+            self.edit_selected();
+        }
         // 柄を右クリックしたら、その場で使える操作（差し替え、消す）。
         if self.selected.is_some() && self.tool != Tool::Hand {
             response.context_menu(|ui| self.decal_menu(ui));
@@ -343,9 +348,7 @@ impl App {
                 cam.pan += (pointer - center) * (1.0 - cam.zoom / before);
             }
         }
-        if response.double_clicked() {
-            *cam = super::FlatCam::default();
-        }
+        let reset = response.double_clicked();
         // 1 mm が画面の何 px か。
         let scale = fit * cam.zoom;
         let image = Rect::from_center_size(area.center() + cam.pan, vec2(sheet_w * scale, sheet_h * scale));
@@ -480,6 +483,16 @@ impl App {
         painter.text(rect.min + vec2(RULER_LEFT * 0.5, RULER_TOP * 0.5), Align2::CENTER_CENTER, "mm", font, line);
 
         tag(ui, area.min + vec2(8.0, 6.0), if back { "裏" } else { "表" });
+        // ダブルクリック: 柄の上なら、外のアプリで直す（文字なら、右の欄で打つ）。何もないところなら、表示を元に戻す。
+        if reset {
+            match decal_under {
+                Some((index, _)) if self.tool != Tool::Hand => {
+                    self.select_only(Some(index));
+                    self.edit_selected();
+                }
+                _ => self.flat[back as usize] = super::FlatCam::default(),
+            }
+        }
         // 柄を右クリックしたら、その場で使える操作（差し替え、消す）。
         if self.selected.is_some() && self.tool != Tool::Hand {
             response.context_menu(|ui| self.decal_menu(ui));

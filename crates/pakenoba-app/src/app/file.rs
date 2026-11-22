@@ -288,6 +288,8 @@ impl App {
         self.history = history::History::default();
         (self.selected, self.grab, self.hover, self.preview, self.carry, self.asset_selected, self.pending_shape) = (None, None, None, None, None, None, None);
         (self.extra, self.hover_decal, self.hover_now) = (Vec::new(), None, None);
+        // 前の案件の素材の、外のアプリでの編集は続けない。
+        self.edits.clear();
         (self.editing, self.keep_decals) = (false, false);
         (self.renaming, self.layer_drag) = (None, None);
         self.flat = [FlatCam::default(); 2];

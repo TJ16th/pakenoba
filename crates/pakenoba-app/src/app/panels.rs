@@ -188,6 +188,7 @@ impl App {
             ui.weak("ロックしています。動かすには、レイヤーの欄で鍵を外してください。");
         }
         self.text_properties(ui, index, locked);
+        self.edit_controls(ui, index);
         let earlier = self.snapshot();
         let template = &self.template;
         let decal = &mut self.decals[index];
@@ -334,7 +335,10 @@ impl App {
                             }
                             return None;
                         }
-                        let label = self.layer_label(index);
+                        let mut label = self.layer_label(index);
+                        if self.is_editing(&self.decals[index].picture) {
+                            label.push_str("（外で編集中）");
+                        }
                         let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
                         let selected = self.is_selected(index);
                         let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag());
