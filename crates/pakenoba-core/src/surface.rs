@@ -343,7 +343,9 @@ impl Surface {
                 // 合わせ目は、続けて 2 回はまたがない。合わせ目の先の面から、さらに別の合わせ目へ進むと、
                 // 箱の縁にかかった長い帯が、フタを伝って側面や底へ回り込み、同じ面に何本も出てしまう。
                 // （3 つの面が集まる角で、どの面のつながりを優先するかを選べるようにするまでの決まり。）
-                if link.seam && from.seams >= 1 {
+                // ただし、帯が合わせ目を横切ってまっすぐ進むとき（合わせ目の線が、柄の長い向きとおおよそ直角）は、
+                // 2 回目以降もまたぐ（フタから側面へ、さらに底へと、箱を一周する帯）。3 回までにする。
+                if link.seam && from.seams >= 1 && (from.seams >= 3 || !crosses_straight(&to_decal, &link.gate, decal.size)) {
                     continue;
                 }
                 // 合わせ目は、閉じた箱の外側の面どうしのつながり。閉じると隠れるパネルを通る道とは、混ぜない。
@@ -501,6 +503,22 @@ impl Decal {
     }
 }
 
+/// 柄が、合わせ目の線を横切ってまっすぐ進むか。線の向きが、柄の長い向きとおおよそ直角（45 度より大きい）なら真。
+/// 縦横がほぼ同じ柄は、長い向きがないので、真にしない。
+fn crosses_straight(to_decal: &Aff2, gate: &[[P2; 2]], size: P2) -> bool {
+    let Some(g) = gate.first() else { return false };
+    if (size[0] - size[1]).abs() < 0.5 * size[0].min(size[1]) {
+        return false;
+    }
+    let d = to_decal.vector(sub2(g[1], g[0]));
+    let length = len2(d);
+    if length < 1e-6 {
+        return false;
+    }
+    let along = if size[0] >= size[1] { d[0] } else { d[1] };
+    (along / length).abs() < std::f32::consts::FRAC_1_SQRT_2
+}
+
 /// 展開図上の点が、柄を置けるどのパネルにあるか（のりしろは除く）。
 /// 折り線のすき間を埋める面のように、輪郭のちょうど上にある点は、いちばん近いパネルにする。
 pub fn panel_at(tpl: &Template, at: P2) -> Option<usize> {
@@ -589,6 +607,24 @@ mod tests {
     fn has_seam(tpl: &Template, surface: &Surface, a: &str, b: &str) -> bool {
         let (a, b) = (index(tpl, a), index(tpl, b));
         surface.seams.iter().any(|s| (s.a == a && s.b == b) || (s.a == b && s.b == a))
+    }
+
+    #[test]
+    fn 箱を一周する帯は_フタから側面を通って底まで回る() {
+        // 本人が見つけた不具合（2026-11-24）: 上のフタに横向きに置いた長い帯が、側面で止まり、底へ続かなかった。
+        let tpl = Template::tuck_box(200.0, 160.0, 85.0, 0.5);
+        let surface = Surface::new(&tpl, &Template::tuck_box(200.0, 160.0, 85.0, 0.02));
+        let on = |panel: &str, angle: f32, at: P2| {
+            let d = Decal { panel: index(&tpl, panel), at, size: [560.0, 14.0], angle };
+            surface.layout(&tpl, &d).iter().map(|p| tpl.panels[p.panel].name.clone()).collect::<Vec<_>>()
+        };
+        let around = on("上のフタ", 0.0, [0.5, 0.5]);
+        for name in ["左側面", "右側面", "底のフタ"] {
+            assert!(around.iter().any(|n| *n == name), "{name} に続かない: {around:?}");
+        }
+        // 縁に沿って置いた帯（合わせ目と平行）は、これまでどおり、合わせ目を 2 回またいで回り込まない。
+        let along = on("正面", 0.0, [0.5, 0.97]);
+        assert!(!along.iter().any(|n| *n == "底のフタ"), "{along:?}");
     }
 
     #[test]
