@@ -7,10 +7,11 @@ use pakenoba_i18n::t;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, pos2, vec2};
 use eframe::egui_wgpu;
 
-use pakenoba_core::math::{cross, look_at, mat4_mul, normalize, perspective, sub};
-use pakenoba_core::surface::{panel_at, pick_side, ray_through};
+use pakenoba_core::math::{Mat4, V3, cross, look_at, mat4_mul, normalize, perspective, sub};
+use pakenoba_core::surface::{Decal, panel_at, pick_side, ray_through};
 use pakenoba_core::template::bounding_sphere;
 
+use super::transform::{self, Transforming};
 use super::{App, Shown, Tool, Workspace};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Picture, Placed, spots_on};
@@ -71,6 +72,13 @@ pub(super) fn texture(ctx: &egui::Context, name: &str, w: usize, h: usize, rgba:
         egui::ColorImage::from_rgba_unmultiplied([sw, sh], &small)
     };
     ctx.load_texture(name, image, egui::TextureOptions::LINEAR)
+}
+
+/// 立体の点を、表示 `rect` の上の点へ。視点の後ろなら `None`。
+fn project(mvp: &Mat4, rect: Rect, p: V3) -> Option<Pos2> {
+    let v = [p[0], p[1], p[2], 1.0];
+    let c: Vec<f32> = (0..4).map(|r| (0..4).map(|k| mvp[k][r] * v[k]).sum()).collect();
+    (c[3] > 1e-6).then(|| pos2(rect.left() + (c[0] / c[3] + 1.0) * 0.5 * rect.width(), rect.top() + (1.0 - c[1] / c[3]) * 0.5 * rect.height()))
 }
 
 /// 定規の目盛りの間隔（mm）。細かい目盛りと、数字を添える目盛り。
@@ -207,9 +215,33 @@ impl App {
             surface.decal_at(template, places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab))
         };
         let decal_under = hit.and_then(decal_at);
-        if response.drag_started() {
+        // 選んでいる柄の、大きさと回転のつまみ。柄の置かれた面を広げた平面の上で、展開図の座標のまま計算する。
+        let mvp = mat4_mul(&perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0), &view);
+        let placements = template.transforms_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
+        let world = template.world_at(self.fold);
+        let frame_of = |d: &Decal| world.then_after(&placements[d.panel].at(d.center(template)));
+        let ray_at = |pos: Pos2| {
+            let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
+            ray_through(forward, side, upward, fov, aspect, x, y)
+        };
+        let quad_of = |d: &Decal| {
+            let frame = frame_of(d);
+            let pts: Option<Vec<Pos2>> = transform::corners(d, template).iter().map(|c| project(&mvp, rect, frame.point([c[0], c[1], 0.0]))).collect();
+            pts.map(|v| [v[0], v[1], v[2], v[3]])
+        };
+        let knobs = self.knob_target(None).and_then(|i| quad_of(&self.decals[i]).map(|q| (i, q)));
+        let handle_under = |p: Pos2| knobs.and_then(|(i, quad)| transform::handle_at(quad, p).map(|h| (i, h, quad)));
+        let press = ui.input(|i| i.pointer.press_origin());
+        if response.drag_started() && let Some((index, handle, _)) = press.and_then(handle_under) {
+            let start = self.decals[index].decal;
+            if let Some(pressed) = press.and_then(|p| transform::ray_to_sheet(&frame_of(&start), eye, ray_at(p))) {
+                self.history.record(self.snapshot());
+                self.transforming = Some(Transforming { index, handle, start, pressed });
+            }
+        }
+        if response.drag_started() && self.transforming.is_none() {
             // 押した場所に柄があれば、柄をつかむ。なければ、箱を回す。
-            let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
+            let pressed = press.and_then(under);
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
@@ -227,7 +259,14 @@ impl App {
                 self.art_dirty = true;
             }
         }
-        if response.dragged() {
+        if let (true, Some(t), Some(p)) = (response.dragged(), self.transforming, pointer) {
+            if let Some(at) = transform::ray_to_sheet(&frame_of(&t.start), eye, ray_at(p)) {
+                let keys = ui.input(|i| i.modifiers);
+                self.decals[t.index].decal = transform::apply(&t, template, at, keys.shift, keys.alt);
+                self.art_dirty = true;
+                self.back_dirty = true;
+            }
+        } else if response.dragged() {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at, back))) => {
                     // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
@@ -251,12 +290,16 @@ impl App {
         }
         if response.drag_stopped() {
             self.grab = None;
+            self.transforming = None;
         }
+        let on_handle = pointer.and_then(handle_under);
         // 文字の道具では、文字の柄を押せば選び、ほかを押せば、そこに文字を置く。
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
         // 図形の道具では、図形を押せば選び、ほかを押せば、そこに図形を置く。
         let shape_click = response.clicked() && self.tool == Tool::Shape && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Shape(_)));
-        if text_click && let Some((panel, at, back)) = hit {
+        if response.clicked() && on_handle.is_some() {
+            // つまみを押しただけなら、選び直さない。
+        } else if text_click && let Some((panel, at, back)) = hit {
             self.add_text_at(panel, at, back);
         } else if shape_click && let Some((panel, at, back)) = hit {
             self.add_shape_at(panel, at, back);
@@ -272,8 +315,12 @@ impl App {
         if response.hovered() && self.grab.is_none() {
             self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
-        if self.grab.is_some() && response.dragged() {
+        if let Some(t) = self.transforming.filter(|_| response.dragged()) {
+            ui.ctx().set_cursor_icon(knobs.map_or(egui::CursorIcon::Grabbing, |(_, quad)| transform::cursor(quad, t.handle)));
+        } else if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if let Some((_, handle, quad)) = on_handle.filter(|_| response.hovered()) {
+            ui.ctx().set_cursor_icon(transform::cursor(quad, handle));
         } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
@@ -312,6 +359,10 @@ impl App {
         if let Some(id) = renderer.render(rs, size, &mesh, mat4_mul(&proj, &view), light, holes) {
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             painter.image(id, rect, uv, Color32::WHITE);
+        }
+        // 大きさと回転のつまみ（動かしたあとの場所で）。
+        if let Some(quad) = self.knob_target(None).and_then(|i| quad_of(&self.decals[i])) {
+            transform::paint(&painter, quad, ui.visuals().selection.bg_fill);
         }
 
         // 向きの目印。X は右、Y は上、Z は手前。奥の軸から描く。
@@ -383,8 +434,17 @@ impl App {
         let surface = &self.surface;
         let decal_at = |(panel, at): (usize, [f32; 2])| surface.decal_at(template, &places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab));
         let decal_under = hit.and_then(decal_at);
-        if response.drag_started() {
-            let pressed = ui.input(|i| i.pointer.press_origin()).and_then(under);
+        // 選んでいる柄の、大きさと回転のつまみ（画面での四隅）。
+        let to_screen = |p: [f32; 2]| pos2(image.left() + (if back { template.max[0] - p[0] } else { p[0] - template.min[0] }) * scale, image.top() + (template.max[1] - p[1]) * scale);
+        let knobs = self.knob_target(back).map(|i| (i, transform::corners(&self.decals[i], template).map(to_screen)));
+        let handle_under = |p: Pos2| knobs.and_then(|(i, quad)| transform::handle_at(quad, p).map(|h| (i, h, quad)));
+        let press = ui.input(|i| i.pointer.press_origin());
+        if response.drag_started() && let Some((index, handle, _)) = press.and_then(handle_under) {
+            self.history.record(self.snapshot());
+            self.transforming = Some(Transforming { index, handle, start: self.decals[index].decal, pressed: to_sheet(press.unwrap_or_default()) });
+        }
+        if response.drag_started() && self.transforming.is_none() {
+            let pressed = press.and_then(under);
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
                 // 動かす前の場所へ戻せるように、覚えておく。
@@ -402,7 +462,12 @@ impl App {
                 self.art_dirty = true;
             }
         }
-        if response.dragged() {
+        if let (true, Some(t), Some(p)) = (response.dragged(), self.transforming, pointer) {
+            let keys = ui.input(|i| i.modifiers);
+            self.decals[t.index].decal = transform::apply(&t, template, to_sheet(p), keys.shift, keys.alt);
+            self.art_dirty = true;
+            self.back_dirty = true;
+        } else if response.dragged() {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at))) => {
                     if let Some(decal) = self.decals.get_mut(index) {
@@ -419,11 +484,15 @@ impl App {
         }
         if response.drag_stopped() {
             self.grab = None;
+            self.transforming = None;
         }
+        let on_handle = response.interact_pointer_pos().or(response.hover_pos()).and_then(handle_under);
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
         // 図形の道具では、図形を押せば選び、ほかを押せば、そこに図形を置く。
         let shape_click = response.clicked() && self.tool == Tool::Shape && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Shape(_)));
-        if text_click && let Some((panel, at)) = hit {
+        if response.clicked() && on_handle.is_some() {
+            // つまみを押しただけなら、選び直さない。
+        } else if text_click && let Some((panel, at)) = hit {
             self.add_text_at(panel, at, back);
         } else if shape_click && let Some((panel, at)) = hit {
             self.add_shape_at(panel, at, back);
@@ -439,8 +508,12 @@ impl App {
         if response.hovered() && self.grab.is_none() {
             self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
-        if self.grab.is_some() && response.dragged() {
+        if let Some(t) = self.transforming.filter(|_| response.dragged()) {
+            ui.ctx().set_cursor_icon(knobs.map_or(egui::CursorIcon::Grabbing, |(_, quad)| transform::cursor(quad, t.handle)));
+        } else if self.grab.is_some() && response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if let Some((_, handle, quad)) = on_handle.filter(|_| response.hovered()) {
+            ui.ctx().set_cursor_icon(transform::cursor(quad, handle));
         } else if self.tool == Tool::Text && hit.is_some() && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
@@ -460,6 +533,11 @@ impl App {
         if let Some(texture) = texture {
             let uv = if back { Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0)) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
             painter.with_clip_rect(area.intersect(rect)).image(texture.id(), image, uv, Color32::WHITE);
+        }
+        // 大きさと回転のつまみ（動かしたあとの場所で）。
+        if let Some(i) = self.knob_target(back) {
+            let quad = transform::corners(&self.decals[i], template).map(to_screen);
+            transform::paint(&painter.with_clip_rect(area.intersect(rect)), quad, visuals.selection.bg_fill);
         }
 
         // 定規（mm）。原点は、展開図の左上。

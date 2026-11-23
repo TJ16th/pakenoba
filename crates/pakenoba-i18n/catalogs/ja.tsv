@@ -658,3 +658,5 @@
 	Turn the camera on	カメラを点ける
 	The peek-in view finds faces with SeetaFace Detection (rustface, BSD-2-Clause) and reads the webcam with nokhwa (Apache-2.0).	のぞき込みでは、顔の検出に SeetaFace Detection（rustface、BSD-2-Clause）を、Web カメラの読み込みに nokhwa（Apache-2.0）を使っています。
 	SeetaFace license	SeetaFace のライセンス
+	Package design, on the box	箱の上で、パッケージをデザインする
+	The PAKENOBA name and logo are not covered by the code license (MIT or Apache-2.0).	パケノバの名前とロゴは、コードのライセンス（MIT または Apache-2.0）の対象外です。

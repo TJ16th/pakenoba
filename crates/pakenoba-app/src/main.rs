@@ -90,6 +90,11 @@ fn main() -> ExitCode {
                 initial.peek = Some([x, y, z]);
                 initial.workspace = 2;
             }
+            ("--no-splash", _) => {
+                initial.splash = false;
+                i += 1;
+                continue;
+            }
             ("--guides", _) => {
                 initial.guides = true;
                 i += 1;
@@ -101,7 +106,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--peek x,y,z eye position in mm for the peek-in view, without a camera] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
+                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--guides] [--no-splash] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--peek x,y,z eye position in mm for the peek-in view, without a camera] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

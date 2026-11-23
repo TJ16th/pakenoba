@@ -23,6 +23,8 @@ mod adjust;
 mod vectorize;
 mod menus;
 mod peek;
+mod splash;
+mod transform;
 mod views;
 
 use pakenoba_i18n::t;
@@ -100,11 +102,13 @@ pub struct Initial {
     pub answer_folder: Option<PathBuf>,
     /// のぞき込みの目の位置（mm）。カメラを使わずに確かめるとき。
     pub peek: Option<[f32; 3]>,
+    /// 起動ロゴを出す。
+    pub splash: bool,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true }
     }
 }
 
@@ -477,6 +481,8 @@ struct App {
     hover_now: Option<usize>,
     /// つかんでいる柄の番号と、柄の座標でのつかんだ位置。
     grab: Option<(usize, P2)>,
+    /// 大きさや回転のつまみで、変形している途中。
+    transforming: Option<transform::Transforming>,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -523,6 +529,8 @@ struct App {
     vectorizing: Option<vectorize::VectorizeJob>,
     /// 「パケノバについて」の窓を出しているか。
     about_open: bool,
+    /// 起動ロゴ。
+    splash: splash::Splash,
     /// 文字を置いた直後。右の欄の文字の入力に、カーソルを置く。
     focus_text: bool,
     /// レイヤーの欄で、名前を変えている柄と、入力中の名前。
@@ -614,6 +622,7 @@ impl App {
             hover_decal: None,
             hover_now: None,
             grab: None,
+            transforming: None,
             hover: None,
             sheet,
             bases: [None, None],
@@ -649,6 +658,7 @@ impl App {
             trace: vectorize::default_settings(),
             vectorizing: None,
             about_open: false,
+            splash: splash::Splash::new(initial.splash),
             focus_text: false,
             show_guides: initial.guides,
             art_dirty: true,
@@ -1140,6 +1150,7 @@ impl eframe::App for App {
             }
         }
 
+        self.splash(ui.ctx());
         // 全画面ののぞき込み。ほかの欄は出さない。
         self.settle_peek();
         if self.peek.full {
