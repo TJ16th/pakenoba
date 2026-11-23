@@ -626,3 +626,35 @@
 	Dimension "{label}" is not a number, so it was set automatically	寸法の「{label}」が数ではなかったので、自動にしました
 	Back to the length set from the dimensions	寸法から決めた長さに戻します
 	Set from the dimensions. Move the slider to choose your own length.	寸法から決めています。つまみを動かすと、自分で決められます。
+	Peek-in view (webcam)	のぞき込み（Web カメラ）
+	13-inch laptop	13 インチのノートパソコン
+	15.6-inch laptop	15.6 インチのノートパソコン
+	24-inch monitor	24 インチのモニター
+	27-inch monitor	27 インチのモニター
+	32-inch monitor	32 インチのモニター
+	Large TV (55-inch)	大きなテレビ（55 インチ）
+	A face was found.	顔が見つかりました。
+	Camera	カメラ
+	Camera {}	カメラ {}
+	Cameras are not supported on this system.	この OS では、カメラを使えません。
+	Could not open the camera.	カメラを開けませんでした。
+	Could not read the face detection model: {e}	顔を見つけるためのモデルを読めませんでした: {e}
+	Could not start the camera: {e}	カメラを動かせませんでした: {e}
+	Drag and scroll on the box in the Structure or Design step to set the angle and size. Esc or a double-click leaves full screen.	箱の向きと大きさは、型かデザインの工程で、箱をドラッグ、ホイールして決めます。全画面は、Esc かダブルクリックで戻ります。
+	Esc: back	Esc: 戻る
+	Flip left and right	左右を逆にする
+	Looking for a face…	顔を探しています…
+	No camera found	カメラが見つかりません
+	Presets	見本
+	Screen width	画面の幅
+	Set the visible width of your screen so the depth looks right. If the box moves the wrong way, turn on "Flip left and right".	奥行きが正しく見えるように、画面の見えている幅を入れてください。箱が逆に動くときは、「左右を逆にする」を入れてください。
+	Show full screen	全画面で見せる
+	Shows the box as if it were behind the screen. A webcam watches where your face is: move your head to look around the box, and come closer to see it larger.	画面の向こうに箱があるように見せます。Web カメラで顔の場所を見て、頭を動かすと箱の横がのぞけ、近づくと大きく見えます。
+	Strength	効き具合
+	The camera is off. The box is shown from the front.	カメラは止まっています。箱を正面から見せています。
+	The camera picture is only used inside this app to find the face. It is not saved or sent anywhere.	カメラの映像は、顔を見つけるためにこのアプリの中で使うだけです。保存も送信もしません。
+	The camera stopped sending pictures: {e}	カメラから映像が届かなくなりました: {e}
+	Turn the camera off	カメラを止める
+	Turn the camera on	カメラを点ける
+	The peek-in view finds faces with SeetaFace Detection (rustface, BSD-2-Clause) and reads the webcam with nokhwa (Apache-2.0).	のぞき込みでは、顔の検出に SeetaFace Detection（rustface、BSD-2-Clause）を、Web カメラの読み込みに nokhwa（Apache-2.0）を使っています。
+	SeetaFace license	SeetaFace のライセンス

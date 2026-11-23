@@ -22,6 +22,7 @@ mod shapes;
 mod adjust;
 mod vectorize;
 mod menus;
+mod peek;
 mod views;
 
 use pakenoba_i18n::t;
@@ -97,11 +98,13 @@ pub struct Initial {
     pub library: bool,
     /// テスト用: 素材のフォルダを選ぶダイアログの代わりの答え。
     pub answer_folder: Option<PathBuf>,
+    /// のぞき込みの目の位置（mm）。カメラを使わずに確かめるとき。
+    pub peek: Option<[f32; 3]>,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None }
     }
 }
 
@@ -499,6 +502,8 @@ struct App {
     render_state: Option<eframe::egui_wgpu::RenderState>,
     /// 出力の設定と、書き出している途中の動画。
     output: outputs::OutputSettings,
+    /// のぞき込み（出力）。Web カメラで顔を見て、画面の向こうの箱をのぞき込む。
+    peek: peek::PeekState,
     /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
     solid_aspect: f32,
     movie: Option<outputs::MovieJob>,
@@ -588,7 +593,7 @@ impl App {
             tool: Tool::Select,
             shown: initial.views.map(|[solid, front, back]| Shown { solid, front, back }).filter(|s| s.count() > 0).unwrap_or(Shown::SOLID_ONLY),
             flat: [FlatCam::default(); 2],
-            output_kind: 0,
+            output_kind: if initial.peek.is_some() { peek::PEEK_OUTPUT } else { 0 },
             assets: assets::bundled(),
             assets_open: initial.assets.is_some(),
             assets_inside: initial.assets.unwrap_or(true),
@@ -634,6 +639,7 @@ impl App {
             edits: Vec::new(),
             edit_polled: 0.0,
             output: Default::default(),
+            peek: peek::PeekState::new(initial.peek),
             solid_aspect: 16.0 / 9.0,
             movie: None,
             fonts: Default::default(),
@@ -1132,6 +1138,13 @@ impl eframe::App for App {
                 self.fold += step * (target - self.fold).signum();
                 ui.ctx().request_repaint();
             }
+        }
+
+        // 全画面ののぞき込み。ほかの欄は出さない。
+        self.settle_peek();
+        if self.peek.full {
+            self.peek_full_screen(ui, frame);
+            return;
         }
 
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());

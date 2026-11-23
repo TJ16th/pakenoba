@@ -376,6 +376,8 @@ back = false
 
 画面のほうにも、設定（コレクションの登録）を書くために、serde と toml を足した。中核と同じ版で、ライセンスも同じ。JPEG を読むために、zune-jpeg 0.5.15（と、それが使う zune-core 0.5.3）を足した。どちらも MIT、Apache-2.0、Zlib のどれかを選べる。書き出しのために、gif 0.14.2（MIT か Apache-2.0）、pdf-writer 0.15.0（MIT か Apache-2.0）、flate2 1.1.11（MIT か Apache-2.0。すでに zip が使っていた版）を足した。
 
+のぞき込み（2026-11-23）のために、nokhwa 0.10.11（Web カメラ。Apache-2.0。Windows では nokhwa-bindings-windows、Linux では v4l と v4l2-sys-mit（MIT））と rustface 0.1.7（顔の検出。BSD-2-Clause。SeetaFace のモデル 1.2 MB を `assets/` に同梱）を足した。連れてくる部品は flume（MIT か Apache-2.0）、nanorand（Zlib）、spin（MIT）、num 0.3 の一式（MIT か Apache-2.0）。nokhwa の既定の機能（mozjpeg、C の部品）は切った。どれも「MIT または Apache-2.0」での公開と両立する。BSD-2-Clause の条文は、アプリの「パケノバについて」にも出す。案件のファイルには何も足していない。
+
 ベクター化と SVG のために、vectorcraft-trace（VectorCraft のコミット `db9acab4`）と craft-svg（craft-libs の `ba25ccd2`、`tree-render`）を足した（2026-11-22）。どちらも MIT か Apache-2.0。craft-libs は同じコミットにそろえる決まりなので、craft-psd も `9eb02be8` から `ba25ccd2`（vectorcraft-trace が使う craft-image-codecs と同じ）へ上げた。新しく入る部品は 52 個で、ほとんどが MIT か Apache-2.0。それ以外は、usvg と resvg（0.48.1、MIT か Apache-2.0）が描くのに使う tiny-skia と tiny-skia-path（BSD-3-Clause）、画像の読み込みの exr、lebe、alloc-no-stdlib、alloc-stdlib（BSD-3-Clause）、arrayref（BSD-2-Clause）、slotmap（Zlib）。どれも「MIT または Apache-2.0」での公開と両立する（配るときに、ライセンスの文を添える）。vectorcraft-geom は、vectorcraft-trace の版と、craft-svg が使う古い版の 2 つが入る（型を渡し合わないので、動きには関わらない）。
 
 これらが連れてくる部品は、ほとんどが MIT または Apache-2.0。それ以外は、winnow（MIT）、zlib-rs（Zlib）、memchr（Unlicense または MIT）、constant_time_eq（CC0-1.0、MIT-0、Apache-2.0 のどれか）で、どれも「MIT または Apache-2.0」での公開と両立する。zip は、圧縮（deflate）だけを有効にした。暗号化と、ほかの圧縮形式は入れていない。

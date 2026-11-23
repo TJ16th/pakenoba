@@ -25,7 +25,7 @@ use crate::paint::{Canvas, Marks, paint};
 use crate::print::{Paper, PrintSettings, SheetPrint, print_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
-pub(super) const OUTPUTS: [(&str, bool); 5] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true)];
+pub(super) const OUTPUTS: [(&str, bool); 6] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true)];
 
 /// 画像の大きさ（16:9）。
 const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160 (4K)", [3840, 2160])];
@@ -380,6 +380,7 @@ impl App {
                     }
                     ui.small(t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
                 }
+                super::peek::PEEK_OUTPUT => self.peek_settings(ui),
                 _ => {}
             }
             ui.add_space(6.0);

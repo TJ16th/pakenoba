@@ -103,9 +103,13 @@ impl App {
             let rows = self.motion_rows(rect.width());
             let split = rect.bottom() - (10.0 + 28.0 * rows as f32);
             let (view, strip) = (Rect::from_min_max(rect.min, pos2(rect.right(), split)), Rect::from_min_max(pos2(rect.left(), split), rect.max));
-            candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
-            if self.workspace == Workspace::Output {
-                self.shot_frame(ui, view);
+            if self.workspace == Workspace::Output && self.output_kind == super::peek::PEEK_OUTPUT {
+                self.peek_view(ui, view, rs.as_ref());
+            } else {
+                candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
+                if self.workspace == Workspace::Output {
+                    self.shot_frame(ui, view);
+                }
             }
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
             ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(8.0, 5.0))), |ui| self.motion_controls(ui, rows));

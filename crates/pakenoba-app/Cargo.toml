@@ -44,3 +44,14 @@ toml = "1"
 rfd = "0.18"
 # 素材を取り込んだ日時（その土地の時刻）。
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+# のぞき込み（出力）: Web カメラで顔を見つけ、画面の向こうの箱をのぞき込めるようにする。
+# 顔の検出は、SeetaFace の Rust 版（BSD-2-Clause。モデルは assets/ に同梱）。
+rustface = { version = "0.1.7", default-features = false }
+
+# Web カメラの映像。JPEG のほどき（mozjpeg、C の部品）は使わず、zune-jpeg でほどく。
+[target.'cfg(windows)'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-v4l"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }

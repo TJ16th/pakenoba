@@ -80,6 +80,16 @@ fn main() -> ExitCode {
                 initial.views = Some([on[0], on[1], on[2]]);
             }
             // ガイドは、はじめは隠す（2026-11-23）。--no-guides は、前の使い方のために残す。
+            ("--peek", _) if i + 1 < args.len() => {
+                // のぞき込みを、決めた目の位置（mm、画面の中央から。x 右、y 上、z 手前）で見せる。カメラは使わない。
+                let parts: Vec<f32> = args[i + 1].split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                let [x, y, z] = parts[..] else {
+                    println!("--peek takes x,y,z in mm (for example 200,0,500).");
+                    return ExitCode::FAILURE;
+                };
+                initial.peek = Some([x, y, z]);
+                initial.workspace = 2;
+            }
             ("--guides", _) => {
                 initial.guides = true;
                 i += 1;
@@ -91,7 +101,7 @@ fn main() -> ExitCode {
                 continue;
             }
             _ => {
-                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
+                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--peek x,y,z eye position in mm for the peek-in view, without a camera] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }
