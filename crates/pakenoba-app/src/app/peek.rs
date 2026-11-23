@@ -55,7 +55,7 @@ pub struct PeekSettings {
 
 impl Default for PeekSettings {
     fn default() -> Self {
-        PeekSettings { camera: 0, screen_mm: 530.0, strength: 1.0, mirror: false, camera_fov: 60.0, stability: 0.6 }
+        PeekSettings { camera: 0, screen_mm: 530.0, strength: 1.0, mirror: false, camera_fov: 60.0, stability: 0.3 }
     }
 }
 
@@ -111,15 +111,18 @@ impl OneEuro {
     }
 }
 
-/// 目の位置の、ぶれ補正。2 段で抑える。
-/// 1. 顔が見つかるたび（1 秒に十数回）、測った位置を One Euro フィルターに通す（細かいふるえを消す）。
-///    奥行きは顔の幅から見積もるので、ぶれが大きい。横と縦より強く抑える。
-/// 2. 画面の更新ごとに、ばねのように目標へ寄せる（測る間隔の段々を消し、なめらかに動かす）。
+/// 目の位置の、ぶれ補正。遅れを作らないことを先にする（遅れると、見ている人が酔う）。
+/// - 顔が見つかるたび、測った目の位置を One Euro フィルターに通す。補正が 0 なら、そのまま使う。
+///   奥行きは顔の幅から見積もるので、ぶれが大きい。横と縦より強く抑える。
+/// - 測った速さから、コマを撮ってからいままでの時間（カメラと検出の遅れ）のぶん先を読んで、遅れを打ち消す。
+/// - 画面の更新ごとにも、前に測ってからの時間のぶん先を読む（測る間隔の段々を消す）。
 #[derive(Clone, Copy, Debug)]
 pub struct Smoother {
     pub eye: V3,
-    velocity: V3,
-    target: V3,
+    /// 最後に測った（ならした）位置と、速さ（mm/秒）と、それからの時間（秒）。
+    base: V3,
+    speed: V3,
+    since: f32,
     filters: [OneEuro; 3],
     /// 顔を見失ってからの時間（秒）。
     lost: f32,
@@ -127,47 +130,76 @@ pub struct Smoother {
 
 impl Default for Smoother {
     fn default() -> Self {
-        Smoother { eye: REST_EYE, velocity: [0.0; 3], target: REST_EYE, filters: Default::default(), lost: f32::INFINITY }
+        Smoother { eye: REST_EYE, base: REST_EYE, speed: [0.0; 3], since: 0.0, filters: Default::default(), lost: f32::INFINITY }
     }
 }
 
+/// 先読みの上限（秒）。これより長く測れていなければ、先へは進めない。
+const LOOK_AHEAD: f32 = 0.12;
+
 impl Smoother {
-    /// 顔が見つかったとき。`dt` は、前に測ってからの時間（秒）。`stability` は 0〜1（大きいほど強く抑える）。
-    pub fn measure(&mut self, eye: V3, dt: f32, stability: f32) {
+    /// 顔が見つかったとき。`dt` は前に測ってからの時間、`age` はそのコマを撮ってからの時間（秒）。
+    /// `stability` は 0〜1（大きいほど強く抑える。0 なら何もしない）。
+    pub fn measure(&mut self, eye: V3, dt: f32, age: f32, stability: f32) {
         let s = stability.clamp(0.0, 1.0);
-        let min_cutoff = 3.0 * (1.0 - s) + 0.25 * s;
-        let beta = 0.02 * (1.0 - s) + 0.006 * s;
-        if self.lost > 1.5 {
+        let fresh = self.lost > 1.5;
+        if fresh {
             // しばらく見失っていたあとは、測った場所から始め直す（正面から飛んでこない）。
             self.filters = Default::default();
+            self.speed = [0.0; 3];
         }
         self.lost = 0.0;
-        for (k, (target, filter)) in self.target.iter_mut().zip(&mut self.filters).enumerate() {
-            // 奥行きは、横と縦の 3 分の 1 の効きで、強く抑える。
-            let cut = if k == 2 { min_cutoff / 3.0 } else { min_cutoff };
-            *target = filter.filter(eye[k], dt, cut, beta);
+        let before = self.base;
+        for (k, (base, filter)) in self.base.iter_mut().zip(&mut self.filters).enumerate() {
+            *base = if s <= 0.0 {
+                eye[k]
+            } else {
+                // 止まっているときの効き（Hz）。補正が強いほど低く（強く抑える）。奥行きは 3 分の 1。
+                let min_cutoff = 10.0 * (1.0 - s) + 0.6 * s;
+                let cut = if k == 2 { min_cutoff / 3.0 } else { min_cutoff };
+                filter.filter(eye[k], dt, cut, 0.03)
+            };
+        }
+        if !fresh && dt > 1e-3 {
+            for ((speed, base), old) in self.speed.iter_mut().zip(self.base).zip(before) {
+                *speed += ((base - old) / dt - *speed) * 0.5;
+            }
+        }
+        self.since = age.clamp(0.0, LOOK_AHEAD);
+        if fresh {
+            self.eye = self.base;
         }
     }
 
     /// 顔が見つからなかったとき。
     pub fn miss(&mut self, dt: f32) {
         self.lost += dt;
-        // 少しのあいだは、その場で待つ。それより長く見失ったら、正面へゆっくり戻る。
+        // 少しのあいだは、その場で待つ（先読みもしない）。それより長く見失ったら、正面へゆっくり戻る。
+        self.speed = [0.0; 3];
         if self.lost >= 1.5 {
-            self.target = REST_EYE;
+            self.base = REST_EYE;
         }
     }
 
-    /// 画面の更新ごとに、目標へ寄せる。`dt` は前の更新からの時間（秒）。
+    /// 画面の更新ごと。`dt` は前の更新からの時間（秒）。
     pub fn update(&mut self, dt: f32, stability: f32) -> V3 {
-        let s = stability.clamp(0.0, 1.0);
-        // ばねの速さ。見失って正面へ戻るときは、ゆっくり。
-        let omega = if self.lost >= 1.5 { 2.5 } else { 16.0 * (1.0 - s) + 7.0 * s };
-        let dt = dt.clamp(1e-3, 0.05);
-        for k in 0..3 {
-            let accel = omega * omega * (self.target[k] - self.eye[k]) - 2.0 * omega * self.velocity[k];
-            self.velocity[k] += accel * dt;
-            self.eye[k] += self.velocity[k] * dt;
+        let dt = dt.clamp(1e-3, 0.1);
+        self.since = (self.since + dt).min(LOOK_AHEAD);
+        let ahead: V3 = std::array::from_fn(|k| self.base[k] + self.speed[k] * self.since);
+        if self.lost >= 1.5 {
+            // 正面へ戻るときだけは、ゆっくり。
+            let a = 1.0 - (-dt * 2.5).exp();
+            for (e, t) in self.eye.iter_mut().zip(ahead) {
+                *e += (t - *e) * a;
+            }
+        } else if stability <= 0.0 {
+            self.eye = ahead;
+        } else {
+            // 段々をわずかにならす（1 コマ 60 分の 1 秒のうちに、ほとんど追いつく）。
+            let a = 1.0 - (-dt * 40.0).exp();
+            for (e, t) in self.eye.iter_mut().zip(ahead) {
+                *e += (t - *e) * a;
+            }
         }
         self.eye
     }
@@ -279,8 +311,8 @@ pub fn shrink(gray: &[u8], w: usize, h: usize, to: usize) -> (Vec<u8>, usize, us
 
 /// カメラのスレッドから届くもの。
 pub enum Report {
-    /// 顔（見つからなければ `None`）と、カメラの絵の縦横比。
-    Face(Option<Face>, f32),
+    /// 顔（見つからなければ `None`）と、カメラの絵の縦横比と、そのコマを撮ってから送るまでの時間（秒）。
+    Face(Option<Face>, f32, f32),
     /// 設定の欄に出す、小さな灰色の絵。
     Preview(Vec<u8>, usize, usize),
     Error(String),
@@ -329,25 +361,111 @@ impl Tracker {
     }
 }
 
+/// カメラから届いた、いちばん新しいコマ（明るさだけ）。古いコマは捨てる（溜めると、見ている人の動きから遅れる）。
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+type Gray = (Vec<u8>, usize, usize, std::time::Instant);
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+struct Latest {
+    /// いちばん新しいコマ（明るさ、幅、高さ、撮った時刻）と、カメラが止まった理由（止まったときだけ）。
+    frame: std::sync::Mutex<(Option<Gray>, Option<String>)>,
+    ready: std::sync::Condvar,
+}
+
+/// カメラを読むスレッドと、顔を探すこのスレッドを分ける。カメラは止まらずに読み続け、
+/// こちらは探し終わるたびに、その時点でいちばん新しいコマだけを使う。
+/// 前に顔を見つけていれば、そのまわりだけを小さくして探す（速い）。見失ったら、絵の全体から探す。
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn run(index: usize, stop: &AtomicBool, send: &mpsc::SyncSender<Report>) -> Result<(), String> {
+    let mut finder = FaceFinder::new()?;
+    let latest = Arc::new(Latest { frame: std::sync::Mutex::new((None, None)), ready: std::sync::Condvar::new() });
+    let quit = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let (latest, quit) = (Arc::clone(&latest), Arc::clone(&quit));
+        std::thread::Builder::new().name("peek-capture".into()).spawn(move || {
+            let failed = capture(index, &quit, &latest).err();
+            let mut slot = latest.frame.lock().unwrap_or_else(|e| e.into_inner());
+            slot.1 = Some(failed.unwrap_or_default());
+            latest.ready.notify_all();
+        })
+    }
+    .map_err(|e| e.to_string())?;
+    let mut last: Option<Face> = None;
+    let mut sent_preview = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    let result = loop {
+        if stop.load(Ordering::Relaxed) {
+            break Ok(());
+        }
+        // いちばん新しいコマを待って、取り出す。
+        let taken = {
+            let mut slot = latest.frame.lock().unwrap_or_else(|e| e.into_inner());
+            while slot.0.is_none() && slot.1.is_none() && !stop.load(Ordering::Relaxed) {
+                slot = latest.ready.wait_timeout(slot, std::time::Duration::from_millis(100)).map(|(g, _)| g).unwrap_or_else(|e| e.into_inner().0);
+            }
+            if let Some(error) = slot.1.take() {
+                break if error.is_empty() { Ok(()) } else { Err(error) };
+            }
+            slot.0.take()
+        };
+        let Some((gray, w, h, shot)) = taken else { continue };
+        let face = last.and_then(|f| find_near(&mut finder, &gray, w, h, f)).or_else(|| {
+            let (small, sw, sh) = shrink(&gray, w, h, DETECT_WIDTH);
+            finder.find(&small, sw, sh)
+        });
+        last = face;
+        if send.try_send(Report::Face(face, w as f32 / h.max(1) as f32, shot.elapsed().as_secs_f32())).is_err() && stop.load(Ordering::Relaxed) {
+            break Ok(());
+        }
+        // 設定の欄の小さな絵は、1 秒に 10 回まで。
+        if sent_preview.elapsed().as_millis() >= 100 {
+            sent_preview = std::time::Instant::now();
+            let (preview, pw, ph) = shrink(&gray, w, h, PREVIEW_WIDTH);
+            let _ = send.try_send(Report::Preview(preview, pw, ph));
+        }
+    };
+    quit.store(true, Ordering::Relaxed);
+    let _ = reader.join();
+    result
+}
+
+/// 前に見つけた顔のまわり（顔の幅の 2.6 倍の四角）だけを、顔が 46 px ほどになるように縮めて探す。
+fn find_near(finder: &mut FaceFinder, gray: &[u8], w: usize, h: usize, last: Face) -> Option<Face> {
+    let face_px = last.w * w as f32;
+    let side = (face_px * 2.6).clamp(48.0, w.min(h) as f32) as usize;
+    let cx = (last.cx * w as f32) as isize;
+    let cy = (last.cy * h as f32) as isize;
+    let x0 = (cx - side as isize / 2).clamp(0, (w - side) as isize) as usize;
+    let y0 = (cy - side as isize / 2).clamp(0, (h - side) as isize) as usize;
+    let mut crop = Vec::with_capacity(side * side);
+    for y in y0..y0 + side {
+        crop.extend_from_slice(&gray[y * w + x0..y * w + x0 + side]);
+    }
+    let to = ((side as f32 * 46.0 / face_px.max(1.0)) as usize).clamp(48, side.max(48));
+    let (small, sw, sh) = shrink(&crop, side, side, to);
+    let f = finder.find(&small, sw, sh)?;
+    Some(Face { cx: (x0 as f32 + f.cx * side as f32) / w as f32, cy: (y0 as f32 + f.cy * side as f32) / h as f32, w: f.w * side as f32 / w as f32 })
+}
+
+/// カメラを読み続け、明るさだけにして、いちばん新しいコマの置き場に入れる。
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn capture(index: usize, quit: &AtomicBool, latest: &Latest) -> Result<(), String> {
     use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType};
     const FORMATS: [FrameFormat; 4] = [FrameFormat::YUYV, FrameFormat::MJPEG, FrameFormat::NV12, FrameFormat::GRAY];
-    let mut finder = FaceFinder::new()?;
-    // 640 x 480 に近い大きさで開く。だめなら、カメラに任せる。
+    // 640 x 480 に近い大きさで、なるべく速いコマ数で開く。だめなら、カメラに任せる。
     let mut camera = FORMATS
         .iter()
-        .find_map(|f| nokhwa::Camera::new(CameraIndex::Index(index as u32), RequestedFormat::with_formats(RequestedFormatType::Closest(CameraFormat::new_from(640, 480, *f, 30)), &FORMATS)).ok())
+        .find_map(|f| nokhwa::Camera::new(CameraIndex::Index(index as u32), RequestedFormat::with_formats(RequestedFormatType::Closest(CameraFormat::new_from(640, 480, *f, 60)), &FORMATS)).ok())
         .or_else(|| nokhwa::Camera::new(CameraIndex::Index(index as u32), RequestedFormat::with_formats(RequestedFormatType::AbsoluteHighestFrameRate, &FORMATS)).ok())
         .ok_or_else(|| t!("Could not open the camera."))?;
     camera.open_stream().map_err(|e| t!("Could not start the camera: {e}"))?;
     let mut failures = 0;
-    while !stop.load(Ordering::Relaxed) {
+    while !quit.load(Ordering::Relaxed) {
         let frame = match camera.frame() {
             Ok(frame) => frame,
             Err(e) => {
                 failures += 1;
                 if failures > 30 {
+                    let _ = camera.stop_stream();
                     return Err(t!("The camera stopped sending pictures: {e}"));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(30));
@@ -355,15 +473,12 @@ fn run(index: usize, stop: &AtomicBool, send: &mpsc::SyncSender<Report>) -> Resu
             }
         };
         failures = 0;
+        let shot = std::time::Instant::now();
         let res = frame.resolution();
         let Some((gray, w, h)) = luma(frame.buffer(), res.width() as usize, res.height() as usize, frame.source_frame_format()) else { continue };
-        let (small, sw, sh) = shrink(&gray, w, h, DETECT_WIDTH);
-        let face = finder.find(&small, sw, sh);
-        let (preview, pw, ph) = shrink(&small, sw, sh, PREVIEW_WIDTH);
-        if send.try_send(Report::Face(face, w as f32 / h.max(1) as f32)).is_err() && stop.load(Ordering::Relaxed) {
-            break;
-        }
-        let _ = send.try_send(Report::Preview(preview, pw, ph));
+        let mut slot = latest.frame.lock().unwrap_or_else(|e| e.into_inner());
+        slot.0 = Some((gray, w, h, shot));
+        latest.ready.notify_all();
     }
     let _ = camera.stop_stream();
     Ok(())
@@ -411,7 +526,7 @@ pub struct PeekState {
     /// つながっているカメラの名前（はじめて開いたときに調べる）。
     pub cameras: Option<Vec<String>>,
     /// 届いた顔を、この回の画面の更新で使う。
-    seen: Option<Option<Face>>,
+    seen: Option<(Option<Face>, f32)>,
     /// 前に顔の知らせが届いた時刻（秒）。
     last_report: Option<f64>,
 }
@@ -429,10 +544,10 @@ impl PeekState {
         let mut stopped = false;
         while let Ok(report) = tracker.reports.try_recv() {
             match report {
-                Report::Face(face, aspect) => {
+                Report::Face(face, aspect, age) => {
                     self.face = face;
                     self.aspect = aspect;
-                    self.seen = Some(face);
+                    self.seen = Some((face, age));
                 }
                 Report::Preview(gray, w, h) => {
                     let image = egui::ColorImage::from_gray([w, h], &gray);
@@ -478,11 +593,11 @@ impl PeekState {
         let stability = self.settings.stability;
         if !self.running() {
             self.smoother.miss(f32::INFINITY);
-        } else if let Some(face) = self.seen.take() {
+        } else if let Some((face, age)) = self.seen.take() {
             let since = self.last_report.map_or(0.1, |t| (now - t) as f32);
             self.last_report = Some(now);
             match face {
-                Some(f) => self.smoother.measure(eye_from_face(f, aspect, screen_h, &self.settings), since, stability),
+                Some(f) => self.smoother.measure(eye_from_face(f, aspect, screen_h, &self.settings), since, age, stability),
                 None => self.smoother.miss(since),
             }
         }
@@ -758,35 +873,64 @@ mod tests {
     fn 見失ったら_しばらく待って_正面へ戻る() {
         let mut s = Smoother::default();
         for _ in 0..30 {
-            s.measure([200.0, 0.0, 500.0], 0.1, 0.6);
-            for _ in 0..6 {
-                s.update(1.0 / 60.0, 0.6);
+            s.measure([200.0, 0.0, 500.0], 0.05, 0.03, 0.3);
+            for _ in 0..3 {
+                s.update(1.0 / 60.0, 0.3);
             }
         }
         assert!((s.eye[0] - 200.0).abs() < 2.0, "{:?}", s.eye);
         s.miss(0.5);
         for _ in 0..30 {
-            s.update(1.0 / 60.0, 0.6);
+            s.update(1.0 / 60.0, 0.3);
         }
         assert!((s.eye[0] - 200.0).abs() < 2.0, "すぐには戻らない");
         s.miss(1.5);
         for _ in 0..600 {
-            s.update(1.0 / 60.0, 0.6);
+            s.update(1.0 / 60.0, 0.3);
         }
         assert!(s.eye[0].abs() < 10.0, "{:?}", s.eye);
     }
 
     #[test]
+    fn 補正が0なら_測った位置をそのまま使う() {
+        let mut s = Smoother::default();
+        s.measure([10.0, 0.0, 600.0], 0.05, 0.0, 0.0);
+        s.measure([50.0, 0.0, 600.0], 0.05, 0.0, 0.0);
+        let e = s.update(0.0, 0.0);
+        assert!(e[0] >= 50.0, "遅れない（先読みで少し先へ出てよい）: {e:?}");
+    }
+
+    #[test]
+    fn 動いている頭には_先読みで遅れない() {
+        // 毎秒 300 mm で動く頭を、20 回／秒、50 ms 遅れのコマで測る。表示は、いまの本当の位置から 15 mm 以内。
+        let mut s = Smoother::default();
+        let mut t = 0.0f32;
+        let mut worst = 0.0f32;
+        for n in 0..60 {
+            let shot = t - 0.05;
+            s.measure([300.0 * shot, 0.0, 600.0], 0.05, 0.05, 0.3);
+            for _ in 0..3 {
+                t += 1.0 / 60.0;
+                let e = s.update(1.0 / 60.0, 0.3);
+                if n > 20 {
+                    worst = worst.max((e[0] - 300.0 * t).abs());
+                }
+            }
+        }
+        assert!(worst < 15.0, "{worst}");
+    }
+
+    #[test]
     fn ぶれ補正で_止まった頭のふるえが小さくなる() {
-        // 10 回／秒の測定に、±8 mm のふるえを足す。補正が強いほど、表示のふるえは小さい。
+        // 20 回／秒の測定に、±8 mm のふるえを足す。補正が強いほど、表示のふるえは小さい。
         let shake = |stability: f32| {
             let mut s = Smoother::default();
             let mut lo = f32::INFINITY;
             let mut hi = f32::NEG_INFINITY;
             for n in 0..200 {
                 let noise = if n % 2 == 0 { 8.0 } else { -8.0 };
-                s.measure([100.0 + noise, 0.0, 600.0 + noise * 3.0], 0.1, stability);
-                for _ in 0..6 {
+                s.measure([100.0 + noise, 0.0, 600.0 + noise * 3.0], 0.05, 0.03, stability);
+                for _ in 0..3 {
                     let e = s.update(1.0 / 60.0, stability);
                     if n > 100 {
                         lo = lo.min(e[0]);
@@ -797,7 +941,6 @@ mod tests {
             hi - lo
         };
         assert!(shake(0.9) < shake(0.1) * 0.5, "{} {}", shake(0.9), shake(0.1));
-        assert!(shake(0.6) < 6.0, "{}", shake(0.6));
     }
 
     #[test]
