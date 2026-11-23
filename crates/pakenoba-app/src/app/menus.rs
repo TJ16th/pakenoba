@@ -252,11 +252,7 @@ impl App {
             ui.label(t!("The code is licensed under MIT or Apache-2.0, at your option. The PAKENOBA name and logo are not covered by the code license."));
             ui.add_space(6.0);
             ui.label(t!("Uses craft-libs and VectorCraft's Image Trace (MIT or Apache-2.0)."));
-            ui.label(t!("The peek-in view finds faces with SeetaFace Detection (rustface, BSD-2-Clause) and reads the webcam with nokhwa (Apache-2.0)."));
-            // BSD-2-Clause は、配るときに著作権の表示と条文を添える決まり。
-            ui.collapsing(t!("SeetaFace license"), |ui| {
-                egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| ui.small(include_str!("../../assets/seetaface-LICENSE.txt")));
-            });
+            ui.label(t!("The peek-in view finds faces and eyes with MediaPipe BlazeFace (Apache-2.0), run by tract (MIT or Apache-2.0), and reads the webcam with nokhwa (Apache-2.0)."));
             ui.add_space(8.0);
             if ui.button(t!("Close")).clicked() {
                 self.about_open = false;

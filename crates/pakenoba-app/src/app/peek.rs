@@ -1,7 +1,8 @@
 //! のぞき込み（出力の工程）。Web カメラで見ている人の顔を見つけ、画面を窓にして、その向こうに箱を置く。
 //!
 //! - 顔を右へ動かすと箱の右の側面が見え（左の側面は隠れていき）、近づくと大きく見える（頭の位置に合わせた、ずらした透視投影）。
-//! - 顔の検出は、SeetaFace の Rust 版（rustface）。カメラの映像は、この中で灰色の小さな絵にして使うだけで、
+//! - 顔と目の検出は、MediaPipe の BlazeFace（顔の枠と、目、鼻、口など 6 点）を tract で動かす。目の中点を見る位置にし、
+//!   両目の間の幅から距離を見積もる（顔の枠より、ずっとぶれが小さい）。カメラの映像は、この中で灰色の小さな絵にして使うだけで、
 //!   保存も送信もしない。
 //! - カメラの読み込みと顔の検出は、別のスレッドで行う。画面のほうは、届いた目の位置をなめらかにして使う。
 //!
@@ -22,14 +23,14 @@ use pakenoba_core::template::bounding_sphere;
 use super::App;
 use crate::gpu::BoxRenderer;
 
-/// 顔の検出のモデル（SeetaFace の正面の顔。BSD-2-Clause）。
-const MODEL: &[u8] = include_bytes!("../../assets/seeta_fd_frontal_v1.0.bin");
-/// 顔の検出にかける絵の幅（px）。小さいほど速い。
-const DETECT_WIDTH: usize = 320;
+/// 顔の検出のモデル（MediaPipe BlazeFace の近距離用、128 x 128。Apache-2.0。tract で読めるように形を単純にしたもの）。
+const MODEL: &[u8] = include_bytes!("../../assets/blazeface-short-range-128.onnx");
+/// モデルに入れる絵の大きさ（px）。
+const INPUT: usize = 128;
 /// 設定の欄に出す、カメラの絵の幅（px）。
 const PREVIEW_WIDTH: usize = 160;
-/// 顔の幅（mm）。検出の枠の幅を、この大きさの顔として、カメラからの距離を見積もる。
-const FACE_MM: f32 = 150.0;
+/// 両目の間の幅（mm、大人のおよその平均）。これで、カメラからの距離を見積もる。
+const EYES_MM: f32 = 63.0;
 /// 顔が見つからないとき、見ている人がいるとみなす場所（画面の正面、60 cm）。
 pub const REST_EYE: V3 = [0.0, 0.0, 600.0];
 
@@ -62,9 +63,15 @@ impl Default for PeekSettings {
 /// カメラの絵の中の顔。どれも絵の幅と高さに対する割合（0〜1）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Face {
+    /// 両目の中点。
     pub cx: f32,
     pub cy: f32,
+    /// 両目の間の幅（絵の幅に対する割合）。
     pub w: f32,
+    /// 顔の枠（中心と、幅と高さ）。
+    pub frame: [f32; 4],
+    /// 両目（画面の表示用）。
+    pub eyes: [[f32; 2]; 2],
 }
 
 /// 顔の場所から、目の位置（mm）を見積もる。カメラは画面の上の縁の中央にあるとする。
@@ -73,7 +80,7 @@ pub fn eye_from_face(face: Face, aspect: f32, screen_h: f32, settings: &PeekSett
     let hfov = settings.camera_fov.to_radians();
     let vfov = 2.0 * ((hfov * 0.5).tan() / aspect).atan();
     let width_angle = (face.w * hfov).max(1e-3);
-    let distance = (FACE_MM / (2.0 * (width_angle * 0.5).tan())).clamp(200.0, 3000.0);
+    let distance = (EYES_MM / (2.0 * (width_angle * 0.5).tan())).clamp(200.0, 3000.0);
     // カメラは見ている人のほうを向いているので、人が自分の右へ動くと、絵では左へ動く。
     let sideways = if settings.mirror { face.cx - 0.5 } else { 0.5 - face.cx };
     let x = distance * (sideways * hfov).tan();
@@ -259,33 +266,132 @@ fn scale_m(s: f32) -> Mat4 {
     [[s, 0.0, 0.0, 0.0], [0.0, s, 0.0, 0.0], [0.0, 0.0, s, 0.0], [0.0, 0.0, 0.0, 1.0]]
 }
 
-/// 灰色の絵の中から、いちばん大きな顔を探す。
+type Plan = std::sync::Arc<tract_onnx::prelude::TypedRunnableModel>;
+
+/// 灰色の絵の中から顔を探す（BlazeFace）。
 pub struct FaceFinder {
-    detector: Box<dyn rustface::Detector>,
+    plan: Plan,
+}
+
+/// 見つけた顔の候補（モデルに入れた絵の中の割合）。
+#[derive(Clone, Copy, Debug)]
+struct Found {
+    score: f32,
+    /// 枠の中心と幅と高さ、6 点（右目、左目、鼻、口、右耳、左耳）。
+    v: [f32; 16],
 }
 
 impl FaceFinder {
     pub fn new() -> Result<FaceFinder, String> {
-        let model = rustface::read_model(MODEL).map_err(|e| t!("Could not read the face detection model: {e}"))?;
-        let mut detector = rustface::create_detector_with_model(model);
-        detector.set_min_face_size(36);
-        detector.set_score_thresh(2.0);
-        detector.set_pyramid_scale_factor(0.75);
-        detector.set_slide_window_step(4, 4);
-        Ok(FaceFinder { detector })
+        use tract_onnx::prelude::*;
+        let fail = |e: TractError| t!("Could not read the face detection model: {e}");
+        let plan = tract_onnx::onnx()
+            .model_for_read(&mut std::io::Cursor::new(MODEL))
+            .and_then(|m| m.with_input_fact(0, f32::fact([1, INPUT, INPUT, 3]).into()))
+            .and_then(|m| m.into_optimized())
+            .and_then(|m| m.into_runnable())
+            .map_err(fail)?;
+        Ok(FaceFinder { plan })
     }
 
-    /// `gray` は幅 `w`、高さ `h` の灰色の絵。
+    /// 絵の全体から探す（はみ出した部分は黒で埋めて、正方形にする）。
     pub fn find(&mut self, gray: &[u8], w: usize, h: usize) -> Option<Face> {
-        if w < 24 || h < 24 || gray.len() != w * h {
+        let side = w.max(h) as f32;
+        self.find_in(gray, w, h, [(w as f32 - side) * 0.5, (h as f32 - side) * 0.5, side])
+    }
+
+    /// 絵の中の正方形 `[左, 上, 辺]`（px）の中から探す。
+    pub fn find_in(&mut self, gray: &[u8], w: usize, h: usize, square: [f32; 3]) -> Option<Face> {
+        use tract_onnx::prelude::*;
+        if w < 8 || h < 8 || gray.len() != w * h || square[2] < 8.0 {
             return None;
         }
-        let image = rustface::ImageData::new(gray, w as u32, h as u32);
-        let faces = self.detector.detect(&image);
-        let best = faces.iter().max_by_key(|f| f.bbox().width())?;
-        let b = best.bbox();
-        Some(Face { cx: (b.x() as f32 + b.width() as f32 * 0.5) / w as f32, cy: (b.y() as f32 + b.height() as f32 * 0.5) / h as f32, w: b.width() as f32 / w as f32 })
+        let input = resample(gray, w, h, square, INPUT);
+        let tensor: Tensor = tract_ndarray::Array4::from_shape_fn((1, INPUT, INPUT, 3), |(_, y, x, _)| input[y * INPUT + x]).into();
+        let out = self.plan.run(tvec!(tensor.into())).ok()?;
+        let view = |i: usize| out.get(i).and_then(|t| t.to_plain_array_view::<f32>().ok().and_then(|v| v.as_slice().map(<[f32]>::to_vec)));
+        // 16 x 16 のマスに 2 つずつ、8 x 8 のマスに 6 つずつ、候補がある。
+        let mut found = Vec::new();
+        for (cells, anchors, scores, boxes) in [(16usize, 2usize, view(0)?, view(2)?), (8, 6, view(1)?, view(3)?)] {
+            for cy in 0..cells {
+                for cx in 0..cells {
+                    for a in 0..anchors {
+                        let k = (cy * cells + cx) * anchors + a;
+                        let score = 1.0 / (1.0 + (-scores.get(k)?).exp());
+                        if score < 0.6 {
+                            continue;
+                        }
+                        let b = boxes.get(k * 16..k * 16 + 16)?;
+                        let anchor = [(cx as f32 + 0.5) / cells as f32, (cy as f32 + 0.5) / cells as f32];
+                        let mut v = [0.0; 16];
+                        for (i, value) in v.iter_mut().enumerate() {
+                            let n = b[i] / INPUT as f32;
+                            // 幅と高さ（2、3 番）のほかは、マスの中心からのずれ。
+                            *value = if i == 2 || i == 3 { n } else { anchor[i % 2] + n };
+                        }
+                        found.push(Found { score, v });
+                    }
+                }
+            }
+        }
+        let best = blend_overlapping(&found)?;
+        // 正方形の中の割合から、絵の全体の割合へ。
+        let to = |x: f32, y: f32| [(square[0] + x * square[2]) / w as f32, (square[1] + y * square[2]) / h as f32];
+        let right = to(best.v[4], best.v[5]);
+        let left = to(best.v[6], best.v[7]);
+        let center = to(best.v[0], best.v[1]);
+        let eyes_w = ((left[0] - right[0]).powi(2) + ((left[1] - right[1]) * h as f32 / w as f32).powi(2)).sqrt();
+        Some(Face { cx: (right[0] + left[0]) * 0.5, cy: (right[1] + left[1]) * 0.5, w: eyes_w, frame: [center[0], center[1], best.v[2] * square[2] / w as f32, best.v[3] * square[2] / h as f32], eyes: [right, left] })
     }
+}
+
+/// いちばん確かな候補と、それに重なる候補を、確かさで重みを付けて平均する（MediaPipe と同じやり方。ぶれが減る）。
+fn blend_overlapping(found: &[Found]) -> Option<Found> {
+    // 見ている人は、カメラにいちばん近い（大きく写る）顔。確かさが十分な候補のうち、いちばん大きいものを選ぶ。
+    let sure = found.iter().map(|f| f.score).fold(0.0f32, f32::max);
+    let top = *found.iter().filter(|f| f.score >= sure - 0.15).max_by(|a, b| (a.v[2] * a.v[3]).total_cmp(&(b.v[2] * b.v[3])))?;
+    let overlap = |a: &[f32; 16], b: &[f32; 16]| {
+        let (ax0, ay0, ax1, ay1) = (a[0] - a[2] * 0.5, a[1] - a[3] * 0.5, a[0] + a[2] * 0.5, a[1] + a[3] * 0.5);
+        let (bx0, by0, bx1, by1) = (b[0] - b[2] * 0.5, b[1] - b[3] * 0.5, b[0] + b[2] * 0.5, b[1] + b[3] * 0.5);
+        let inter = (ax1.min(bx1) - ax0.max(bx0)).max(0.0) * (ay1.min(by1) - ay0.max(by0)).max(0.0);
+        inter / (a[2] * a[3] + b[2] * b[3] - inter).max(1e-6)
+    };
+    let mut sum = [0.0f32; 16];
+    let mut weight = 0.0;
+    for f in found.iter().filter(|f| overlap(&f.v, &top.v) > 0.3) {
+        for (s, v) in sum.iter_mut().zip(f.v) {
+            *s += v * f.score;
+        }
+        weight += f.score;
+    }
+    Some(Found { score: top.score, v: sum.map(|s| s / weight.max(1e-6)) })
+}
+
+/// 絵の中の正方形 `[左, 上, 辺]` を、`size` x `size` に縮めて、-1〜1 の明るさにする（面積の平均。外は黒）。
+fn resample(gray: &[u8], w: usize, h: usize, square: [f32; 3], size: usize) -> Vec<f32> {
+    let step = square[2] / size as f32;
+    let reach = step.max(1.0);
+    let mut out = vec![-1.0f32; size * size];
+    for y in 0..size {
+        let sy0 = square[1] + y as f32 * step;
+        for x in 0..size {
+            let sx0 = square[0] + x as f32 * step;
+            let (mut sum, mut n) = (0u32, 0u32);
+            let (xa, xb) = (sx0.max(0.0) as usize, ((sx0 + reach).ceil().max(0.0) as usize).min(w));
+            let (ya, yb) = (sy0.max(0.0) as usize, ((sy0 + reach).ceil().max(0.0) as usize).min(h));
+            for row in ya..yb {
+                for col in xa..xb {
+                    sum += gray[row * w + col] as u32;
+                    n += 1;
+                }
+            }
+            // 正方形のうち、絵の外の部分は黒のまま。
+            if n > 0 && sx0 >= -reach && sy0 >= -reach && sx0 < w as f32 && sy0 < h as f32 {
+                out[y * size + x] = sum as f32 / n as f32 / 127.5 - 1.0;
+            }
+        }
+    }
+    out
 }
 
 /// 灰色の絵を、幅 `to` に縮める（面積の平均）。
@@ -408,10 +514,7 @@ fn run(index: usize, stop: &AtomicBool, send: &mpsc::SyncSender<Report>) -> Resu
             slot.0.take()
         };
         let Some((gray, w, h, shot)) = taken else { continue };
-        let face = last.and_then(|f| find_near(&mut finder, &gray, w, h, f)).or_else(|| {
-            let (small, sw, sh) = shrink(&gray, w, h, DETECT_WIDTH);
-            finder.find(&small, sw, sh)
-        });
+        let face = last.and_then(|f| find_near(&mut finder, &gray, w, h, f)).or_else(|| finder.find(&gray, w, h));
         last = face;
         if send.try_send(Report::Face(face, w as f32 / h.max(1) as f32, shot.elapsed().as_secs_f32())).is_err() && stop.load(Ordering::Relaxed) {
             break Ok(());
@@ -428,22 +531,11 @@ fn run(index: usize, stop: &AtomicBool, send: &mpsc::SyncSender<Report>) -> Resu
     result
 }
 
-/// 前に見つけた顔のまわり（顔の幅の 2.6 倍の四角）だけを、顔が 46 px ほどになるように縮めて探す。
+/// 前に見つけた顔のまわり（顔の枠の 2 倍の正方形）だけを探す。顔がモデルの得意な大きさで入るので、目の位置が細かく出る。
 fn find_near(finder: &mut FaceFinder, gray: &[u8], w: usize, h: usize, last: Face) -> Option<Face> {
-    let face_px = last.w * w as f32;
-    let side = (face_px * 2.6).clamp(48.0, w.min(h) as f32) as usize;
-    let cx = (last.cx * w as f32) as isize;
-    let cy = (last.cy * h as f32) as isize;
-    let x0 = (cx - side as isize / 2).clamp(0, (w - side) as isize) as usize;
-    let y0 = (cy - side as isize / 2).clamp(0, (h - side) as isize) as usize;
-    let mut crop = Vec::with_capacity(side * side);
-    for y in y0..y0 + side {
-        crop.extend_from_slice(&gray[y * w + x0..y * w + x0 + side]);
-    }
-    let to = ((side as f32 * 46.0 / face_px.max(1.0)) as usize).clamp(48, side.max(48));
-    let (small, sw, sh) = shrink(&crop, side, side, to);
-    let f = finder.find(&small, sw, sh)?;
-    Some(Face { cx: (x0 as f32 + f.cx * side as f32) / w as f32, cy: (y0 as f32 + f.cy * side as f32) / h as f32, w: f.w * side as f32 / w as f32 })
+    let side = (last.frame[2] * w as f32).max(last.frame[3] * h as f32) * 2.0;
+    let (cx, cy) = (last.frame[0] * w as f32, last.frame[1] * h as f32);
+    finder.find_in(gray, w, h, [cx - side * 0.5, cy - side * 0.5, side.max(32.0)])
 }
 
 /// カメラを読み続け、明るさだけにして、いちばん新しいコマの置き場に入れる。
@@ -792,9 +884,13 @@ impl App {
             let (rect, _) = ui.allocate_exact_size(vec2(width, width * size.y / size.x.max(1.0)), egui::Sense::hover());
             ui.painter().image(texture.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             if let Some(face) = self.peek.face {
-                let c = rect.min + vec2(face.cx * rect.width(), face.cy * rect.height());
-                let half = face.w * rect.width() * 0.5;
-                ui.painter().rect_stroke(Rect::from_center_size(c, vec2(half * 2.0, half * 2.0)), 2.0, (1.5, ui.visuals().selection.bg_fill), egui::StrokeKind::Middle);
+                let at = |p: [f32; 2]| rect.min + vec2(p[0] * rect.width(), p[1] * rect.height());
+                let color = ui.visuals().selection.bg_fill;
+                let frame = Rect::from_center_size(at([face.frame[0], face.frame[1]]), vec2(face.frame[2] * rect.width(), face.frame[3] * rect.height()));
+                ui.painter().rect_stroke(frame, 2.0, (1.0, color), egui::StrokeKind::Middle);
+                for eye in face.eyes {
+                    ui.painter().circle_filled(at(eye), 2.5, Color32::from_rgb(0xf2, 0xa9, 0x00));
+                }
             }
             ui.small(match self.peek.face {
                 Some(_) => t!("A face was found."),
@@ -856,17 +952,21 @@ mod tests {
         assert!(width(350.0) > width(900.0));
     }
 
+    fn face(cx: f32, cy: f32, w: f32) -> Face {
+        Face { cx, cy, w, frame: [cx, cy, w * 2.5, w * 3.0], eyes: [[cx - w * 0.5, cy], [cx + w * 0.5, cy]] }
+    }
+
     #[test]
     fn 顔の場所から目の位置を見積もる() {
         let s = PeekSettings::default();
-        // 絵の中央で、幅の 2 割の顔は、正面のおよそ 70 cm。
-        let eye = eye_from_face(Face { cx: 0.5, cy: 0.5, w: 0.2 }, 4.0 / 3.0, 300.0, &s);
+        // 絵の中央で、両目の間が幅の 8.6% の顔は、正面のおよそ 70 cm。
+        let eye = eye_from_face(face(0.5, 0.5, 0.086), 4.0 / 3.0, 300.0, &s);
         assert!(eye[0].abs() < 1e-3 && (600.0..800.0).contains(&eye[2]), "{eye:?}");
         // 絵の左にいる人は、見ている人の右（x がプラス）。左右逆のカメラでは逆。
-        assert!(eye_from_face(Face { cx: 0.3, cy: 0.5, w: 0.2 }, 4.0 / 3.0, 300.0, &s)[0] > 0.0);
-        assert!(eye_from_face(Face { cx: 0.3, cy: 0.5, w: 0.2 }, 4.0 / 3.0, 300.0, &PeekSettings { mirror: true, ..s.clone() })[0] < 0.0);
+        assert!(eye_from_face(face(0.3, 0.5, 0.086), 4.0 / 3.0, 300.0, &s)[0] > 0.0);
+        assert!(eye_from_face(face(0.3, 0.5, 0.086), 4.0 / 3.0, 300.0, &PeekSettings { mirror: true, ..s.clone() })[0] < 0.0);
         // 顔が小さいほど遠い。
-        assert!(eye_from_face(Face { cx: 0.5, cy: 0.5, w: 0.1 }, 4.0 / 3.0, 300.0, &s)[2] > eye[2]);
+        assert!(eye_from_face(face(0.5, 0.5, 0.05), 4.0 / 3.0, 300.0, &s)[2] > eye[2]);
     }
 
     #[test]

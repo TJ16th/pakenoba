@@ -94,6 +94,6 @@ cargo test --workspace
 
 コードは「MIT または Apache-2.0」です。どちらかを選んで使えます（[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)）。
 
-のぞき込みの顔の検出には、SeetaFace Detection のモデル（`crates/pakenoba-app/assets/seeta_fd_frontal_v1.0.bin`、BSD-2-Clause、条文は同じ場所の `seetaface-LICENSE.txt`）を同梱しています。配るときは、この条文を添えてください（アプリの「ヘルプ」→「パケノバについて」にも出しています）。
+のぞき込みの顔と目の検出には、MediaPipe BlazeFace のモデル（`crates/pakenoba-app/assets/blazeface-short-range-128.onnx`、Apache-2.0。Google の MediaPipe のモデルを PINTO0309 さんが ONNX にし、keijiro さんが手を入れたものを、tract で読めるように形を単純にした。条文は同じ場所の `blazeface-LICENSE.txt`）を同梱しています。
 
 「パケノバ」の名称とロゴは、コードのライセンスの対象外です。詳しくは [TRADEMARKS.md](TRADEMARKS.md) を見てください。

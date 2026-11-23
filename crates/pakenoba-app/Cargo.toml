@@ -45,8 +45,8 @@ rfd = "0.18"
 # 素材を取り込んだ日時（その土地の時刻）。
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # のぞき込み（出力）: Web カメラで顔を見つけ、画面の向こうの箱をのぞき込めるようにする。
-# 顔の検出は、SeetaFace の Rust 版（BSD-2-Clause。モデルは assets/ に同梱）。
-rustface = { version = "0.1.7", default-features = false }
+# 顔と目の検出は、MediaPipe BlazeFace（Apache-2.0。モデルは assets/ に同梱）を、Rust だけで書かれた tract で動かす。
+tract-onnx = "0.23.10"
 
 # Web カメラの映像。JPEG のほどき（mozjpeg、C の部品）は使わず、zune-jpeg でほどく。
 [target.'cfg(windows)'.dependencies]
