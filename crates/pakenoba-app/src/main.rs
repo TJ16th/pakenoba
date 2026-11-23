@@ -79,13 +79,19 @@ fn main() -> ExitCode {
                 }
                 initial.views = Some([on[0], on[1], on[2]]);
             }
+            // ガイドは、はじめは隠す（2026-11-23）。--no-guides は、前の使い方のために残す。
+            ("--guides", _) => {
+                initial.guides = true;
+                i += 1;
+                continue;
+            }
             ("--no-guides", _) => {
                 initial.guides = false;
                 i += 1;
                 continue;
             }
             _ => {
-                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--no-guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
+                println!("Usage: pakenoba [project file (.pknb)] [--fold 0-1] [--yaw radians] [--pitch radians] [--thickness mm] [--open 0-1] [--sides shape (0: tuck-end box, 2: gable box, 100: pillow box, any other 3 or more: prism)] [--workspace 0-2] [--bulge degrees] [--width mm] [--height mm] [--guides] [--psd file] [--png image to place] [--logo panel,x,y,rotation] [--band panel,x,y,rotation] [--select artwork number] [--views show 3D, front, back (for example 110)] [--back artwork number to move to the back] [--assets open the assets panel (1: right of the tools, 2: left of the tools)] [--library open the Assets screen]");
                 return if args[i] == "--help" { ExitCode::SUCCESS } else { ExitCode::FAILURE };
             }
         }

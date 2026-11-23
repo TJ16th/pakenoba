@@ -101,7 +101,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: true, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None }
     }
 }
 
