@@ -69,12 +69,12 @@ fn separable(mode: Blend, b: f32, s: f32) -> f32 {
         }
         Blend::LinearDodge => (b + s).min(1.0),
         Blend::Overlay => separable(Blend::HardLight, s, b),
+        // ソフトライトは、W3C の式ではなく Photoshop の式にする（型紙の PSD を Photoshop で開いたときと同じ見た目にするため）。
         Blend::SoftLight => {
             if s <= 0.5 {
-                b - (1.0 - 2.0 * s) * b * (1.0 - b)
+                2.0 * b * s + b * b * (1.0 - 2.0 * s)
             } else {
-                let d = if b <= 0.25 { ((16.0 * b - 12.0) * b + 4.0) * b } else { b.sqrt() };
-                b + (2.0 * s - 1.0) * (d - b)
+                2.0 * b * (1.0 - s) + b.sqrt() * (2.0 * s - 1.0)
             }
         }
         Blend::HardLight => {
@@ -217,6 +217,8 @@ mod tests {
             let out = mix(mode, b, s);
             assert!(out.iter().zip(b).all(|(o, b)| (o - b).abs() < 1e-5), "{mode:?} {out:?}");
         }
+        // 暗い下地へのソフトライトは Photoshop と同じ（√0.04 = 0.2。W3C の式だと 0.14 になる）。
+        assert!((mix(Blend::SoftLight, [0.04; 3], [1.0; 3])[0] - 0.2).abs() < 1e-5);
         assert_eq!(mix(Blend::Difference, [1.0, 0.0, 0.5], [0.25, 0.25, 0.5]), [0.75, 0.25, 0.0]);
         // 輝度は、上の明るさと下の色み。カラーは、その逆。
         let l = mix(Blend::Luminosity, [1.0, 0.0, 0.0], [0.5, 0.5, 0.5]);
