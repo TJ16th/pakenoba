@@ -222,6 +222,7 @@ impl App {
     /// 開いた案件を、画面の状態にする。表示できなかったものの知らせを返す。
     pub(super) fn apply_project(&mut self, project: Project) -> Vec<String> {
         let mut problems = Vec::new();
+        self.home = false;
         self.dims = Dims::from_shape(&project.shape);
         (self.template, self.surface, self.problems) = self.dims.build();
         self.sheet = make_sheet_art(&self.template);
@@ -485,6 +486,11 @@ impl App {
         self.mark_saved();
         self.workspace = Workspace::Shape;
         self.library.open = false;
+        self.home = false;
+        if let Some(sides) = self.home_shape.take().filter(|&s| s != 0) {
+            self.set_shape(sides);
+            self.mark_saved();
+        }
         self.say(t!("Started a new project"));
     }
 
@@ -595,6 +601,11 @@ impl App {
                     ui.close();
                 }
             };
+            if ui.button(t!("Home")).clicked() {
+                self.home = true;
+                self.library.open = false;
+                ui.close();
+            }
             pick(ui, !saving, t!("New project"), "Ctrl+N", FileAction::New);
             pick(ui, !saving, t!("Open…"), "Ctrl+O", FileAction::Open);
             ui.add_enabled_ui(!saving, |ui| {

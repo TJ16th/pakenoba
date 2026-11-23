@@ -24,6 +24,7 @@ mod vectorize;
 mod menus;
 mod peek;
 mod splash;
+mod home;
 mod transform;
 mod views;
 
@@ -104,11 +105,13 @@ pub struct Initial {
     pub peek: Option<[f32; 3]>,
     /// 起動ロゴを出す。
     pub splash: bool,
+    /// 起動したら、はじめの画面（ホーム）を出す。
+    pub home: bool,
 }
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
     }
 }
 
@@ -489,6 +492,11 @@ struct App {
     place_turn: u8,
     /// 立体の表示を平行投影で見る（遠近を付けない）。
     ortho: bool,
+    /// はじめの画面（ホーム）を出している。
+    home: bool,
+    /// ホームで選んだ型（新しい案件を始めたら、その型にする）。
+    home_shape: Option<usize>,
+    home_logo: Option<egui::TextureHandle>,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -632,6 +640,9 @@ impl App {
             ratio_lock: true,
             place_turn: 0,
             ortho: false,
+            home: initial.home,
+            home_shape: None,
+            home_logo: None,
             hover: None,
             sheet,
             bases: [None, None],
@@ -1208,6 +1219,11 @@ impl eframe::App for App {
         self.movie_frame(ui.ctx());
         self.poll_edits(ui.ctx());
         self.poll_vectorize(ui.ctx());
+        if self.home {
+            self.home_screen(ui);
+            self.settle_hover(ui.ctx());
+            return;
+        }
         if self.library.open {
             self.library_screen(ui);
             self.rebuild_if_needed();

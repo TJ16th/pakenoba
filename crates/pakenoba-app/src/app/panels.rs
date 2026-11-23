@@ -33,9 +33,15 @@ impl App {
         egui::Panel::top("workspaces").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
+                // はじめの画面（ホーム）。Photoshop と同じく、工程の左に置く。
+                if ui.selectable_label(self.home, format!("  {}  ", t!("Home"))).clicked() {
+                    self.home = true;
+                    self.library.open = false;
+                }
+                ui.separator();
                 for (workspace, label) in [(Workspace::Shape, t!("Structure")), (Workspace::Design, t!("Design")), (Workspace::Output, t!("Output"))] {
-                    // 「素材」の画面を開いているあいだは、どの工程も選んでいない見た目にする。
-                    if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
+                    // 「素材」の画面やホームを開いているあいだは、どの工程も選んでいない見た目にする。
+                    if ui.selectable_label(!self.library.open && !self.home && self.workspace == workspace, format!("  {label}  ")).clicked() {
                         self.go_to(workspace);
                     }
                 }

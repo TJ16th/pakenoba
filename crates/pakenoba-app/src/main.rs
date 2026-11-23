@@ -15,7 +15,8 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut initial = app::Initial::default();
+    // 案件のファイルも、確かめるための引数もなく起動したら、はじめの画面（ホーム）を出す。
+    let mut initial = app::Initial { home: args.iter().all(|a| a == "--no-splash" || a == "--debug"), ..Default::default() };
     let mut i = 0;
     while i < args.len() {
         // 「--」で始まらないものは、開く案件のファイル（ファイルをアプリに関連付けて、ダブルクリックで開くときの渡し方）。

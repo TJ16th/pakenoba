@@ -686,3 +686,8 @@
 	Left 90°	左へ 90°
 	Turn the box 90 degrees to the left	箱を左へ 90 度回します
 	Parallel projection	平行投影
+	Home	ホーム
+	Start with a box type	型を選んで始める
+	Projects you open or save appear here.	開いたり保存したりした案件が、ここに並びます。
+	Missing files are shown dimmed. "Clear list" in File > Recent projects removes them from the list.	見つからないファイルは薄く出します。「ファイル」→「最近使った案件」の「一覧を消す」で、一覧から外せます。
+	Not found: {folder}	見つかりません: {folder}

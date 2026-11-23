@@ -270,6 +270,7 @@ impl App {
     pub(super) fn go_to(&mut self, workspace: Workspace) {
         self.workspace = workspace;
         self.library.open = false;
+        self.home = false;
     }
 
     /// 表示を全体に戻す（Ctrl+0 と同じ）。
