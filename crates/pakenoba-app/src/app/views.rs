@@ -262,7 +262,7 @@ impl App {
         if let (true, Some(t), Some(p)) = (response.dragged(), self.transforming, pointer) {
             if let Some(at) = transform::ray_to_sheet(&frame_of(&t.start), eye, ray_at(p)) {
                 let keys = ui.input(|i| i.modifiers);
-                self.decals[t.index].decal = transform::apply(&t, template, at, keys.shift, keys.alt);
+                self.decals[t.index].decal = transform::apply(&t, template, at, keys.shift == self.ratio_lock, keys.alt, keys.shift);
                 self.art_dirty = true;
                 self.back_dirty = true;
             }
@@ -464,7 +464,7 @@ impl App {
         }
         if let (true, Some(t), Some(p)) = (response.dragged(), self.transforming, pointer) {
             let keys = ui.input(|i| i.modifiers);
-            self.decals[t.index].decal = transform::apply(&t, template, to_sheet(p), keys.shift, keys.alt);
+            self.decals[t.index].decal = transform::apply(&t, template, to_sheet(p), keys.shift == self.ratio_lock, keys.alt, keys.shift);
             self.art_dirty = true;
             self.back_dirty = true;
         } else if response.dragged() {

@@ -660,3 +660,7 @@
 	SeetaFace license	SeetaFace のライセンス
 	Package design, on the box	箱の上で、パッケージをデザインする
 	The PAKENOBA name and logo are not covered by the code license (MIT or Apache-2.0).	パケノバの名前とロゴは、コードのライセンス（MIT または Apache-2.0）の対象外です。
+	W	W
+	H	H
+	Width and height change separately (click to keep their ratio)	幅と高さを別々に変えます（押すと、比率をそろえます）
+	Width and height keep their ratio (click to change them separately)	幅と高さの比率をそろえています（押すと、別々に変えられます）

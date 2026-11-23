@@ -9,13 +9,20 @@ use eframe::egui;
 
 use super::{App, PILLOW, SHAPES, Tool, View, Workspace, icons};
 use pakenoba_core::template::TuckFlaps;
-use crate::paint::Picture;
 
 
 /// 出力の種類。（名前、もう使えるか）。
 use super::outputs::OUTPUTS;
 
 /// 数値の欄。右にそろえ、単位を必ず添える。
+/// 押すたびに 2 つの動きを切り替えるボタン。幅は、長いほうの文字に合わせて変えない（押しても並びが動かない）。
+fn toggle(ui: &mut egui::Ui, label: &str, both: [&str; 2]) -> egui::Response {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let widest = both.iter().map(|text| ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), egui::Color32::WHITE).size().x)).fold(0.0, f32::max);
+    let width = widest + ui.spacing().button_padding.x * 2.0;
+    ui.add_sized([width, ui.spacing().interact_size.y], egui::Button::new(label))
+}
+
 fn number(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str) -> egui::Response {
     ui.add_sized([96.0, ui.spacing().interact_size.y], egui::DragValue::new(value).range(range).speed(0.5).max_decimals(1).suffix(format!(" {unit}")))
 }
@@ -179,9 +186,9 @@ impl App {
         self.edit_controls(ui, index);
         let earlier = self.snapshot();
         let template = &self.template;
+        let ratio_lock = &mut self.ratio_lock;
         let decal = &mut self.decals[index];
         let before = decal.decal;
-        let band = matches!(decal.picture, Picture::Band);
         let was_back = decal.back;
         let mut back = was_back;
         // 位置は、展開図の左上からの距離（表や裏の表示の定規と同じ向き）。
@@ -212,11 +219,18 @@ impl App {
             ui.label(t!("Position Y"));
             number(ui, &mut y, -2000.0..=4000.0, "mm");
             ui.end_row();
-            ui.label(t!("Width"));
-            number(ui, &mut width, 2.0..=2000.0, "mm");
-            ui.end_row();
-            ui.label(t!("Height"));
-            number(ui, &mut height, 2.0..=2000.0, "mm");
+            // 幅と高さは 1 行に並べ、間に比率をそろえる鎖のボタン（Photoshop と同じ形）。
+            ui.label(t!("Size"));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(t!("W"));
+                ui.add_sized([78.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut width).range(2.0..=2000.0).speed(0.5).max_decimals(1).suffix(" mm"));
+                if icons::link_button(ui, *ratio_lock).clicked() {
+                    *ratio_lock = !*ratio_lock;
+                }
+                ui.label(t!("H"));
+                ui.add_sized([78.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut height).range(2.0..=2000.0).speed(0.5).max_decimals(1).suffix(" mm"));
+            });
             ui.end_row();
             ui.label(t!("Rotation"));
             number(ui, &mut degrees, -180.0..=180.0, t!("°"));
@@ -227,10 +241,10 @@ impl App {
             decal.set_center(template, [template.min[0] + mirror(x), template.max[1] - y]);
             decal.at = [decal.at[0].clamp(0.0, 1.0), decal.at[1].clamp(0.0, 1.0)];
         }
-        if band {
+        if !*ratio_lock {
             decal.size = [width, height];
         } else if width != decal.size[0] {
-            // ロゴと画像は、縦横の比を保つ。
+            // 鎖をつないでいるあいだは、縦横の比を保つ。
             decal.size = [width, decal.size[1] * width / decal.size[0]];
         } else if height != decal.size[1] {
             decal.size = [decal.size[0] * height / decal.size[1], height];
@@ -685,9 +699,13 @@ impl App {
                 (0, true) => t!("Left end"),
                 (_, true) => t!("Right end"),
             });
-            if ui.button(t!("Close")).clicked() {
+            // 1 つのボタンで、開けると閉じるを切り替える（動いている途中で押せば、折り返す）。
+            // 文字は、押したときにすること。
+            let heading = self.open_to[which].unwrap_or(self.open[which]);
+            let opened = heading >= 0.5;
+            if toggle(ui, if opened { t!("Close") } else { t!("Open up") }, [t!("Close"), t!("Open up")]).clicked() {
                 self.fold = 1.0;
-                self.open_to[which] = Some(0.0);
+                self.open_to[which] = Some(if opened { 0.0 } else { 1.0 });
             }
             ui.spacing_mut().slider_width = slider;
             if ui.add(egui::Slider::new(&mut self.open[which], 0.0..=1.0).show_value(false)).changed() {
@@ -696,10 +714,6 @@ impl App {
                 self.animate_to = None;
                 self.open_to[which] = None;
             }
-            if ui.button(t!("Open up")).clicked() {
-                self.fold = 1.0;
-                self.open_to[which] = Some(1.0);
-            }
         })
         .response
         .on_disabled_hover_text(t!("This box type does not have an opening motion yet"));
@@ -707,15 +721,14 @@ impl App {
 
     fn fold_controls(&mut self, ui: &mut egui::Ui, slider: f32) {
         ui.strong(t!("Assembly"));
-        if ui.button(t!("Flat")).clicked() {
-            self.fold_to(0.0);
+        // 開け閉めと同じく、1 つのボタンで、展開図と箱を切り替える。
+        let boxed = self.animate_to.unwrap_or(self.fold) >= 0.5;
+        if toggle(ui, if boxed { t!("Flat") } else { t!("Box") }, [t!("Flat"), t!("Box")]).clicked() {
+            self.fold_to(if boxed { 0.0 } else { 1.0 });
         }
         ui.spacing_mut().slider_width = slider;
         if ui.add(egui::Slider::new(&mut self.fold, 0.0..=1.0).show_value(false)).changed() {
             self.animate_to = None;
-        }
-        if ui.button(t!("Box")).clicked() {
-            self.fold_to(1.0);
         }
     }
 

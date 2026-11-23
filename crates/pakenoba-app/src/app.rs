@@ -483,6 +483,8 @@ struct App {
     grab: Option<(usize, P2)>,
     /// 大きさや回転のつまみで、変形している途中。
     transforming: Option<transform::Transforming>,
+    /// 柄の幅と高さの比率をそろえる（プロパティの鎖のボタン。角のつまみも、これに従う）。
+    ratio_lock: bool,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -623,6 +625,7 @@ impl App {
             hover_now: None,
             grab: None,
             transforming: None,
+            ratio_lock: true,
             hover: None,
             sheet,
             bases: [None, None],

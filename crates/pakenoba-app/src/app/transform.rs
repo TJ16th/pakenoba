@@ -3,6 +3,7 @@
 //! - 四隅のつまみをドラッグすると、大きさが変わる。はじめは縦横比を保つ。Shift を押しているあいだは比率を外す。
 //!   Alt を押しているあいだは、中心を動かさない（ふだんは、向かいの角が動かない）。
 //! - 角の少し外側をドラッグすると、回る。Shift を押しているあいだは 15 度ずつ。
+//! - プロパティの鎖のボタンを外していると、比率はふだんから外れ、Shift で保つ（Photoshop と同じ）。
 //!
 //! 計算は、どれも展開図の座標（mm）で行う。画面との行き来は、それぞれの表示が受け持つ。
 
@@ -59,8 +60,9 @@ fn inside(quad: [Pos2; 4], p: Pos2) -> bool {
     s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0)
 }
 
-/// つまみを `at`（展開図の座標）まで動かしたときの柄。
-pub fn apply(t: &Transforming, tpl: &Template, at: P2, free: bool, from_center: bool) -> Decal {
+/// つまみを `at`（展開図の座標）まで動かしたときの柄。`free` は縦横比を外す、`from_center` は中心を動かさない、
+/// `snap` は 15 度ずつ回す。
+pub fn apply(t: &Transforming, tpl: &Template, at: P2, free: bool, from_center: bool, snap: bool) -> Decal {
     let mut decal = t.start;
     let place = t.start.place(tpl);
     match t.handle {
@@ -94,7 +96,7 @@ pub fn apply(t: &Transforming, tpl: &Template, at: P2, free: bool, from_center: 
             let a0 = (t.pressed[1] - c[1]).atan2(t.pressed[0] - c[0]);
             let a1 = (at[1] - c[1]).atan2(at[0] - c[0]);
             let mut angle = t.start.angle + (a1 - a0);
-            if free {
+            if snap {
                 let step = 15f32.to_radians();
                 angle = (angle / step).round() * step;
             }
@@ -180,7 +182,7 @@ mod tests {
         let start = sample(&tpl);
         let before = corners(&start, &tpl);
         let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
-        let out = apply(&t, &tpl, [before[2][0] + 40.0, before[2][1] + 5.0], false, false);
+        let out = apply(&t, &tpl, [before[2][0] + 40.0, before[2][1] + 5.0], false, false, false);
         assert!((out.size[0] / out.size[1] - 2.0).abs() < 1e-4, "{:?}", out.size);
         assert!(out.size[0] > 40.0);
         let after = corners(&out, &tpl);
@@ -193,9 +195,9 @@ mod tests {
         let start = sample(&tpl);
         let before = corners(&start, &tpl);
         let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
-        let free = apply(&t, &tpl, [before[2][0] + 20.0, before[2][1]], true, false);
+        let free = apply(&t, &tpl, [before[2][0] + 20.0, before[2][1]], true, false, true);
         assert!((free.size[0] - 60.0).abs() < 1e-3 && (free.size[1] - 20.0).abs() < 1e-3, "{:?}", free.size);
-        let centered = apply(&t, &tpl, [before[2][0] + 10.0, before[2][1] + 5.0], true, true);
+        let centered = apply(&t, &tpl, [before[2][0] + 10.0, before[2][1] + 5.0], true, true, true);
         let (c0, c1) = (start.center(&tpl), centered.center(&tpl));
         assert!((c0[0] - c1[0]).abs() < 1e-3 && (c0[1] - c1[1]).abs() < 1e-3);
         assert!((centered.size[0] - 60.0).abs() < 1e-3 && (centered.size[1] - 30.0).abs() < 1e-3, "{:?}", centered.size);
@@ -208,7 +210,7 @@ mod tests {
         let before = corners(&start, &tpl);
         let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
         for free in [false, true] {
-            let out = apply(&t, &tpl, [before[0][0] - 30.0, before[0][1] - 30.0], free, false);
+            let out = apply(&t, &tpl, [before[0][0] - 30.0, before[0][1] - 30.0], free, false, free);
             assert!(out.size[0] >= MIN_MM && out.size[1] >= MIN_MM && out.size[0] < 5.0, "{:?}", out.size);
         }
     }
@@ -219,9 +221,9 @@ mod tests {
         let start = sample(&tpl);
         let c = start.center(&tpl);
         let t = Transforming { index: 0, handle: Handle::Turn, start, pressed: [c[0] + 30.0, c[1]] };
-        let quarter = apply(&t, &tpl, [c[0], c[1] + 30.0], false, false);
+        let quarter = apply(&t, &tpl, [c[0], c[1] + 30.0], false, false, false);
         assert!((quarter.angle - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
-        let snapped = apply(&t, &tpl, [c[0] + 30.0, c[1] + 9.0], true, false);
+        let snapped = apply(&t, &tpl, [c[0] + 30.0, c[1] + 9.0], true, false, true);
         assert!((snapped.angle - 15f32.to_radians()).abs() < 1e-4, "{}", snapped.angle.to_degrees());
     }
 
