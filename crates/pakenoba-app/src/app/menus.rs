@@ -149,6 +149,13 @@ impl App {
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
             ui.separator();
+            ui.menu_button(t!("View from"), |ui| {
+                for (label, yaw, pitch) in super::views::VIEW_PRESETS {
+                    if item(ui, true, pakenoba_i18n::tr(label), "", "") {
+                        self.look_from(yaw, pitch);
+                    }
+                }
+            });
             if item(ui, true, t!("Fit to window"), "Ctrl+0", "") {
                 self.fit_view();
             }

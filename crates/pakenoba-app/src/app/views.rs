@@ -74,6 +74,40 @@ pub(super) fn texture(ctx: &egui::Context, name: &str, w: usize, h: usize, rgba:
     ctx.load_texture(name, image, egui::TextureOptions::LINEAR)
 }
 
+/// 見る向きの決まった視点（名前、横の角度、縦の角度。ラジアン）。正面は箱の手前（+Z）の面。
+/// 「斜め」は、正面、右、上の 3 面が同じように見える等角の向き。
+pub(super) const VIEW_PRESETS: [(&str, f32, f32); 7] = [
+    ("Isometric view", std::f32::consts::FRAC_PI_4, 0.615_479_7),
+    ("Front view", 0.0, 0.0),
+    ("Back view", std::f32::consts::PI, 0.0),
+    ("Left view", -std::f32::consts::FRAC_PI_2, 0.0),
+    ("Right view", std::f32::consts::FRAC_PI_2, 0.0),
+    ("Top view", 0.0, 1.5),
+    ("Bottom view", 0.0, -1.5),
+];
+
+impl App {
+    /// 立体の表示の右上に、見る向きを 1 回で選ぶボタンを並べる。押すと、その向きへなめらかに回る。
+    fn view_presets(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let area = Rect::from_min_max(pos2(rect.left() + 8.0, rect.top() + 6.0), pos2(rect.right() - 8.0, rect.top() + 30.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().button_padding = vec2(5.0, 1.0);
+            for (label, yaw, pitch) in VIEW_PRESETS.iter().rev() {
+                if ui.small_button(pakenoba_i18n::tr(label)).clicked() {
+                    self.look_from(*yaw, *pitch);
+                }
+            }
+        });
+    }
+
+    /// その向きへ、なめらかに回る（展開図へ戻る前の視点の覚えは消す）。
+    pub(super) fn look_from(&mut self, yaw: f32, pitch: f32) {
+        self.view_before_flat = None;
+        self.view_to = Some((yaw, pitch));
+    }
+}
+
 /// 立体の点を、表示 `rect` の上の点へ。視点の後ろなら `None`。
 fn project(mvp: &Mat4, rect: Rect, p: V3) -> Option<Pos2> {
     let v = [p[0], p[1], p[2], 1.0];
@@ -365,6 +399,7 @@ impl App {
             transform::paint(&painter, quad, ui.visuals().selection.bg_fill);
         }
 
+        self.view_presets(ui, rect);
         // 向きの目印。X は右、Y は上、Z は手前。奥の軸から描く。
         let origin = pos2(rect.left() + 40.0, rect.bottom() - 40.0);
         let mut axes = [("X", 0, Color32::from_rgb(226, 104, 92)), ("Y", 1, Color32::from_rgb(124, 196, 96)), ("Z", 2, Color32::from_rgb(98, 150, 236))];

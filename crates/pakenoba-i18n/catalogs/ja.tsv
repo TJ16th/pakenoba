@@ -666,3 +666,11 @@
 	Stabilization	ぶれ補正
 	Higher values hold the view steadier when your head is still, with a little more delay	大きいほど、頭を止めているときの揺れを抑えます（そのぶん、動きが少し遅れます）
 	Drag on the box to turn it and scroll to resize it, together with your head movement. Esc or a double-click leaves full screen.	箱をドラッグすると回せ、ホイールで大きさを変えられます（頭の動きと一緒に使えます）。全画面は、Esc かダブルクリックで戻ります。
+	Isometric view	斜め
+	Front view	正面
+	Back view	背面
+	Left view	左
+	Right view	右
+	Top view	上
+	Bottom view	下
+	View from	見る向き
