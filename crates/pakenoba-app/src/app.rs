@@ -24,6 +24,7 @@ mod vectorize;
 mod menus;
 mod peek;
 mod splash;
+mod tabs;
 mod home;
 mod transform;
 mod views;
@@ -497,6 +498,8 @@ struct App {
     /// ホームで選んだ型（新しい案件を始めたら、その型にする）。
     home_shape: Option<usize>,
     home_logo: Option<egui::TextureHandle>,
+    /// 開いている案件のタブ（いま見ていないタブの案件を預けておく）。
+    tabs: tabs::Tabs,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -643,6 +646,7 @@ impl App {
             home: initial.home,
             home_shape: None,
             home_logo: None,
+            tabs: tabs::Tabs::new(),
             hover: None,
             sheet,
             bases: [None, None],
@@ -1128,7 +1132,7 @@ impl App {
 impl eframe::App for App {
     /// ふつうに終わるとき。落ちたときの控えを消す。
     fn on_exit(&mut self) {
-        self.recovery.finish();
+        self.finish_all_tabs();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -1206,6 +1210,7 @@ impl eframe::App for App {
         self.file_frame(ui.ctx());
         self.recovery_frame(ui.ctx());
         self.file_shortcuts(ui.ctx());
+        self.tab_shortcuts(ui.ctx());
         self.shortcuts(ui.ctx());
         self.menu_bar(ui);
         self.top_bar(ui);

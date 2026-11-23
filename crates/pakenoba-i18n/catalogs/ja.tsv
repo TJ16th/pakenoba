@@ -201,8 +201,6 @@
 	Close	閉じる
 	"{name}" has unsaved changes	「{name}」に、保存していない変更があります
 	If you close without saving, the changes will be lost.	保存しないで閉じると、変更は失われます。
-	If you open another project without saving, the changes will be lost.	保存しないで別の案件を開くと、変更は失われます。
-	If you start a new project without saving, the changes will be lost.	保存しないで新しい案件を始めると、変更は失われます。
 	Don't save	保存しない
 	Cancel	キャンセル
 # pakenoba-app/src/app/icons.rs
@@ -691,3 +689,9 @@
 	Projects you open or save appear here.	開いたり保存したりした案件が、ここに並びます。
 	Missing files are shown dimmed. "Clear list" in File > Recent projects removes them from the list.	見つからないファイルは薄く出します。「ファイル」→「最近使った案件」の「一覧を消す」で、一覧から外せます。
 	Not found: {folder}	見つかりません: {folder}
+	If you close this tab without saving, the changes will be lost.	保存しないでタブを閉じると、変更は失われます。
+	Saving. Switch tabs when it has finished.	保存しています。終わってからタブを切り替えてください。
+	Exporting a video. Switch tabs when it has finished.	動画を書き出しています。終わってからタブを切り替えてください。
+	Vectorizing. Switch tabs when it has finished.	ベクター化しています。終わってからタブを切り替えてください。
+	Close this tab	このタブを閉じる
+	New project in a new tab (Ctrl+N)	新しいタブで、新しい案件を始める（Ctrl+N）

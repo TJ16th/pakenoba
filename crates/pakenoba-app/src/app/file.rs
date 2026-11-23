@@ -30,10 +30,8 @@ pub(super) enum Then {
     Nothing,
     /// ウィンドウを閉じる。
     Close,
-    /// 別の案件を開く。None なら、ファイルを選ぶところから。
-    Open(Option<PathBuf>),
-    /// 新しい案件を始める。
-    New,
+    /// いまのタブを閉じる。
+    CloseTab,
 }
 
 /// ファイルの操作。メニューとキーから受けて、画面を描き終えてから実行する。
@@ -68,7 +66,7 @@ pub(super) struct FileState {
     saved: u64,
     saving: Option<Saving>,
     /// 保存していない変更があるときに、確認を待っている操作。
-    pending: Option<Then>,
+    pub(super) pending: Option<Then>,
     notice: Option<Notice>,
     /// メニューやキーで頼まれた操作。
     pub action: Option<FileAction>,
@@ -395,19 +393,27 @@ impl App {
     }
 
     /// 別の案件を開く。保存していない変更があれば、先に確かめる。
+    /// タブがあるので、いまの案件はそのまま残し、新しいタブで開く（いまの案件がまっさらなら、このタブで）。
+    /// すでに開いている案件なら、そのタブへ移る。
     pub(super) fn request_open(&mut self, path: Option<PathBuf>) {
         if self.is_saving() {
             self.say(t!("Saving. Open the project when it has finished."));
-        } else if self.unsaved() {
-            self.file.pending = Some(Then::Open(path));
-        } else {
-            self.open_now(path);
+            return;
         }
-    }
-
-    fn open_now(&mut self, path: Option<PathBuf>) {
-        if let Some(path) = path.or_else(|| self.ask_open()) {
+        let Some(path) = path.or_else(|| self.ask_open()) else { return };
+        if let Some(index) = self.tab_with(&path) {
+            self.switch_tab(index);
+            self.home = false;
+            return;
+        }
+        if self.pristine() {
             self.open_path(&path);
+        } else if self.open_tab() {
+            self.open_path(&path);
+            // 開けなかったら、空のタブを閉じる。
+            if self.pristine() {
+                self.close_tab_now();
+            }
         }
     }
 
@@ -458,21 +464,24 @@ impl App {
         match then {
             Then::Nothing => {}
             Then::Close => {
+                // このタブは確かめ終わった（保存したか、保存しないと決めた）。ほかのタブにまだあれば、そちらへ。
+                self.mark_saved();
+                if self.ask_next_unsaved_tab() {
+                    return;
+                }
                 self.file.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Then::Open(path) => self.open_now(path),
-            Then::New => self.new_now(),
+            Then::CloseTab => self.close_tab_now(),
         }
     }
 
     /// 新しい案件を始める。保存していない変更があれば、先に確かめる。
+    /// タブがあるので、いまの案件はそのまま残し、新しいタブで始める（いまの案件がまっさらなら、このタブで）。
     pub(super) fn request_new(&mut self) {
         if self.is_saving() {
             self.say(t!("Saving. Start a new project when it has finished."));
-        } else if self.unsaved() {
-            self.file.pending = Some(Then::New);
-        } else {
+        } else if self.pristine() || self.open_tab() {
             self.new_now();
         }
     }
@@ -482,7 +491,9 @@ impl App {
         let shape = Dims::for_shape(0, self.dims.t).shape();
         self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None });
         self.file.path = None;
-        self.file.suggest = pakenoba_i18n::tr(UNTITLED).to_owned();
+        // タブで並ぶので、2 つ目からは番号を付ける（「名前なし 2」）。
+        let n = self.tabs.next_untitled();
+        self.file.suggest = if n <= 1 { pakenoba_i18n::tr(UNTITLED).to_owned() } else { format!("{} {n}", pakenoba_i18n::tr(UNTITLED)) };
         self.mark_saved();
         self.workspace = Workspace::Shape;
         self.library.open = false;
@@ -542,6 +553,8 @@ impl App {
             } else if self.unsaved() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.file.pending = Some(Then::Close);
+            } else if self.ask_next_unsaved_tab() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
         }
 
@@ -715,8 +728,7 @@ impl App {
             ui.add_space(4.0);
             ui.label(match then {
                 Then::Close => t!("If you close without saving, the changes will be lost."),
-                Then::Open(_) => t!("If you open another project without saving, the changes will be lost."),
-                Then::New => t!("If you start a new project without saving, the changes will be lost."),
+                Then::CloseTab => t!("If you close this tab without saving, the changes will be lost."),
                 Then::Nothing => "",
             });
             ui.add_space(8.0);
@@ -769,9 +781,7 @@ mod tests {
         app.add_decal(Picture::Logo, [40.0, 40.0]);
         assert!(app.unsaved());
         app.request_new();
-        assert_eq!(app.file.pending, Some(Then::New), "保存していない変更があれば、先に確かめる");
-        app.file.pending = None;
-        app.new_now();
+        assert_eq!(app.file.pending, None, "いまの案件は、別のタブに残る（確かめない）");
         assert!(app.decals.is_empty());
         assert!(app.assets.iter().all(|a| a.bundled));
         assert_eq!(app.dims.shape().kind, project::Kind::TuckBox);
@@ -779,6 +789,32 @@ mod tests {
         assert!(!app.unsaved());
         assert_eq!(app.project_name(), UNTITLED);
         assert!(!app.history.can_undo(), "前の案件の履歴は持ち越さない");
+    }
+
+    #[test]
+    fn 新しい案件は新しいタブで_前の案件はそのまま残り_タブを閉じると戻る() {
+        let mut app = App::new(&super::super::Initial { sides: 6, ..Default::default() });
+        // まっさらな案件なら、新しいタブを作らずに、そのタブで始める。
+        app.request_new();
+        assert_eq!(app.tabs_count(), 1);
+        app.add_decal(Picture::Logo, [40.0, 40.0]);
+        app.request_new();
+        assert_eq!(app.tabs_count(), 2);
+        assert!(app.decals.is_empty() && !app.history.can_undo());
+        app.add_decal(Picture::Band, [80.0, 10.0]);
+        // 前のタブへ戻ると、置いた柄も、元に戻すための記録もそのまま。
+        assert!(app.switch_tab(0));
+        assert_eq!(app.decals.len(), 1);
+        assert!(matches!(app.decals[0].picture, Picture::Logo));
+        assert!(app.history.can_undo());
+        // 保存していない変更のあるタブを閉じるときは、確かめる。
+        app.request_close_tab(1);
+        assert_eq!(app.file.pending, Some(Then::CloseTab));
+        assert!(matches!(app.decals[0].picture, Picture::Band), "閉じるタブへ移ってから確かめる");
+        app.file.pending = None;
+        app.close_tab_now();
+        assert_eq!(app.tabs_count(), 1);
+        assert!(matches!(app.decals[0].picture, Picture::Logo));
     }
 
     #[test]

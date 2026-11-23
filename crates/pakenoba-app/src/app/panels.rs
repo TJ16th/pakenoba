@@ -45,14 +45,12 @@ impl App {
                         self.go_to(workspace);
                     }
                 }
-                // 案件の名前と、保存していない変更の印。
+                // 開いている案件のタブ（名前と、保存していない変更の印）。
                 ui.add_space(16.0);
-                let unsaved = self.unsaved();
-                let name = ui.label(format!("{}{}", self.project_name(), if unsaved { " *" } else { "" }));
+                ui.separator();
+                self.tab_strip(ui);
                 if self.is_saving() {
                     ui.weak(t!("Saving…"));
-                } else if unsaved {
-                    name.on_hover_text(t!("There are unsaved changes (Ctrl+S to save)"));
                 }
                 // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -77,10 +77,23 @@ impl Recovery {
         Recovery { dir: None, id: String::new(), _lock: None, interval: 30.0, last: None, present: false, writing: None, orphans: Vec::new() }
     }
 
+    /// 新しいタブの案件の控え。同じフォルダと間隔で、別の印と鍵を使う。前回の控えは探さない（起動したときに探してある）。
+    pub fn sibling(&self) -> Recovery {
+        if self.dir.is_none() {
+            return Recovery { interval: self.interval, ..Recovery::off() };
+        }
+        let mut next = Recovery::start(self.dir.clone(), self.interval);
+        next.orphans.clear();
+        next
+    }
+
     /// 起動したときに作る。控えのフォルダを用意し、自分の鍵をかけ、前回の控えを探す。
     pub fn start(dir: Option<PathBuf>, interval: f64) -> Recovery {
         let dir = dir.or_else(default_dir).filter(|dir| fs::create_dir_all(dir).is_ok());
-        let id = format!("{}-{}", chrono::Local::now().format("%Y%m%d-%H%M%S%3f"), std::process::id());
+        // 同じ起動の中でタブごとに作るので、通し番号も付ける。
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!("{}-{}-{n}", chrono::Local::now().format("%Y%m%d-%H%M%S%3f"), std::process::id());
         let mut recovery = Recovery { dir, id, _lock: None, interval: interval.max(1.0), last: None, present: false, writing: None, orphans: Vec::new() };
         let Some(dir) = recovery.dir.clone() else { return recovery };
         // 前回の控えを、先に探す（自分の鍵を作る前に）。
