@@ -220,6 +220,21 @@ mod tests {
     }
 
     #[test]
+    fn tuck_box_flaps_at_their_limits_pass() {
+        // フラップの長さを、選べる範囲の両端にしても、問題は見つからない。
+        use crate::template::TuckFlaps;
+        for (w, d, h, t) in [(120.0f32, 60.0f32, 160.0f32, 0.5f32), (200.0, 160.0, 85.0, 0.5), (60.0, 40.0, 90.0, 1.0)] {
+            let ranges = TuckFlaps::ranges(w, d, h, t);
+            for pick in [|r: &std::ops::RangeInclusive<f32>| *r.start(), |r: &std::ops::RangeInclusive<f32>| *r.end()] {
+                let flaps = TuckFlaps { glue: Some(pick(&ranges[0])), dust: Some(pick(&ranges[1])), tuck: Some(pick(&ranges[2])) };
+                let tpl = Template::tuck_box_with(w, d, h, t, flaps);
+                let problems = check(&tpl, &Template::tuck_box_with(w, d, h, 0.02, flaps));
+                assert!(problems.is_empty(), "{w} x {d} x {h}、{flaps:?}: {:?}", problems.iter().map(|p| p.describe(&tpl)).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
     fn a_tuck_box_without_its_glue_tab_is_caught() {
         // のりしろをフラップ扱いから外す（なくす）と、左側面と背面の間が開いていると指摘される。
         let mut tpl = Template::tuck_box(120.0, 60.0, 160.0, 0.5);

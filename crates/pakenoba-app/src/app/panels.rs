@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{App, PILLOW, SHAPES, Tool, View, Workspace, icons};
+use pakenoba_core::template::TuckFlaps;
 use crate::paint::Picture;
 
 
@@ -483,6 +484,9 @@ impl App {
                     }
                     row(ui, t!("Paper thickness"), &mut dims.t, 0.3..=6.0, "mm");
                 });
+                if self.dims.sides == 0 {
+                    self.flap_settings(ui);
+                }
                 let d = self.dims;
                 if gable && d.d > d.w {
                     ui.small(t!("The depth is limited to the width (the side triangles would collide in the middle)."));
@@ -513,6 +517,41 @@ impl App {
                 ui.small(t!("Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline."));
             });
         });
+    }
+
+    /// 差し込み箱のフラップの長さ。「自動」のあいだは寸法から決めた長さを見せ、外すと自分で決められる。
+    fn flap_settings(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.strong(t!("Flaps"));
+        let d = &mut self.dims;
+        let auto = TuckFlaps::auto(d.w, d.d, d.h, d.t);
+        let ranges = TuckFlaps::ranges(d.w, d.d, d.h, d.t);
+        let labels = [t!("Glue flap width"), t!("Side flap length"), t!("Tuck length")];
+        let TuckFlaps { glue, dust, tuck } = &mut d.flaps;
+        egui::Grid::new("flaps").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            for (i, chosen) in [glue, dust, tuck].into_iter().enumerate() {
+                let range = ranges[i].clone();
+                ui.label(labels[i]);
+                ui.horizontal(|ui| {
+                    let mut automatic = chosen.is_none();
+                    if ui.checkbox(&mut automatic, t!("Auto")).changed() {
+                        *chosen = if automatic { None } else { Some(auto[i].clamp(*range.start(), *range.end())) };
+                    }
+                    match chosen {
+                        Some(value) => {
+                            // 幅が足りないので、つまみは付けない（数の欄も、左右に引けば変えられる）。
+                            *value = value.clamp(*range.start(), *range.end());
+                            number(ui, value, range, "mm");
+                        }
+                        None => {
+                            ui.weak(format!("{:.1} mm", auto[i]));
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        ui.small(t!("The tuck and side flaps are the same at the top and bottom."));
     }
 
     /// 左（出力）: 出力の種類。

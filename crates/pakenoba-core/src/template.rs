@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::math::{Affine, V3, add, cross, dot, normalize, rotate, scale, sub};
 
 mod library;
+pub use library::TuckFlaps;
 
 pub type P2 = [f32; 2];
 

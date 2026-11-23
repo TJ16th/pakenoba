@@ -32,7 +32,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::surface::Decal;
-use crate::template::{P2, Template};
+use crate::template::{P2, Template, TuckFlaps};
 
 /// 案件のファイルの拡張子（点は含まない）。
 pub const EXTENSION: &str = "pknb";
@@ -84,13 +84,15 @@ pub struct Shape {
     pub bulge: f32,
     /// ゲーブル型の屋根の高さ。
     pub roof: f32,
+    /// 差し込み箱のフラップの長さ（決めていないものは自動）。
+    pub flaps: TuckFlaps,
 }
 
 impl Shape {
     /// この型と寸法の型紙。
     pub fn template(&self) -> Template {
         match self.kind {
-            Kind::TuckBox => Template::tuck_box(self.w, self.d, self.h, self.t),
+            Kind::TuckBox => Template::tuck_box_with(self.w, self.d, self.h, self.t, self.flaps),
             Kind::Gable => Template::gable(self.w, self.d, self.h, self.roof, self.t),
             Kind::Pillow => Template::pillow(self.w, self.h, self.t, self.bulge.to_radians()),
             Kind::Prism(n) => Template::prism(n, self.w, self.h, self.t),
@@ -366,6 +368,13 @@ struct ShapeEntry {
     thickness: f64,
     bulge: f64,
     roof: f64,
+    /// 差し込み箱の、のりしろの幅、左右のフラップ、差し込みの長さ（mm）。書いていなければ自動。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    glue_flap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dust_flap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tuck_flap: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -567,7 +576,7 @@ impl Project {
             format: FORMAT.to_owned(),
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
-            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof) },
+            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy) },
             base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             back_base: self.back_base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size) }).collect(),
@@ -690,7 +699,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         ("prism", _) => return Err(Error::Broken(t!("The number of sides of the prism is not valid").to_owned())),
         (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
     };
-    let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32 };
+    let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32, flaps: TuckFlaps::default() };
     for (label, value, range) in shape.values() {
         if !value.is_finite() {
             return Err(Error::Broken(t!("Dimension \"{label}\" is not a number")));
@@ -700,6 +709,26 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             problems.push(t!("Dimension \"{label}\" was out of range ({value}), so it was set to {fixed}"));
             *value = fixed;
         }
+    }
+    // 差し込み箱のフラップ。数でないものは自動に戻し、範囲の外は範囲の中へ寄せる。
+    if shape.kind == Kind::TuckBox {
+        let ranges = TuckFlaps::ranges(shape.w, shape.d, shape.h, shape.t);
+        let entries = [(t!("Glue flap width"), entry.glue_flap), (t!("Side flap length"), entry.dust_flap), (t!("Tuck length"), entry.tuck_flap)];
+        let mut values = [None; 3];
+        for (i, (label, value)) in entries.into_iter().enumerate() {
+            let Some(value) = value else { continue };
+            let value = value as f32;
+            if !value.is_finite() {
+                problems.push(t!("Dimension \"{label}\" is not a number, so it was set automatically"));
+                continue;
+            }
+            let fixed = value.clamp(*ranges[i].start(), *ranges[i].end());
+            if fixed != value {
+                problems.push(t!("Dimension \"{label}\" was out of range ({value}), so it was set to {fixed}"));
+            }
+            values[i] = Some(fixed);
+        }
+        shape.flaps = TuckFlaps { glue: values[0], dust: values[1], tuck: values[2] };
     }
     let tpl = shape.template();
 
@@ -888,7 +917,7 @@ mod tests {
             Kind::Pillow => (180.0, 60.0, 110.0),
             Kind::Prism(_) => (70.0, 60.0, 160.0),
         };
-        Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0 }
+        Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() } }
     }
 
     /// 中身の決まった、にせの画像ファイル。
@@ -1134,6 +1163,20 @@ mod tests {
     }
 
     #[test]
+    fn 差し込み箱のフラップは_書いていなければ自動で_おかしな値は直して知らせる() {
+        let project = sample(Kind::TuckBox);
+        let edited = with_manifest(&project, |text| text.replace("glue_flap = 9.5\n", "").replace("tuck_flap = 22.25", "tuck_flap = 500.0"));
+        let opened = Project::read(Cursor::new(edited)).unwrap();
+        assert_eq!(opened.project.shape.flaps, TuckFlaps { glue: None, dust: None, tuck: Some(68.0) });
+        assert_eq!(opened.problems.len(), 1, "{:?}", opened.problems);
+        assert!(opened.problems[0].contains("Tuck length"), "{:?}", opened.problems);
+        let broken = with_manifest(&project, |text| text.replace("glue_flap = 9.5", "glue_flap = nan"));
+        let opened = Project::read(Cursor::new(broken)).unwrap();
+        assert_eq!(opened.project.shape.flaps.glue, None);
+        assert!(opened.problems[0].contains("Glue flap width"), "{:?}", opened.problems);
+    }
+
+    #[test]
     fn 素材が欠けていたら_その素材と柄だけを外して開く() {
         let project = sample(Kind::TuckBox);
         // 素材のファイルを 1 つ抜いた ZIP を作る。
@@ -1333,7 +1376,7 @@ mod tests {
 
     /// 版 1 の見本（`tests/data/v1-sample.pknb`）の中身。見本は、版 1 のパケノバが書いたファイルを、そのまま残してある。
     fn v1_sample() -> Project {
-        let shape = Shape { kind: Kind::Prism(6), w: 70.0, d: 60.0, h: 160.0, t: 0.5, bulge: 40.0, roof: 45.0 };
+        let shape = Shape { kind: Kind::Prism(6), w: 70.0, d: 60.0, h: 160.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps::default() };
         let tpl = shape.template();
         let panel = |name: &str, nth: usize| panel_index(&tpl, name, nth).unwrap();
         Project {

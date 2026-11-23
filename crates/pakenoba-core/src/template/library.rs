@@ -16,6 +16,42 @@ const LID_LIFT: f32 = 110.0 * std::f32::consts::PI / 180.0;
 /// 垂直より少し外へ開く。フタの倒れ（垂直から 20 度）より小さくしておくと、フタにぶつからない。
 const FLAP_LIFT: f32 = 100.0 * std::f32::consts::PI / 180.0;
 
+/// 差し込み箱のフラップの長さ（mm）。`None` は、寸法から自動で決める。
+///
+/// 範囲の外の値は、作るときに範囲の中へ寄せる（[`TuckFlaps::ranges`]）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TuckFlaps {
+    /// のりしろの幅。
+    pub glue: Option<f32>,
+    /// 左右のフラップ（差し込みの下で、開け口をふさぐ小さいフタ）の長さ。
+    pub dust: Option<f32>,
+    /// 差し込み（ベロ）の長さ。
+    pub tuck: Option<f32>,
+}
+
+impl TuckFlaps {
+    /// 自動のときの長さ（のりしろ、左右のフラップ、差し込み）。
+    pub fn auto(w: f32, d: f32, h: f32, t: f32) -> [f32; 3] {
+        [(0.8 * (d - t)).clamp(4.0, 15.0), (0.5 * w - 1.0).min(0.6 * d).max(3.0), (0.3 * h).clamp(5.0, 18.0)]
+    }
+
+    /// 選べる長さの範囲（のりしろ、左右のフラップ、差し込み）。
+    /// - のりしろは、背面の幅の半分まで（40 mm まで）。
+    /// - 左右のフラップは、開け口の幅の半分まで（左右がまん中でぶつからない）。
+    /// - 差し込みは、正面の高さの 8 割まで（正面の内側に入りきる）。
+    pub fn ranges(w: f32, _d: f32, h: f32, _t: f32) -> [std::ops::RangeInclusive<f32>; 3] {
+        [4.0..=(0.5 * w).clamp(4.0, 40.0), 3.0..=(0.5 * w - 1.0).max(3.0), 3.0..=(0.8 * h).max(3.0)]
+    }
+
+    /// 作るときの長さ（のりしろ、左右のフラップ、差し込み）。決めていないものは自動、範囲の外は範囲の中へ。
+    pub fn resolve(&self, w: f32, d: f32, h: f32, t: f32) -> [f32; 3] {
+        let auto = TuckFlaps::auto(w, d, h, t);
+        let ranges = TuckFlaps::ranges(w, d, h, t);
+        let chosen = [self.glue, self.dust, self.tuck];
+        std::array::from_fn(|i| chosen[i].filter(|v| v.is_finite()).unwrap_or(auto[i]).clamp(*ranges[i].start(), *ranges[i].end()))
+    }
+}
+
 impl Template {
     /// 差し込み式の箱（キャラメル箱）。寸法は内寸（mm）。
     ///
@@ -24,9 +60,12 @@ impl Template {
     /// - フタは差し込みフラップ（左右の小さいフタ）の上に乗る。そのぶん正面と背面を上下に 1 枚ぶんずつ高くする。
     /// - 差し込み（ベロ）は正面の内側に入る。そのぶんフタを 1 枚ぶん短くする。
     pub fn tuck_box(w: f32, d: f32, h: f32, t: f32) -> Template {
-        let glue = (0.8 * (d - t)).clamp(4.0, 15.0);
-        let dust = (0.5 * w - 1.0).min(0.6 * d).max(3.0);
-        let tuck = (0.3 * h).clamp(5.0, 18.0);
+        Template::tuck_box_with(w, d, h, t, TuckFlaps::default())
+    }
+
+    /// 差し込み式の箱。フラップの長さを `flaps` で決める（決めていないものは自動）。
+    pub fn tuck_box_with(w: f32, d: f32, h: f32, t: f32, flaps: TuckFlaps) -> Template {
+        let [glue, dust, tuck] = flaps.resolve(w, d, h, t);
         let tuck_taper = (0.15 * w).min(tuck * 0.6);
 
         let u_l = glue;

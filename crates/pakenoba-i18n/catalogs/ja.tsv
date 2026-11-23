@@ -617,3 +617,10 @@
 	Software for designing packages: choose a dieline, place artwork on the box, and export.	パッケージデザインのためのソフトです。型紙を選び、箱の上に柄を置いて、書き出します。
 	The code is licensed under MIT or Apache-2.0, at your option. The PAKENOBA name and logo are not covered by the code license.	コードのライセンスは MIT または Apache-2.0（どちらかを選べます）。パケノバの名前とロゴは、コードのライセンスの対象外です。
 	Uses craft-libs and VectorCraft's Image Trace (MIT or Apache-2.0).	craft-libs と、VectorCraft の画像トレースを使っています（MIT または Apache-2.0）。
+	Flaps	フラップ
+	Glue flap width	のりしろの幅
+	Side flap length	左右のフラップ
+	Tuck length	差し込みの長さ
+	Auto	自動
+	The tuck and side flaps are the same at the top and bottom.	差し込みと左右のフラップは、上と下で同じ長さです。
+	Dimension "{label}" is not a number, so it was set automatically	寸法の「{label}」が数ではなかったので、自動にしました

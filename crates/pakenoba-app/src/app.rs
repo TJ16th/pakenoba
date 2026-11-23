@@ -34,7 +34,7 @@ use eframe::egui_wgpu;
 use pakenoba_core::check::check;
 use pakenoba_core::project;
 use pakenoba_core::surface::{Decal, Surface};
-use pakenoba_core::template::{P2, Template};
+use pakenoba_core::template::{P2, Template, TuckFlaps};
 
 use crate::art::{SheetArt, compose, compose_back, make_sheet_art};
 use crate::gpu::BoxRenderer;
@@ -163,6 +163,8 @@ struct Dims {
     bulge: f32,
     /// ゲーブル型の屋根の高さ。
     roof: f32,
+    /// 差し込み箱のフラップの長さ（決めていないものは寸法から自動）。
+    flaps: TuckFlaps,
 }
 
 impl Dims {
@@ -174,7 +176,7 @@ impl Dims {
             n if n >= 3 => (70.0, 60.0, 160.0),
             _ => (200.0, 160.0, 85.0),
         };
-        Dims { sides, w, d, h, t, bulge: if sides == PILLOW { 70.0 } else { 40.0 }, roof: 45.0 }
+        Dims { sides, w, d, h, t, bulge: if sides == PILLOW { 70.0 } else { 40.0 }, roof: 45.0, flaps: TuckFlaps::default() }
     }
 
     /// 案件のファイルに書く形の、型と寸法。
@@ -185,7 +187,7 @@ impl Dims {
             n if n >= 3 => project::Kind::Prism(n),
             _ => project::Kind::TuckBox,
         };
-        project::Shape { kind, w: self.w, d: self.d, h: self.h, t: self.t, bulge: self.bulge, roof: self.roof }
+        project::Shape { kind, w: self.w, d: self.d, h: self.h, t: self.t, bulge: self.bulge, roof: self.roof, flaps: self.flaps }
     }
 
     fn from_shape(shape: &project::Shape) -> Dims {
@@ -195,7 +197,7 @@ impl Dims {
             project::Kind::Pillow => PILLOW,
             project::Kind::Prism(n) => n,
         };
-        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof }
+        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps }
     }
 
     /// 型紙。案件のファイルを開いたときと同じ作り方にする（パネルの並びがずれないように）。
