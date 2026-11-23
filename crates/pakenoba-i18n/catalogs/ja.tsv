@@ -640,7 +640,6 @@
 	Could not open the camera.	カメラを開けませんでした。
 	Could not read the face detection model: {e}	顔を見つけるためのモデルを読めませんでした: {e}
 	Could not start the camera: {e}	カメラを動かせませんでした: {e}
-	Drag and scroll on the box in the Structure or Design step to set the angle and size. Esc or a double-click leaves full screen.	箱の向きと大きさは、型かデザインの工程で、箱をドラッグ、ホイールして決めます。全画面は、Esc かダブルクリックで戻ります。
 	Esc: back	Esc: 戻る
 	Flip left and right	左右を逆にする
 	Looking for a face…	顔を探しています…
@@ -664,3 +663,6 @@
 	H	H
 	Width and height change separately (click to keep their ratio)	幅と高さを別々に変えます（押すと、比率をそろえます）
 	Width and height keep their ratio (click to change them separately)	幅と高さの比率をそろえています（押すと、別々に変えられます）
+	Stabilization	ぶれ補正
+	Higher values hold the view steadier when your head is still, with a little more delay	大きいほど、頭を止めているときの揺れを抑えます（そのぶん、動きが少し遅れます）
+	Drag on the box to turn it and scroll to resize it, together with your head movement. Esc or a double-click leaves full screen.	箱をドラッグすると回せ、ホイールで大きさを変えられます（頭の動きと一緒に使えます）。全画面は、Esc かダブルクリックで戻ります。

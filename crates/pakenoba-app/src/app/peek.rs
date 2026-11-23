@@ -49,11 +49,13 @@ pub struct PeekSettings {
     pub mirror: bool,
     /// カメラの横の画角（度）。
     pub camera_fov: f32,
+    /// ぶれ補正（0〜1。大きいほど強く抑え、そのぶん少し遅れる）。
+    pub stability: f32,
 }
 
 impl Default for PeekSettings {
     fn default() -> Self {
-        PeekSettings { camera: 0, screen_mm: 530.0, strength: 1.0, mirror: false, camera_fov: 60.0 }
+        PeekSettings { camera: 0, screen_mm: 530.0, strength: 1.0, mirror: false, camera_fov: 60.0, stability: 0.6 }
     }
 }
 
@@ -80,40 +82,92 @@ pub fn eye_from_face(face: Face, aspect: f32, screen_h: f32, settings: &PeekSett
     [x * k, y * k, distance]
 }
 
-/// 目の位置を、なめらかにする。大きく動いたときはすぐ追い、小さなふるえは抑える。
+/// 1 つの値の、ぶれを抑えるフィルター（One Euro フィルター）。止まっているときは強く抑え、速く動くときは遅れを減らす。
+#[derive(Clone, Copy, Debug, Default)]
+struct OneEuro {
+    value: Option<f32>,
+    speed: f32,
+}
+
+impl OneEuro {
+    fn alpha(cutoff: f32, dt: f32) -> f32 {
+        let tau = 1.0 / (std::f32::consts::TAU * cutoff);
+        1.0 / (1.0 + tau / dt)
+    }
+
+    /// `min_cutoff` は止まっているときの効き（Hz。小さいほど強く抑える）、`beta` は速さで効きをゆるめる度合い。
+    fn filter(&mut self, x: f32, dt: f32, min_cutoff: f32, beta: f32) -> f32 {
+        let dt = dt.clamp(1e-3, 0.5);
+        let Some(prev) = self.value else {
+            self.value = Some(x);
+            return x;
+        };
+        let speed = (x - prev) / dt;
+        self.speed += (speed - self.speed) * OneEuro::alpha(1.0, dt);
+        let cutoff = min_cutoff + beta * self.speed.abs();
+        let out = prev + (x - prev) * OneEuro::alpha(cutoff, dt);
+        self.value = Some(out);
+        out
+    }
+}
+
+/// 目の位置の、ぶれ補正。2 段で抑える。
+/// 1. 顔が見つかるたび（1 秒に十数回）、測った位置を One Euro フィルターに通す（細かいふるえを消す）。
+///    奥行きは顔の幅から見積もるので、ぶれが大きい。横と縦より強く抑える。
+/// 2. 画面の更新ごとに、ばねのように目標へ寄せる（測る間隔の段々を消し、なめらかに動かす）。
 #[derive(Clone, Copy, Debug)]
 pub struct Smoother {
     pub eye: V3,
+    velocity: V3,
+    target: V3,
+    filters: [OneEuro; 3],
     /// 顔を見失ってからの時間（秒）。
     lost: f32,
 }
 
 impl Default for Smoother {
     fn default() -> Self {
-        Smoother { eye: REST_EYE, lost: f32::INFINITY }
+        Smoother { eye: REST_EYE, velocity: [0.0; 3], target: REST_EYE, filters: Default::default(), lost: f32::INFINITY }
     }
 }
 
 impl Smoother {
-    /// 新しい目の位置（見つからなければ `None`）と、前からの時間（秒）。
-    pub fn update(&mut self, seen: Option<V3>, dt: f32) -> V3 {
-        let target = match seen {
-            Some(eye) => {
-                self.lost = 0.0;
-                eye
-            }
-            None => {
-                self.lost += dt;
-                // 少しのあいだは、その場で待つ。それより長く見失ったら、正面へゆっくり戻る。
-                if self.lost < 1.5 { self.eye } else { REST_EYE }
-            }
-        };
-        let gap = (0..3).map(|i| (target[i] - self.eye[i]).powi(2)).sum::<f32>().sqrt();
-        let rate = if seen.is_some() { (0.25 + gap / 60.0).min(0.85) } else { 0.04 };
-        // 画面の更新の間隔によらず、同じ速さで寄せる（60 コマ／秒を基準にした割合）。
-        let a = 1.0 - (1.0 - rate).powf((dt * 60.0).clamp(0.1, 6.0));
-        for (e, t) in self.eye.iter_mut().zip(target) {
-            *e += (t - *e) * a;
+    /// 顔が見つかったとき。`dt` は、前に測ってからの時間（秒）。`stability` は 0〜1（大きいほど強く抑える）。
+    pub fn measure(&mut self, eye: V3, dt: f32, stability: f32) {
+        let s = stability.clamp(0.0, 1.0);
+        let min_cutoff = 3.0 * (1.0 - s) + 0.25 * s;
+        let beta = 0.02 * (1.0 - s) + 0.006 * s;
+        if self.lost > 1.5 {
+            // しばらく見失っていたあとは、測った場所から始め直す（正面から飛んでこない）。
+            self.filters = Default::default();
+        }
+        self.lost = 0.0;
+        for (k, (target, filter)) in self.target.iter_mut().zip(&mut self.filters).enumerate() {
+            // 奥行きは、横と縦の 3 分の 1 の効きで、強く抑える。
+            let cut = if k == 2 { min_cutoff / 3.0 } else { min_cutoff };
+            *target = filter.filter(eye[k], dt, cut, beta);
+        }
+    }
+
+    /// 顔が見つからなかったとき。
+    pub fn miss(&mut self, dt: f32) {
+        self.lost += dt;
+        // 少しのあいだは、その場で待つ。それより長く見失ったら、正面へゆっくり戻る。
+        if self.lost >= 1.5 {
+            self.target = REST_EYE;
+        }
+    }
+
+    /// 画面の更新ごとに、目標へ寄せる。`dt` は前の更新からの時間（秒）。
+    pub fn update(&mut self, dt: f32, stability: f32) -> V3 {
+        let s = stability.clamp(0.0, 1.0);
+        // ばねの速さ。見失って正面へ戻るときは、ゆっくり。
+        let omega = if self.lost >= 1.5 { 2.5 } else { 16.0 * (1.0 - s) + 7.0 * s };
+        let dt = dt.clamp(1e-3, 0.05);
+        for k in 0..3 {
+            let accel = omega * omega * (self.target[k] - self.eye[k]) - 2.0 * omega * self.velocity[k];
+            self.velocity[k] += accel * dt;
+            self.eye[k] += self.velocity[k] * dt;
         }
         self.eye
     }
@@ -358,6 +412,8 @@ pub struct PeekState {
     pub cameras: Option<Vec<String>>,
     /// 届いた顔を、この回の画面の更新で使う。
     seen: Option<Option<Face>>,
+    /// 前に顔の知らせが届いた時刻（秒）。
+    last_report: Option<f64>,
 }
 
 impl PeekState {
@@ -413,18 +469,24 @@ impl PeekState {
         self.preview = None;
     }
 
-    /// この回の画面の更新での目の位置（mm）。`screen_h` は画面の高さ（mm）。
-    pub fn eye(&mut self, dt: f32, screen_h: f32) -> V3 {
+    /// この回の画面の更新での目の位置（mm）。`now` は時刻（秒）、`dt` は前の更新からの時間、`screen_h` は画面の高さ（mm）。
+    pub fn eye(&mut self, now: f64, dt: f32, screen_h: f32) -> V3 {
         if let Some(eye) = self.fixed {
             return eye;
         }
         let aspect = if self.aspect > 0.0 { self.aspect } else { 4.0 / 3.0 };
-        // 新しい顔が届いていなければ、前の顔のまま寄せ続ける（見失ったときだけ数える）。
-        let seen = match self.seen.take() {
-            Some(face) => face.map(|f| eye_from_face(f, aspect, screen_h, &self.settings)),
-            None => self.face.map(|f| eye_from_face(f, aspect, screen_h, &self.settings)),
-        };
-        self.smoother.update(if self.running() { seen } else { None }, dt)
+        let stability = self.settings.stability;
+        if !self.running() {
+            self.smoother.miss(f32::INFINITY);
+        } else if let Some(face) = self.seen.take() {
+            let since = self.last_report.map_or(0.1, |t| (now - t) as f32);
+            self.last_report = Some(now);
+            match face {
+                Some(f) => self.smoother.measure(eye_from_face(f, aspect, screen_h, &self.settings), since, stability),
+                None => self.smoother.miss(since),
+            }
+        }
+        self.smoother.update(dt, stability)
     }
 }
 
@@ -440,6 +502,23 @@ impl App {
             painter.text(rect.center(), Align2::CENTER_CENTER, t!("The box cannot be shown because wgpu is not available."), FontId::proportional(13.0), Color32::LIGHT_RED);
             return;
         };
+        // マウスでも回せる（ドラッグで向き、ホイールで大きさ。立体の表示と同じ）。頭の動きは、その上に重なる。
+        let response = ui.interact(rect, ui.scope_id().with("peek-view"), egui::Sense::click_and_drag());
+        if response.dragged() {
+            let delta = response.drag_delta();
+            self.view_to = None;
+            self.yaw -= delta.x * 0.01;
+            self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+        }
+        if response.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                self.zoom = (self.zoom * (scroll * 0.002).exp()).clamp(0.3, 6.0);
+            }
+        }
+        if self.peek.full && response.double_clicked() {
+            self.set_peek_full(ui.ctx(), false);
+        }
         self.peek.poll(ui.ctx());
         // 画面の上の、この表示の場所（mm）。分からなければ、この表示が画面いっぱいだとみなす。
         let screen_mm = self.peek.settings.screen_mm;
@@ -461,7 +540,8 @@ impl App {
             }
         });
         let dt = ui.input(|i| i.stable_dt).clamp(0.001, 0.1);
-        let eye = self.peek.eye(dt, screen_h);
+        let now = ui.input(|i| i.time);
+        let eye = self.peek.eye(now, dt, screen_h);
         let mesh = self.template.build_mesh_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
         let (center, radius) = bounding_sphere(&mesh);
         let (view_proj, light) = window_view(window, eye, center, radius, self.yaw, self.pitch, self.zoom);
@@ -499,10 +579,10 @@ impl App {
         self.render_state.clone_from(&rs);
         self.refresh_art(ui.ctx(), rs.as_ref(), super::Shown::SOLID_ONLY);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(ui.visuals().window_stroke.color)).show(ui, |ui| {
-            let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+            let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
             self.peek_view(ui, rect, rs.as_ref());
             let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            if escape || response.double_clicked() {
+            if escape {
                 self.set_peek_full(ui.ctx(), false);
             }
         });
@@ -559,6 +639,9 @@ impl App {
             ui.label(t!("Strength"));
             ui.add(egui::Slider::new(&mut s.strength, 0.3..=3.0).max_decimals(1));
             ui.end_row();
+            ui.label(t!("Stabilization"));
+            ui.add(egui::Slider::new(&mut s.stability, 0.0..=1.0).max_decimals(2)).on_hover_text(t!("Higher values hold the view steadier when your head is still, with a little more delay"));
+            ui.end_row();
             ui.label("");
             ui.checkbox(&mut s.mirror, t!("Flip left and right"));
             ui.end_row();
@@ -603,7 +686,7 @@ impl App {
                 None => t!("Looking for a face…"),
             });
         }
-        ui.small(t!("Drag and scroll on the box in the Structure or Design step to set the angle and size. Esc or a double-click leaves full screen."));
+        ui.small(t!("Drag on the box to turn it and scroll to resize it, together with your head movement. Esc or a double-click leaves full screen."));
     }
 }
 
@@ -674,18 +757,47 @@ mod tests {
     #[test]
     fn 見失ったら_しばらく待って_正面へ戻る() {
         let mut s = Smoother::default();
-        for _ in 0..120 {
-            s.update(Some([200.0, 0.0, 500.0]), 1.0 / 60.0);
-        }
-        assert!((s.eye[0] - 200.0).abs() < 1.0);
         for _ in 0..30 {
-            s.update(None, 1.0 / 60.0);
+            s.measure([200.0, 0.0, 500.0], 0.1, 0.6);
+            for _ in 0..6 {
+                s.update(1.0 / 60.0, 0.6);
+            }
         }
-        assert!((s.eye[0] - 200.0).abs() < 1.0, "すぐには戻らない");
+        assert!((s.eye[0] - 200.0).abs() < 2.0, "{:?}", s.eye);
+        s.miss(0.5);
+        for _ in 0..30 {
+            s.update(1.0 / 60.0, 0.6);
+        }
+        assert!((s.eye[0] - 200.0).abs() < 2.0, "すぐには戻らない");
+        s.miss(1.5);
         for _ in 0..600 {
-            s.update(None, 1.0 / 60.0);
+            s.update(1.0 / 60.0, 0.6);
         }
         assert!(s.eye[0].abs() < 10.0, "{:?}", s.eye);
+    }
+
+    #[test]
+    fn ぶれ補正で_止まった頭のふるえが小さくなる() {
+        // 10 回／秒の測定に、±8 mm のふるえを足す。補正が強いほど、表示のふるえは小さい。
+        let shake = |stability: f32| {
+            let mut s = Smoother::default();
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
+            for n in 0..200 {
+                let noise = if n % 2 == 0 { 8.0 } else { -8.0 };
+                s.measure([100.0 + noise, 0.0, 600.0 + noise * 3.0], 0.1, stability);
+                for _ in 0..6 {
+                    let e = s.update(1.0 / 60.0, stability);
+                    if n > 100 {
+                        lo = lo.min(e[0]);
+                        hi = hi.max(e[0]);
+                    }
+                }
+            }
+            hi - lo
+        };
+        assert!(shake(0.9) < shake(0.1) * 0.5, "{} {}", shake(0.9), shake(0.1));
+        assert!(shake(0.6) < 6.0, "{}", shake(0.6));
     }
 
     #[test]
