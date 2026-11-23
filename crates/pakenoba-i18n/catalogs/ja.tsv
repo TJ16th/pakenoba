@@ -695,3 +695,33 @@
 	Vectorizing. Switch tabs when it has finished.	ベクター化しています。終わってからタブを切り替えてください。
 	Close this tab	このタブを閉じる
 	New project in a new tab (Ctrl+N)	新しいタブで、新しい案件を始める（Ctrl+N）
+	Blend mode: how this artwork mixes with what is below it	描画モード: この柄を、下の絵とどう混ぜるか
+	Opacity	不透明度
+	Select artwork to set its blend mode and opacity	柄を選ぶと、描画モードと不透明度を変えられます
+	Normal	通常
+	Darken	比較（暗）
+	Multiply	乗算
+	Color Burn	焼き込みカラー
+	Linear Burn	焼き込み（リニア）
+	Darker Color	カラー比較（暗）
+	Lighten	比較（明）
+	Screen	スクリーン
+	Color Dodge	覆い焼きカラー
+	Linear Dodge (Add)	覆い焼き（リニア）- 加算
+	Lighter Color	カラー比較（明）
+	Overlay	オーバーレイ
+	Soft Light	ソフトライト
+	Hard Light	ハードライト
+	Vivid Light	ビビッドライト
+	Linear Light	リニアライト
+	Pin Light	ピンライト
+	Hard Mix	ハードミックス
+	Difference	差の絶対値
+	Exclusion	除外
+	Subtract	減算
+	Divide	除算
+	Hue	色相
+	Saturation	彩度
+	Luminosity	輝度
+	Artwork {number} uses a blend mode this version does not know ("{key}"), so it was set to Normal	柄 {number} は、この版が知らない描画モード（「{key}」）を使っているので、通常にしました
+blend	Color	カラー

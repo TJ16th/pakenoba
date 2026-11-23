@@ -921,13 +921,14 @@ impl App {
             .map(|(index, decal)| {
                 let mut image = vec![0u8; self.sheet.w * self.sheet.h * 4];
                 let mut shown = decal.clone();
-                shown.layer.hidden = false;
+                // レイヤーの絵は、不透明度と描画モードを効かせずに描き、PSD のレイヤーの設定として入れる。
+                (shown.layer.hidden, shown.layer.opacity, shown.layer.blend) = (false, 100, Default::default());
                 paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
                 let name = match &decal.layer.name {
                     Some(name) => t!("{} ({name})", index + 1),
                     None => t!("{} ({})", index + 1, decal.picture.label()),
                 };
-                crate::art::DecalLayer { name, image, visible: !decal.layer.hidden }
+                crate::art::DecalLayer { name, image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend }
             })
             .collect()
     }

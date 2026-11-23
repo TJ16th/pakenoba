@@ -5,6 +5,7 @@
 
 mod app;
 mod art;
+mod blend;
 mod gpu;
 mod paint;
 mod print;

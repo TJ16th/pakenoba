@@ -291,6 +291,7 @@ impl App {
 
     fn layers(&mut self, ui: &mut egui::Ui) {
         ui.strong(t!("Layers"));
+        self.blend_controls(ui);
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
             if ui.checkbox(&mut self.show_guides, t!("Guides (cut lines, fold lines, glue flaps)")).changed() {
                 self.art_dirty = true;
@@ -574,6 +575,59 @@ impl App {
             }
         });
         ui.small(t!("The tuck and side flaps are the same at the top and bottom."));
+    }
+
+    /// レイヤーの欄の頭: 選んでいる柄の描画モードと不透明度（Photoshop のレイヤーパネルと同じ場所）。
+    /// いくつも選んでいれば、まとめて変える。柄を選んでいなければ、押せない形で出す。
+    fn blend_controls(&mut self, ui: &mut egui::Ui) {
+        use pakenoba_core::project::Blend;
+        let targets: Vec<usize> = self.selected.into_iter().chain(self.extra.iter().copied()).filter(|&i| self.decals.get(i).is_some_and(|d| !d.layer.locked)).collect();
+        let first = targets.first().map(|&i| self.decals[i].layer.clone());
+        let mut blend = first.as_ref().map_or(Blend::Normal, |l| l.blend);
+        let mut opacity = first.as_ref().map_or(100.0, |l| l.opacity as f32);
+        let (blend0, opacity0) = (blend, opacity);
+        // 「Color」は、色の欄の「色」と同じ英語なので、描画モードの名前は文脈「blend」で訳す（Photoshop と同じ「カラー」）。
+        let name = |mode: Blend| if mode == Blend::Color { pakenoba_i18n::trc("blend", mode.label()) } else { pakenoba_i18n::tr(mode.label()) };
+        ui.add_enabled_ui(first.is_some(), |ui| {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("blend-mode").width(130.0).selected_text(name(blend)).show_ui(ui, |ui| {
+                    for entry in Blend::MENU {
+                        match entry {
+                            Some(mode) => {
+                                ui.selectable_value(&mut blend, mode, name(mode));
+                            }
+                            None => {
+                                ui.separator();
+                            }
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(t!("Blend mode: how this artwork mixes with what is below it"));
+                ui.label(t!("Opacity"));
+                ui.add_sized([62.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut opacity).range(0.0..=100.0).speed(0.5).max_decimals(0).suffix(" %"));
+            });
+        })
+        .response
+        .on_disabled_hover_text(t!("Select artwork to set its blend mode and opacity"));
+        if blend != blend0 || opacity != opacity0 {
+            let earlier = self.snapshot();
+            for &i in &targets {
+                let layer = &mut self.decals[i].layer;
+                if blend != blend0 {
+                    layer.blend = blend;
+                }
+                if opacity != opacity0 {
+                    layer.opacity = opacity.round().clamp(0.0, 100.0) as u8;
+                }
+            }
+            (self.art_dirty, self.back_dirty) = (true, true);
+            // ドラッグのひと続きは、1 回ぶんにまとめる（数値の欄と同じ）。
+            if !self.editing || blend != blend0 {
+                self.history.record(earlier);
+            }
+            self.editing = blend == blend0;
+        }
     }
 
     /// 左（出力）: 出力の種類。

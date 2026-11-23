@@ -263,7 +263,7 @@ pub struct Placement {
 }
 
 /// 柄のレイヤーとしての設定。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Layer {
     /// 使う人が付けた名前。None なら、画面では「番号（種類）」と出す。
     pub name: Option<String>,
@@ -271,6 +271,153 @@ pub struct Layer {
     pub hidden: bool,
     /// ロックしている（箱や展開図の上で、つかんだり動かしたりできない）。
     pub locked: bool,
+    /// 不透明度（0〜100%）。
+    pub opacity: u8,
+    /// 描画モード（下の絵との重ね方）。
+    pub blend: Blend,
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Layer { name: None, hidden: false, locked: false, opacity: 100, blend: Blend::Normal }
+    }
+}
+
+/// 描画モード。Photoshop のレイヤーの描画モードと同じ並びと計算（ディザ合成は除く）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Blend {
+    #[default]
+    Normal,
+    Darken,
+    Multiply,
+    ColorBurn,
+    LinearBurn,
+    DarkerColor,
+    Lighten,
+    Screen,
+    ColorDodge,
+    LinearDodge,
+    LighterColor,
+    Overlay,
+    SoftLight,
+    HardLight,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Difference,
+    Exclusion,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Blend {
+    /// 画面の並び（Photoshop と同じく、似たものごとのまとまり。`None` は区切り線）。
+    pub const MENU: [Option<Blend>; 31] = [
+        Some(Blend::Normal),
+        None,
+        Some(Blend::Darken),
+        Some(Blend::Multiply),
+        Some(Blend::ColorBurn),
+        Some(Blend::LinearBurn),
+        Some(Blend::DarkerColor),
+        None,
+        Some(Blend::Lighten),
+        Some(Blend::Screen),
+        Some(Blend::ColorDodge),
+        Some(Blend::LinearDodge),
+        Some(Blend::LighterColor),
+        None,
+        Some(Blend::Overlay),
+        Some(Blend::SoftLight),
+        Some(Blend::HardLight),
+        Some(Blend::VividLight),
+        Some(Blend::LinearLight),
+        Some(Blend::PinLight),
+        Some(Blend::HardMix),
+        None,
+        Some(Blend::Difference),
+        Some(Blend::Exclusion),
+        Some(Blend::Subtract),
+        Some(Blend::Divide),
+        None,
+        Some(Blend::Hue),
+        Some(Blend::Saturation),
+        Some(Blend::Color),
+        Some(Blend::Luminosity),
+    ];
+
+    /// 案件のファイルに書く名前。
+    pub fn key(self) -> &'static str {
+        match self {
+            Blend::Normal => "normal",
+            Blend::Darken => "darken",
+            Blend::Multiply => "multiply",
+            Blend::ColorBurn => "color_burn",
+            Blend::LinearBurn => "linear_burn",
+            Blend::DarkerColor => "darker_color",
+            Blend::Lighten => "lighten",
+            Blend::Screen => "screen",
+            Blend::ColorDodge => "color_dodge",
+            Blend::LinearDodge => "linear_dodge",
+            Blend::LighterColor => "lighter_color",
+            Blend::Overlay => "overlay",
+            Blend::SoftLight => "soft_light",
+            Blend::HardLight => "hard_light",
+            Blend::VividLight => "vivid_light",
+            Blend::LinearLight => "linear_light",
+            Blend::PinLight => "pin_light",
+            Blend::HardMix => "hard_mix",
+            Blend::Difference => "difference",
+            Blend::Exclusion => "exclusion",
+            Blend::Subtract => "subtract",
+            Blend::Divide => "divide",
+            Blend::Hue => "hue",
+            Blend::Saturation => "saturation",
+            Blend::Color => "color",
+            Blend::Luminosity => "luminosity",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Blend> {
+        Blend::MENU.iter().flatten().copied().find(|b| b.key() == key)
+    }
+
+    /// 画面に出す名前（英語。訳は画面の側で）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Blend::Normal => "Normal",
+            Blend::Darken => "Darken",
+            Blend::Multiply => "Multiply",
+            Blend::ColorBurn => "Color Burn",
+            Blend::LinearBurn => "Linear Burn",
+            Blend::DarkerColor => "Darker Color",
+            Blend::Lighten => "Lighten",
+            Blend::Screen => "Screen",
+            Blend::ColorDodge => "Color Dodge",
+            Blend::LinearDodge => "Linear Dodge (Add)",
+            Blend::LighterColor => "Lighter Color",
+            Blend::Overlay => "Overlay",
+            Blend::SoftLight => "Soft Light",
+            Blend::HardLight => "Hard Light",
+            Blend::VividLight => "Vivid Light",
+            Blend::LinearLight => "Linear Light",
+            Blend::PinLight => "Pin Light",
+            Blend::HardMix => "Hard Mix",
+            Blend::Difference => "Difference",
+            Blend::Exclusion => "Exclusion",
+            Blend::Subtract => "Subtract",
+            Blend::Divide => "Divide",
+            Blend::Hue => "Hue",
+            Blend::Saturation => "Saturation",
+            Blend::Color => "Color",
+            Blend::Luminosity => "Luminosity",
+        }
+    }
 }
 
 /// 案件 1 つ。
@@ -421,6 +568,12 @@ struct DecalEntry {
     hidden: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
+    /// 不透明度（%）。100 のときは書かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opacity: Option<u8>,
+    /// 描画モード。通常のときは書かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blend: Option<String>,
     /// 文字の柄（`asset`、`builtin` のかわりに書く）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<TextEntry>,
@@ -602,7 +755,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, text, shape }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), text, shape }
                 })
                 .collect(),
         }
@@ -863,7 +1016,15 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             problems.push(t!("Artwork {number} was removed because its position or size was not valid"));
             continue;
         }
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked } });
+        let blend = match entry.blend.as_deref() {
+            None => Blend::Normal,
+            Some(key) => Blend::from_key(key).unwrap_or_else(|| {
+                problems.push(t!("Artwork {number} uses a blend mode this version does not know (\"{key}\"), so it was set to Normal"));
+                Blend::Normal
+            }),
+        };
+        let opacity = entry.opacity.unwrap_or(100).min(100);
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, opacity, blend } });
     }
 
     Ok(Opened { project: Project { shape, assets, decals, base, back_base }, problems })
@@ -964,7 +1125,7 @@ mod tests {
                     }),
                     n => Source::Asset(n - 2),
                 };
-                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer { name: (panel % 4 == 1).then(|| format!("名前 {panel}")), hidden: panel % 5 == 2, locked: panel % 7 == 3 } }
+                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer { name: (panel % 4 == 1).then(|| format!("名前 {panel}")), hidden: panel % 5 == 2, locked: panel % 7 == 3, opacity: [100, 35, 0][panel % 3], blend: Blend::MENU.iter().flatten().copied().nth(panel % 26).unwrap_or_default() } }
             })
             .collect();
         // 展開図まるごとの絵は、型によって、あるものとないもの。素材と同じ中身のこともある。

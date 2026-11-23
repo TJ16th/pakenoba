@@ -243,12 +243,15 @@ pub struct DecalLayer {
     pub image: Vec<u8>,
     /// 隠した柄は、隠したレイヤーとして入れる（統合した絵には入れない）。
     pub visible: bool,
+    /// 不透明度（%）と描画モード。PSD のレイヤーの設定として入れ、統合した絵にも効かせる。
+    pub opacity: u8,
+    pub blend: pakenoba_core::project::Blend,
 }
 
 #[cfg(test)]
 impl DecalLayer {
     pub fn shown(name: impl Into<String>, image: Vec<u8>) -> DecalLayer {
-        DecalLayer { name: name.into(), image, visible: true }
+        DecalLayer { name: name.into(), image, visible: true, opacity: 100, blend: Default::default() }
     }
 }
 
@@ -304,12 +307,15 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
     let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(w * h);
     alpha_over(&mut composite, &base.1);
     for layer in decals.iter().filter(|layer| layer.visible) {
-        alpha_over(&mut composite, &layer.image);
+        let opacity = layer.opacity.min(100) as f32 / 100.0;
+        for (dst, src) in composite.chunks_exact_mut(4).zip(layer.image.chunks_exact(4)) {
+            crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
+        }
     }
     alpha_over(&mut composite, &guides.1);
     let mut builder = PsdBuilder::new(w as u32, h as u32);
     builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
-    for DecalLayer { name, image, visible } in decals {
+    for DecalLayer { name, image, visible, opacity, blend } in decals {
         // 何か描かれている範囲。
         let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
         for y in 0..h {
@@ -325,6 +331,8 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
         let cropped: Vec<u8> = (y0..y1).flat_map(|y| image[(y * w + x0) * 4..(y * w + x1) * 4].iter().copied()).collect();
         let mut spec = LayerSpec::new(format!("{} {name}", tr(DECAL_LAYER_PREFIX)), x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32, PixelData::Rgba8(cropped));
         spec.visible = visible;
+        spec.opacity = ((opacity.min(100) as u32 * 255 + 50) / 100) as u8;
+        spec.blend_mode = crate::blend::psd(blend);
         builder.push_layer(spec);
     }
     builder.push_layer(LayerSpec::new(guides.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(guides.1)));
@@ -527,7 +535,7 @@ mod tests {
         // 柄 1 つにつき 1 レイヤー。何も描かれていない柄は入れない。
         // 隠した柄（帯）は、隠したレイヤーとして入れる。
         let band_pixels: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| band_layer[i * 4 + 3] == 255 && layer[i * 4 + 3] == 0 && sheet.guides[i * 4 + 3] == 0).collect();
-        let decals = [DecalLayer { name: "1（帯）".to_owned(), image: band_layer, visible: false }, DecalLayer::shown("2（ロゴ）", layer.clone()), DecalLayer::shown("3（空）", vec![0u8; sheet.w * sheet.h * 4])];
+        let decals = [DecalLayer { visible: false, ..DecalLayer::shown("1（帯）", band_layer) }, DecalLayer::shown("2（ロゴ）", layer.clone()), DecalLayer::shown("3（空）", vec![0u8; sheet.w * sheet.h * 4])];
         let bytes = save_psd(&sheet, None, &decals).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let hidden: Vec<String> = file.iter_layers().filter(|l| !l.record.is_visible()).map(|l| l.name()).collect();

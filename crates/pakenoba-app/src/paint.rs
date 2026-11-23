@@ -11,6 +11,7 @@ use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template, inside};
 
 use crate::art::PX_PER_MM;
+use pakenoba_core::project::Blend;
 
 /// 柄に重ねて描く印。選んでいる柄には点線の枠、カーソルの下の柄には色の枠。
 #[derive(Clone, Copy, Default)]
@@ -189,6 +190,7 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
     let Canvas { w, h, rgba } = canvas;
     for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back && !decal.layer.hidden) {
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
+        let opacity = decal.layer.opacity.min(100) as f32 / 100.0;
         let picked = marks.selected.contains(&index);
         let hovered = marks.hover == Some(index) && !picked;
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
@@ -227,16 +229,10 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
                         color = HOVER;
                     }
                     let o = (y * w + x) * 4;
-                    let a = color[3];
-                    if a <= 0.0 {
-                        continue;
-                    }
-                    let below = rgba[o + 3] as f32 / 255.0;
-                    let out_a = a + below * (1.0 - a);
-                    for i in 0..3 {
-                        rgba[o + i] = ((color[i] * a + rgba[o + i] as f32 * below * (1.0 - a)) / out_a).round() as u8;
-                    }
-                    rgba[o + 3] = (out_a * 255.0).round() as u8;
+                    // 枠は、不透明度と描画モードによらず、そのまま描く。
+                    let mark = (picked && from_edge < 0.6) || (hovered && from_edge < 1.2);
+                    let (a, mode) = if mark { (color[3], Blend::Normal) } else { (color[3] * opacity, decal.layer.blend) };
+                    crate::blend::over(&mut rgba[o..o + 4], [color[0], color[1], color[2]], a, mode);
                 }
             }
         }
