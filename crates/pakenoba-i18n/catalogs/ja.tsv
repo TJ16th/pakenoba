@@ -673,3 +673,6 @@
 	Top view	上
 	Bottom view	下
 	View from	見る向き
+	Placing angle: {}°	置く向き: {}°
+	Turn 90°	90° 回す
+	Turns the angle new artwork is placed at by 90 degrees (R while dragging)	新しく置く柄の向きを 90 度回します（運んでいる間は R キーでも）

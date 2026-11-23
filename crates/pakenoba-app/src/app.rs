@@ -485,6 +485,8 @@ struct App {
     transforming: Option<transform::Transforming>,
     /// 柄の幅と高さの比率をそろえる（プロパティの鎖のボタン。角のつまみも、これに従う）。
     ratio_lock: bool,
+    /// 素材を置く向き（90 度の何回ぶんか。0〜3）。
+    place_turn: u8,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -626,6 +628,7 @@ impl App {
             grab: None,
             transforming: None,
             ratio_lock: true,
+            place_turn: 0,
             hover: None,
             sheet,
             bases: [None, None],

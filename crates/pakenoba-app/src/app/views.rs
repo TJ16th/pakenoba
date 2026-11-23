@@ -139,6 +139,11 @@ impl App {
         // 各表示は、「いま放したら置かれる柄」を返す。それを箱の上に仮に描いて見せ、放したら本当に置く。
         let released = ui.input(|i| i.pointer.any_released());
         let carry = self.carry.zip(ui.input(|i| i.pointer.interact_pos()));
+        // 運んでいる間に R を押すと、置く向きを 90 度ずつ回す。
+        if self.carry.is_some() && ui.input(|i| i.key_pressed(egui::Key::R)) {
+            self.place_turn = (self.place_turn + 1) % 4;
+            ui.ctx().request_repaint();
+        }
         let mut candidate: Option<Placed> = None;
         if let Some(rect) = solid {
             // 開け閉めと組み立ては、立体の表示に付く操作なので、立体の表示のすぐ下に置く。

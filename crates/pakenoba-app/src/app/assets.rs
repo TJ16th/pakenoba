@@ -105,6 +105,8 @@ impl App {
     /// 素材を、その場所に置いたときの柄。`at` は展開図上の位置、`back` が真なら紙の裏。
     pub(super) fn asset_decal(&self, asset: usize, panel: usize, at: P2, back: bool, angle: f32) -> Option<Placed> {
         let source = self.assets.get(asset)?;
+        // 置く向きを 90 度ずつ回してあれば、そのぶん回して置く（素材の欄のボタンか、運んでいる間の R キー）。
+        let angle = angle + self.place_turn as f32 * std::f32::consts::FRAC_PI_2;
         let mut decal = Decal { panel, at: [0.5, 0.5], size: self.asset_size(source), angle };
         decal.set_center(&self.template, at);
         Some(Placed { picture: source.picture.clone(), decal, back, layer: Default::default() })
@@ -254,11 +256,21 @@ impl App {
         }
         ui.small(if uses > 0 { t!("Used in {uses} place(s) on the box") } else { t!("Not placed on the box yet").to_owned() });
         ui.add_space(2.0);
+        // 置く向き。帯のような長い素材を、縦にも横にも置けるように。
+        ui.horizontal(|ui| {
+            ui.small(t!("Placing angle: {}°", self.place_turn as u32 * 90));
+            if ui.small_button(t!("Turn 90°")).on_hover_text(t!("Turns the angle new artwork is placed at by 90 degrees (R while dragging)")).clicked() {
+                self.place_turn = (self.place_turn + 1) % 4;
+            }
+        });
         let picture = asset.picture.clone();
         let bundled = asset.bundled;
         ui.horizontal(|ui| {
             if ui.button(t!("Place on the front")).on_hover_text(t!("Drag onto the box or the dieline to place it where you drop it")).clicked() {
                 self.add_decal(picture, size);
+                if let Some(last) = self.decals.last_mut() {
+                    last.angle = self.place_turn as f32 * std::f32::consts::FRAC_PI_2;
+                }
                 self.tool = Tool::Select;
             }
             if !bundled && ui.button(t!("Replace…")).on_hover_text(t!("Every piece of artwork that uses this asset gets the new picture (also on right-click)")).clicked() {
