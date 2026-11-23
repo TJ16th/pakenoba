@@ -519,7 +519,9 @@ impl App {
         });
     }
 
-    /// 差し込み箱のフラップの長さ。「自動」のあいだは寸法から決めた長さを見せ、外すと自分で決められる。
+    /// 差し込み箱のフラップの長さ。寸法と同じく、つまみと数の欄で変える。
+    /// 決めていないあいだは寸法から決めた長さ（自動）を出し、右に薄く「自動」と出す。
+    /// つまみか数を動かすと、その長さに決まる。右の「自動」を押すと、自動に戻る。
     fn flap_settings(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.strong(t!("Flaps"));
@@ -531,21 +533,23 @@ impl App {
         egui::Grid::new("flaps").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             for (i, chosen) in [glue, dust, tuck].into_iter().enumerate() {
                 let range = ranges[i].clone();
+                let mut value = chosen.unwrap_or(auto[i]).clamp(*range.start(), *range.end());
                 ui.label(labels[i]);
                 ui.horizontal(|ui| {
-                    let mut automatic = chosen.is_none();
-                    if ui.checkbox(&mut automatic, t!("Auto")).changed() {
-                        *chosen = if automatic { None } else { Some(auto[i].clamp(*range.start(), *range.end())) };
+                    // 英語の名前でも欄に収まるよう、寸法の行より少し詰める。
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().slider_width = 64.0;
+                    let slid = ui.add(egui::Slider::new(&mut value, range.clone()).show_value(false)).changed();
+                    let typed = ui.add_sized([80.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut value).range(range.clone()).speed(0.5).max_decimals(1).suffix(" mm")).changed();
+                    if slid || typed {
+                        *chosen = Some(value);
                     }
-                    match chosen {
-                        Some(value) => {
-                            // 幅が足りないので、つまみは付けない（数の欄も、左右に引けば変えられる）。
-                            *value = value.clamp(*range.start(), *range.end());
-                            number(ui, value, range, "mm");
+                    if chosen.is_some() {
+                        if ui.small_button(t!("Auto")).on_hover_text(t!("Back to the length set from the dimensions")).clicked() {
+                            *chosen = None;
                         }
-                        None => {
-                            ui.weak(format!("{:.1} mm", auto[i]));
-                        }
+                    } else {
+                        ui.weak(t!("Auto")).on_hover_text(t!("Set from the dimensions. Move the slider to choose your own length."));
                     }
                 });
                 ui.end_row();

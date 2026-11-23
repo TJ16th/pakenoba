@@ -624,3 +624,5 @@
 	Auto	自動
 	The tuck and side flaps are the same at the top and bottom.	差し込みと左右のフラップは、上と下で同じ長さです。
 	Dimension "{label}" is not a number, so it was set automatically	寸法の「{label}」が数ではなかったので、自動にしました
+	Back to the length set from the dimensions	寸法から決めた長さに戻します
+	Set from the dimensions. Move the slider to choose your own length.	寸法から決めています。つまみを動かすと、自分で決められます。
