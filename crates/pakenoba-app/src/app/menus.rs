@@ -156,6 +156,9 @@ impl App {
                     }
                 }
             });
+            if check(ui, true, self.ortho, t!("Parallel projection"), "", "") {
+                self.ortho = !self.ortho;
+            }
             if item(ui, true, t!("Fit to window"), "Ctrl+0", "") {
                 self.fit_view();
             }

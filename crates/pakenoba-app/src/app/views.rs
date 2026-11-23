@@ -99,6 +99,29 @@ impl App {
                 }
             }
         });
+        // 2 行目: 90 度ずつ回す、いちばん近い面にそろえる、平行投影。
+        let area = area.translate(vec2(0.0, 24.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().button_padding = vec2(5.0, 1.0);
+            if ui.add(egui::Button::selectable(self.ortho, t!("Parallel"))).on_hover_text(t!("Parallel projection: no perspective, so parallel edges stay parallel")).clicked() {
+                self.ortho = !self.ortho;
+            }
+            ui.add_space(6.0);
+            if ui.small_button(t!("Snap")).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {
+                let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
+                let quarter = std::f32::consts::FRAC_PI_2;
+                let pitch = if pitch > 0.785 { 1.5 } else if pitch < -0.785 { -1.5 } else { 0.0 };
+                self.look_from((yaw / quarter).round() * quarter, pitch);
+            }
+            let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
+            if ui.small_button(t!("Right 90°")).on_hover_text(t!("Turn the box 90 degrees to the right")).clicked() {
+                self.look_from(yaw - std::f32::consts::FRAC_PI_2, pitch);
+            }
+            if ui.small_button(t!("Left 90°")).on_hover_text(t!("Turn the box 90 degrees to the left")).clicked() {
+                self.look_from(yaw + std::f32::consts::FRAC_PI_2, pitch);
+            }
+        });
     }
 
     /// その向きへ、なめらかに回る（展開図へ戻る前の視点の覚えは消す）。
@@ -106,6 +129,34 @@ impl App {
         self.view_before_flat = None;
         self.view_to = Some((yaw, pitch));
     }
+}
+
+/// 軸の側から見る向き（横の角度、縦の角度）。`sign` が正なら軸のプラスの側から。
+fn axis_view(axis: usize, sign: f32) -> (f32, f32) {
+    match (axis, sign > 0.0) {
+        (0, true) => (std::f32::consts::FRAC_PI_2, 0.0),
+        (0, false) => (-std::f32::consts::FRAC_PI_2, 0.0),
+        (1, true) => (0.0, 1.5),
+        (1, false) => (0.0, -1.5),
+        (_, true) => (0.0, 0.0),
+        (_, false) => (std::f32::consts::PI, 0.0),
+    }
+}
+
+/// 2 つの角度の差（0〜π）。
+fn angle_gap(a: f32, b: f32) -> f32 {
+    ((a - b + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs()
+}
+
+/// 立体の表示の投影。透視か平行。平行のときは、箱の中心での見た目の大きさが透視と同じになるようにする。
+pub(super) fn projection(ortho: bool, fov: f32, aspect: f32, dist: f32, radius: f32) -> Mat4 {
+    let (near, far) = ((dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
+    if !ortho {
+        return perspective(fov, aspect, near, far);
+    }
+    let h = dist * (fov * 0.5).tan();
+    let w = h * aspect;
+    [[1.0 / w, 0.0, 0.0, 0.0], [0.0, 1.0 / h, 0.0, 0.0], [0.0, 0.0, -1.0 / (far - near), 0.0], [0.0, 0.0, -near / (far - near), 1.0]]
 }
 
 /// 立体の点を、表示 `rect` の上の点へ。視点の後ろなら `None`。
@@ -235,9 +286,21 @@ impl App {
         // 型紙は写しを使う（つかんだ柄といっしょに選んだ柄を動かすときに、App を書き換えるため）。
         let shared = std::rc::Rc::clone(&self.template);
         let template = &*shared;
-        let under = |pos: Pos2| {
+        // 画面の点を通る光線（始まりと向き）。平行投影では、向きはどれも同じで、始まりがずれる。
+        let ortho = self.ortho;
+        let half_h = dist * (fov * 0.5).tan();
+        let ray = |pos: Pos2| -> (V3, V3) {
             let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
-            pick_side(template, &mesh, eye, ray_through(forward, side, upward, fov, aspect, x, y))
+            if ortho {
+                let (dx, dy) = (x * half_h * aspect, y * half_h);
+                ([eye[0] + side[0] * dx + upward[0] * dy, eye[1] + side[1] * dx + upward[1] * dy, eye[2] + side[2] * dx + upward[2] * dy], forward)
+            } else {
+                (eye, ray_through(forward, side, upward, fov, aspect, x, y))
+            }
+        };
+        let under = |pos: Pos2| {
+            let (origin, dir) = ray(pos);
+            pick_side(template, &mesh, origin, dir)
         };
         let pointer = response.interact_pointer_pos().or(response.hover_pos());
         let hit = pointer.and_then(under);
@@ -255,14 +318,11 @@ impl App {
         };
         let decal_under = hit.and_then(decal_at);
         // 選んでいる柄の、大きさと回転のつまみ。柄の置かれた面を広げた平面の上で、展開図の座標のまま計算する。
-        let mvp = mat4_mul(&perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0), &view);
+        let mvp = mat4_mul(&projection(ortho, fov, aspect, dist, radius), &view);
         let placements = template.transforms_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
         let world = template.world_at(self.fold);
         let frame_of = |d: &Decal| world.then_after(&placements[d.panel].at(d.center(template)));
-        let ray_at = |pos: Pos2| {
-            let (x, y) = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
-            ray_through(forward, side, upward, fov, aspect, x, y)
-        };
+
         let quad_of = |d: &Decal| {
             let frame = frame_of(d);
             let pts: Option<Vec<Pos2>> = transform::corners(d, template).iter().map(|c| project(&mvp, rect, frame.point([c[0], c[1], 0.0]))).collect();
@@ -273,7 +333,7 @@ impl App {
         let press = ui.input(|i| i.pointer.press_origin());
         if response.drag_started() && let Some((index, handle, _)) = press.and_then(handle_under) {
             let start = self.decals[index].decal;
-            if let Some(pressed) = press.and_then(|p| transform::ray_to_sheet(&frame_of(&start), eye, ray_at(p))) {
+            if let Some(pressed) = press.and_then(|p| { let (o, d) = ray(p); transform::ray_to_sheet(&frame_of(&start), o, d) }) {
                 self.history.record(self.snapshot());
                 self.transforming = Some(Transforming { index, handle, start, pressed });
             }
@@ -299,7 +359,7 @@ impl App {
             }
         }
         if let (true, Some(t), Some(p)) = (response.dragged(), self.transforming, pointer) {
-            if let Some(at) = transform::ray_to_sheet(&frame_of(&t.start), eye, ray_at(p)) {
+            if let Some(at) = { let (o, d) = ray(p); transform::ray_to_sheet(&frame_of(&t.start), o, d) } {
                 let keys = ui.input(|i| i.modifiers);
                 self.decals[t.index].decal = transform::apply(&t, template, at, keys.shift == self.ratio_lock, keys.alt, keys.shift);
                 self.art_dirty = true;
@@ -383,7 +443,7 @@ impl App {
             self.asset_decal(asset, panel, at, back, angle)
         });
 
-        let proj = perspective(fov, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
+        let proj = projection(ortho, fov, aspect, dist, radius);
         // 光は視点の少し右上から当てる（どの角度から見ても手前の面が明るくなる）。
         let right = normalize([view[0][0], view[1][0], view[2][0]]);
         let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
@@ -405,14 +465,38 @@ impl App {
         }
 
         self.view_presets(ui, rect);
-        // 向きの目印。X は右、Y は上、Z は手前。奥の軸から描く。
-        let origin = pos2(rect.left() + 40.0, rect.bottom() - 40.0);
-        let mut axes = [("X", 0, Color32::from_rgb(226, 104, 92)), ("Y", 1, Color32::from_rgb(124, 196, 96)), ("Z", 2, Color32::from_rgb(98, 150, 236))];
-        axes.sort_by(|a, b| view[a.1][2].total_cmp(&view[b.1][2]));
-        for (name, axis, color) in axes {
-            let tip = origin + vec2(view[axis][0], -view[axis][1]) * 24.0;
-            painter.line_segment([origin, tip], (2.0, color));
-            painter.text(origin + (tip - origin) * 1.38, Align2::CENTER_CENTER, name, FontId::proportional(12.0), color);
+        // 向きの目印（Blender と同じ形）。X は右、Y は上、Z は手前。軸の先の丸を押すと、その軸の側から見る
+        // （もう一度押すと、反対の側から）。白抜きの丸は、軸のマイナスの側。奥のものから描く。
+        let origin = pos2(rect.left() + 44.0, rect.bottom() - 44.0);
+        let colors = [Color32::from_rgb(226, 104, 92), Color32::from_rgb(124, 196, 96), Color32::from_rgb(98, 150, 236)];
+        let mut balls: Vec<(usize, f32)> = (0..3).flat_map(|a| [(a, 1.0), (a, -1.0)]).collect();
+        balls.sort_by(|a, b| (view[a.0][2] * a.1).total_cmp(&(view[b.0][2] * b.1)));
+        let gizmo = ui.interact(Rect::from_center_size(origin, vec2(84.0, 84.0)), ui.scope_id().with("axis-gizmo"), Sense::click());
+        let pressed = gizmo.clicked().then(|| gizmo.interact_pointer_pos()).flatten();
+        let mut chosen = None;
+        for (axis, sign) in balls {
+            let tip = origin + vec2(view[axis][0], -view[axis][1]) * 28.0 * sign;
+            let color = colors[axis];
+            let hot = gizmo.hover_pos().is_some_and(|p| (p - tip).length() <= 9.0);
+            if sign > 0.0 {
+                painter.line_segment([origin, tip], (2.0, color));
+                painter.circle_filled(tip, if hot { 9.0 } else { 8.0 }, color);
+                painter.text(tip, Align2::CENTER_CENTER, ["X", "Y", "Z"][axis], FontId::proportional(11.0), Color32::from_gray(20));
+            } else {
+                painter.circle(tip, if hot { 7.0 } else { 6.0 }, color.gamma_multiply(0.25), (1.2, color));
+            }
+            if pressed.is_some_and(|p| (p - tip).length() <= 9.0) {
+                chosen = Some((axis, sign));
+            }
+        }
+        if let Some((axis, sign)) = chosen {
+            let (yaw, pitch) = axis_view(axis, sign);
+            // いまその向きから見ていれば、反対の側から。
+            let (yaw, pitch) = if angle_gap(self.yaw, yaw) < 0.05 && (self.pitch - pitch).abs() < 0.05 { axis_view(axis, -sign) } else { (yaw, pitch) };
+            self.look_from(yaw, pitch);
+        }
+        if gizmo.hovered() {
+            gizmo.on_hover_text(t!("Click an axis to view from that side (again for the opposite side)"));
         }
         // ダブルクリック: 柄の上なら、外のアプリで直す（文字なら、右の欄で打つ）。
         if response.double_clicked() && self.tool != Tool::Hand && let Some((index, _)) = decal_under {

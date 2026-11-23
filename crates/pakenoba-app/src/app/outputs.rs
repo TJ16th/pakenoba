@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 use eframe::egui;
 use eframe::egui_wgpu;
 
-use pakenoba_core::math::{Mat4, V3, look_at, mat4_mul, normalize, perspective};
+use pakenoba_core::math::{Mat4, V3, look_at, mat4_mul, normalize};
 use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown};
@@ -75,7 +75,7 @@ pub(super) fn movie_pose(frame: u32, total: u32, turn: bool) -> (f32, f32) {
 /// 箱の視点（立体の表示と同じ計算）。返すのは、投影と視点をかけたものと、光の向き。
 /// `view_aspect` は立体の表示の縦横比。画像は、立体の表示の中央を `aspect` の縦横比で切り抜いた範囲にする
 /// （出力の工程で、立体の表示の上に描いた枠の中と同じになる）。
-fn camera(mesh: &[pakenoba_core::template::Vertex], aspect: f32, view_aspect: f32, yaw: f32, pitch: f32, zoom: f32) -> (Mat4, V3) {
+fn camera(mesh: &[pakenoba_core::template::Vertex], aspect: f32, view_aspect: f32, yaw: f32, pitch: f32, zoom: f32, ortho: bool) -> (Mat4, V3) {
     let (center, radius) = bounding_sphere(mesh);
     let fov = 30f32.to_radians();
     let dist = radius / (fov * 0.5).sin() * 1.1 / zoom / view_aspect.min(1.0);
@@ -85,7 +85,8 @@ fn camera(mesh: &[pakenoba_core::template::Vertex], aspect: f32, view_aspect: f3
     let dir = [pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos()];
     let eye = [center[0] + dir[0] * dist, center[1] + dir[1] * dist, center[2] + dir[2] * dist];
     let view = look_at(eye, center, [0.0, 1.0, 0.0]);
-    let proj = perspective(fov_out, aspect, (dist - radius * 1.5).max(dist * 0.02), dist + radius * 2.0);
+    // 平行投影の表示なら、画像も平行投影にする。
+    let proj = super::views::projection(ortho, fov_out, aspect, dist, radius);
     let right = normalize([view[0][0], view[1][0], view[2][0]]);
     let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
     (mat4_mul(&proj, &view), light)
@@ -149,7 +150,7 @@ impl App {
         let aspect = size[0] as f32 / size[1] as f32;
         // 動画は、開けきった箱が画面いっぱいに収まる視点（向きだけ、いまの視点から取る）。
         let (view_aspect, zoom) = if frame { (aspect, 1.25) } else { (self.solid_aspect, self.zoom) };
-        let (view_proj, light) = camera(&fit, aspect, view_aspect, yaw, self.pitch, zoom);
+        let (view_proj, light) = camera(&fit, aspect, view_aspect, yaw, self.pitch, zoom, self.ortho);
         let holes = self.holes();
         self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).capture(rs, size, &mesh, view_proj, light, holes, background)
     }

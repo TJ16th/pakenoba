@@ -616,15 +616,15 @@ mod tests {
         let surface = Surface::new(&tpl, &Template::tuck_box(200.0, 160.0, 85.0, 0.02));
         let on = |panel: &str, angle: f32, at: P2| {
             let d = Decal { panel: index(&tpl, panel), at, size: [560.0, 14.0], angle };
-            surface.layout(&tpl, &d).iter().map(|p| tpl.panels[p.panel].name.clone()).collect::<Vec<_>>()
+            surface.layout(&tpl, &d).iter().map(|p| tpl.panels[p.panel].name).collect::<Vec<_>>()
         };
         let around = on("上のフタ", 0.0, [0.5, 0.5]);
         for name in ["左側面", "右側面", "底のフタ"] {
-            assert!(around.iter().any(|n| *n == name), "{name} に続かない: {around:?}");
+            assert!(around.contains(&name), "{name} に続かない: {around:?}");
         }
         // 縁に沿って置いた帯（合わせ目と平行）は、これまでどおり、合わせ目を 2 回またいで回り込まない。
         let along = on("正面", 0.0, [0.5, 0.97]);
-        assert!(!along.iter().any(|n| *n == "底のフタ"), "{along:?}");
+        assert!(!along.contains(&"底のフタ"), "{along:?}");
     }
 
     #[test]

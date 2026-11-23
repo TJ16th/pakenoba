@@ -487,6 +487,8 @@ struct App {
     ratio_lock: bool,
     /// 素材を置く向き（90 度の何回ぶんか。0〜3）。
     place_turn: u8,
+    /// 立体の表示を平行投影で見る（遠近を付けない）。
+    ortho: bool,
     /// カーソルの下のパネル。
     hover: Option<usize>,
     sheet: SheetArt,
@@ -629,6 +631,7 @@ impl App {
             transforming: None,
             ratio_lock: true,
             place_turn: 0,
+            ortho: false,
             hover: None,
             sheet,
             bases: [None, None],
