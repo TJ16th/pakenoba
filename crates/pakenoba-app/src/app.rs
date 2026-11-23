@@ -107,7 +107,8 @@ impl Default for Initial {
 
 pub fn run(initial: Initial) -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]).with_min_inner_size([900.0, 600.0]),
+        // ウィンドウとタスクバーのアイコンは、旧パケノバのアプリと同じシンボル（名称とロゴは TRADEMARKS.md）。
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]).with_min_inner_size([900.0, 600.0]).with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/pakenoba-icon-256.png")).unwrap_or_default()),
         ..Default::default()
     };
     eframe::run_native(

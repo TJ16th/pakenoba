@@ -44,9 +44,8 @@ impl App {
     pub(super) fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu-bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                // アプリの名前は置かない（Windows の作法。名前はウィンドウの題とアイコンにある）。
                 ui.add_space(2.0);
-                ui.strong(t!("PAKENOBA"));
-                ui.add_space(6.0);
                 self.file_menu(ui);
                 self.edit_menu(ui);
                 self.view_menu(ui);
