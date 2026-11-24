@@ -482,10 +482,15 @@ pub fn enabled(stack: &[Adjustment]) -> Vec<AdjustKind> {
 /// 待たないときは、できていなければ別のスレッドで作り始め、いまは元の絵を返す。
 pub fn shown(placed: &Placed, wait: bool) -> Picture {
     let stack = enabled(&placed.layer.adjust);
-    if stack.is_empty() || matches!(placed.picture, Picture::Group { .. } | Picture::Adjustment) {
+    // ベクターの柄の、色ごとの見せ方（もとの SVG を覚えているときだけ）。
+    let restyle = match (&placed.picture, placed.layer.vector.as_ref().filter(|v| !v.is_plain())) {
+        (Picture::Image { rgba, vector: true, .. }, Some(style)) => crate::vector::svg_of(rgba).map(|svg| (svg, style.clone())),
+        _ => None,
+    };
+    if (stack.is_empty() && restyle.is_none()) || matches!(placed.picture, Picture::Group { .. } | Picture::Adjustment) {
         return placed.picture.clone();
     }
-    let key = format!("{}|{stack:?}", picture_key(&placed.picture, placed.size));
+    let key = format!("{}|{stack:?}|{:?}", picture_key(&placed.picture, placed.size), restyle.as_ref().map(|(_, style)| style));
     {
         let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache.tick += 1;
@@ -507,6 +512,17 @@ pub fn shown(placed: &Placed, wait: bool) -> Picture {
     }
     let (picture, size) = (placed.picture.clone(), placed.size);
     let make = move || {
+        // 先に、色ごとの見せ方を効かせて SVG から描き直す。
+        let picture = match &restyle {
+            Some((svg, style)) => match crate::vector::decode_svg(crate::vector::restyle(svg, style).as_bytes()) {
+                Ok((w, h, rgba)) => Picture::Image { w, h, rgba: Arc::new(rgba), vector: true },
+                Err(_) => picture,
+            },
+            None => picture,
+        };
+        if stack.is_empty() {
+            return (picture, Vec::new());
+        }
         let made = raster(&picture, size).map(|(w, h, rgba)| {
             let (out, notes) = apply(&stack, w, h, &rgba);
             (Picture::Image { w, h, rgba: Arc::new(out), vector: false }, notes)

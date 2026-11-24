@@ -1268,3 +1268,11 @@ blend	Color	カラー
 	{} shapes, {} colors	形 {} 個・色 {} 色
 	Black threshold	しきい値
 	Color detail	色の多さ
+	Outlines only	線だけ表示
+	Show every shape as a thin line, without fills	すべての形を、塗りなしの細い線で見せます
+	Show every color as it was traced	すべての色を、元の見せ方に戻します
+	{} colors. Changes are applied when drawing; the SVG asset is unchanged.	{} 色。変更は描くときに効かせます（素材の SVG は変わりません）。
+	Fill color (originally {}, {} shapes)	塗りの色（元は {}、形 {} 個）
+	Add a stroke	線を足す
+	{} more colors are not listed.	ほかに {} 色あります（一覧には出していません）。
+	Stroke width	線の太さ

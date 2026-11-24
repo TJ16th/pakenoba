@@ -376,6 +376,7 @@ impl App {
             ui.small(t!("Crosses {seams} seam(s)."));
         }
         self.tile_properties(ui, index, locked);
+        self.vector_properties(ui, index, locked);
         // 中身ごとの設定（文字、図形）、柄だけの調整、画像の道具、外のアプリで直す。
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
@@ -385,6 +386,105 @@ impl App {
         ui.add_space(4.0);
         if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
             self.cmd_delete();
+        }
+    }
+
+    /// ベクターの柄の、色ごとの見せ方（表示、塗り、線）と、線だけの表示。素材の SVG は変えない。
+    fn vector_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
+        use pakenoba_core::project::{ColorStyle, Paint, VectorStyle};
+        let crate::paint::Picture::Image { rgba, vector: true, .. } = &self.decals[index].picture else { return };
+        let key = std::sync::Arc::as_ptr(rgba) as usize;
+        let groups = match &self.vector_groups {
+            Some((k, groups)) if *k == key => groups.clone(),
+            _ => {
+                let Some(svg) = crate::vector::svg_of(rgba) else { return };
+                let groups = std::rc::Rc::new(crate::vector::color_groups(&svg));
+                self.vector_groups = Some((key, groups.clone()));
+                groups
+            }
+        };
+        if groups.is_empty() {
+            return;
+        }
+        let earlier = self.snapshot();
+        let before = self.decals[index].layer.vector.clone().unwrap_or_default();
+        let mut style = before.clone();
+        let edited = !before.is_plain();
+        // 色が多い（写真をトレースしたものなど）と並べきれないので、形の多い色から並べる。
+        const SHOWN: usize = 40;
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(edited || groups.len() <= 12).show(ui, |ui| {
+            ui.add_enabled_ui(!locked, |ui| {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut style.outline_only, t!("Outlines only")).on_hover_text(t!("Show every shape as a thin line, without fills"));
+                    if ui.add_enabled(edited, egui::Button::new(t!("Reset"))).on_hover_text(t!("Show every color as it was traced")).clicked() {
+                        style = VectorStyle::default();
+                    }
+                });
+                ui.weak(t!("{} colors. Changes are applied when drawing; the SVG asset is unchanged.", groups.len()));
+                egui::Grid::new("vector-colors").num_columns(4).spacing([6.0, 4.0]).striped(true).show(ui, |ui| {
+                    ui.label("");
+                    ui.weak(t!("Color"));
+                    ui.weak(t!("Fill"));
+                    ui.weak(t!("Stroke"));
+                    ui.end_row();
+                    for &(color, count) in groups.iter().take(SHOWN) {
+                        let at = style.colors.iter().position(|c| c.color == color);
+                        let mut own = at.map_or(ColorStyle::new(color), |i| style.colors[i]);
+                        let was = own;
+                        // 目（表示）。
+                        let mut shown = !own.hidden;
+                        if icons::eye_button(ui, shown).clicked() {
+                            shown = !shown;
+                        }
+                        own.hidden = !shown;
+                        // もとの色と、塗りの色（塗りを変えていれば、その色）。
+                        let mut fill = match own.fill {
+                            Paint::Color(c) => c,
+                            _ => color,
+                        };
+                        let picked = ui.color_edit_button_srgb(&mut fill).on_hover_text(t!("Fill color (originally {}, {} shapes)", hex(color), count));
+                        if picked.changed() {
+                            own.fill = if fill == color { Paint::Keep } else { Paint::Color(fill) };
+                        }
+                        let mut filled = own.fill != Paint::None;
+                        if ui.checkbox(&mut filled, "").on_hover_text(t!("Fill")).changed() {
+                            own.fill = if filled { Paint::Keep } else { Paint::None };
+                        }
+                        ui.horizontal(|ui| {
+                            let mut stroked = own.stroke.is_some();
+                            if ui.checkbox(&mut stroked, "").on_hover_text(t!("Add a stroke")).changed() {
+                                own.stroke = stroked.then_some(([0, 0, 0], 30));
+                            }
+                            if let Some((mut c, width)) = own.stroke {
+                                ui.color_edit_button_srgb(&mut c);
+                                let mut mm = width as f32 / 100.0;
+                                ui.add_sized([62.0, 20.0], egui::DragValue::new(&mut mm).range(0.05..=10.0).speed(0.02).max_decimals(2).suffix(" mm")).on_hover_text(t!("Stroke width"));
+                                own.stroke = Some((c, (mm * 100.0).round().clamp(5.0, 1000.0) as u16));
+                            }
+                        });
+                        ui.end_row();
+                        if own != was {
+                            match at {
+                                Some(i) => style.colors[i] = own,
+                                None => style.colors.push(own),
+                            }
+                        }
+                    }
+                });
+                if groups.len() > SHOWN {
+                    ui.weak(t!("{} more colors are not listed.", groups.len() - SHOWN));
+                }
+            });
+        });
+        style.colors.retain(|c| !c.is_plain());
+        if style != before {
+            self.decals[index].layer.vector = (!style.is_plain()).then_some(style);
+            self.art_dirty = true;
+            self.back_dirty = true;
+            if !self.editing {
+                self.history.record(earlier);
+            }
+            self.editing = true;
         }
     }
 
@@ -736,4 +836,9 @@ impl App {
             });
         });
     }
+}
+
+/// `#rrggbb`。
+fn hex(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }

@@ -281,7 +281,10 @@ fn decode_image(bytes: &[u8]) -> Result<Picture, String> {
         Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: false })
     } else if crate::vector::is_svg(bytes) {
         let (w, h, rgba) = crate::vector::decode_svg(bytes)?;
-        Ok(Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: true })
+        let rgba = std::sync::Arc::new(rgba);
+        // 色ごとの見せ方を変えて描き直せるように、もとの SVG を覚えておく。
+        crate::vector::remember_svg(&rgba, bytes);
+        Ok(Picture::Image { w, h, rgba, vector: true })
     } else {
         Err(t!("Could not read this as an image (PNG, JPEG, PSD and SVG are supported)").to_owned())
     }
@@ -615,6 +618,8 @@ struct App {
     trace: crate::vector::TraceSettings,
     /// 開いている画像トレースの欄。
     trace_session: Option<vectorize::TraceSession>,
+    /// プロパティの欄に出す、ベクターの柄の色の一覧（絵ごとに 1 度だけ数える）。
+    vector_groups: Option<(usize, std::rc::Rc<Vec<crate::vector::ColorCount>>)>,
     /// 「パケノバについて」の窓を出しているか。
     about_open: bool,
     /// 起動ロゴ。
@@ -773,6 +778,7 @@ impl App {
             shape_style: shapes::default_shape(),
             trace: crate::vector::TraceSettings::default(),
             trace_session: None,
+            vector_groups: None,
             about_open: false,
             splash: splash::Splash::new(initial.splash),
             focus_text: false,

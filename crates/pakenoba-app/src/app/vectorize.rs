@@ -209,6 +209,9 @@ impl App {
         let source = session.source;
         let size = self.decals[source].decal.size;
         let name = t!("{} (vector).svg", session.stem);
+        if let Picture::Image { rgba, .. } = &done.result {
+            crate::vector::remember_svg(rgba, done.svg.as_bytes());
+        }
         let stored = project::Asset::new(name.clone(), done.svg.into_bytes(), size, file::now_local());
         self.checkpoint();
         let known = self.assets.iter().find(|a| a.stored.as_ref().is_some_and(|s| s.id() == stored.id())).map(|a| a.picture.clone());

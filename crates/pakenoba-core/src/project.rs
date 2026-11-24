@@ -306,6 +306,59 @@ pub struct Layer {
     pub tile: Option<Tile>,
     /// 画像トレースで作ったベクターの柄なら、元の画像のレイヤーと、トレースの設定（やり直すため）。
     pub traced: Option<TraceSource>,
+    /// ベクターの柄の、色ごとの見せ方（表示、塗り、線）。素材の SVG は変えず、描くときに効かせる。
+    pub vector: Option<VectorStyle>,
+}
+
+/// ベクターの柄の見せ方。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct VectorStyle {
+    /// 線だけで見せる（アウトライン）。
+    pub outline_only: bool,
+    /// 色ごとの設定（もとの色で引く）。並んでいない色は、そのまま。
+    pub colors: Vec<ColorStyle>,
+}
+
+impl VectorStyle {
+    /// 何も変えていない。
+    pub fn is_plain(&self) -> bool {
+        !self.outline_only && self.colors.iter().all(ColorStyle::is_plain)
+    }
+}
+
+/// ベクターの柄の、ひとつの色（その色で塗った形、または線）の見せ方。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ColorStyle {
+    /// もとの色。
+    pub color: [u8; 3],
+    /// 隠す。
+    pub hidden: bool,
+    /// 塗り。
+    pub fill: Paint,
+    /// 線を足す（色と、太さ。0.01 mm 単位）。
+    pub stroke: Option<([u8; 3], u16)>,
+}
+
+impl ColorStyle {
+    pub fn new(color: [u8; 3]) -> ColorStyle {
+        ColorStyle { color, hidden: false, fill: Paint::Keep, stroke: None }
+    }
+
+    pub fn is_plain(&self) -> bool {
+        !self.hidden && self.fill == Paint::Keep && self.stroke.is_none()
+    }
+}
+
+/// 塗りの変え方。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Paint {
+    /// もとのまま。
+    #[default]
+    Keep,
+    /// 塗らない。
+    None,
+    /// この色で塗る。
+    Color([u8; 3]),
 }
 
 /// 画像トレースの元。
@@ -371,7 +424,7 @@ impl Tile {
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal, tile: None, traced: None }
+        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal, tile: None, traced: None, vector: None }
     }
 }
 
@@ -974,6 +1027,9 @@ struct DecalEntry {
     /// 画像トレースの元（元の画像のレイヤーの印と、設定）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     traced: Option<TracedEntry>,
+    /// ベクターの柄の、色ごとの見せ方。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vector: Option<VectorEntry>,
     /// グループの入れ子の深さ。
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     depth: u8,
@@ -992,6 +1048,81 @@ struct DecalEntry {
     /// 調整（下から順）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     adjust: Vec<AdjustEntry>,
+}
+
+/// ベクターの柄の見せ方（ファイルでの形）。色は `#rrggbb`、線の太さは mm。
+#[derive(Serialize, Deserialize)]
+struct VectorEntry {
+    #[serde(default, skip_serializing_if = "is_false")]
+    outline_only: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    colors: Vec<ColorEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ColorEntry {
+    color: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    hidden: bool,
+    /// 塗り: なし（もとのまま）、`none`、`#rrggbb`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stroke: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stroke_width: Option<f64>,
+}
+
+fn hex_of(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+fn color_of(text: &str) -> Option<[u8; 3]> {
+    let h = text.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let v = u32::from_str_radix(h, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
+}
+
+impl VectorEntry {
+    fn of(style: &VectorStyle) -> VectorEntry {
+        let colors = style
+            .colors
+            .iter()
+            .filter(|c| !c.is_plain())
+            .map(|c| ColorEntry {
+                color: hex_of(c.color),
+                hidden: c.hidden,
+                fill: match c.fill {
+                    Paint::Keep => None,
+                    Paint::None => Some("none".to_owned()),
+                    Paint::Color(x) => Some(hex_of(x)),
+                },
+                stroke: c.stroke.map(|(x, _)| hex_of(x)),
+                stroke_width: c.stroke.map(|(_, w)| tidy(w as f32 / 100.0)),
+            })
+            .collect();
+        VectorEntry { outline_only: style.outline_only, colors }
+    }
+
+    fn style(&self) -> VectorStyle {
+        let colors = self
+            .colors
+            .iter()
+            .filter_map(|c| {
+                let fill = match c.fill.as_deref() {
+                    None => Paint::Keep,
+                    Some("none") => Paint::None,
+                    Some(x) => color_of(x).map_or(Paint::Keep, Paint::Color),
+                };
+                let stroke = c.stroke.as_deref().and_then(color_of).map(|x| (x, (c.stroke_width.unwrap_or(0.3) * 100.0).round().clamp(1.0, 60000.0) as u16));
+                Some(ColorStyle { color: color_of(&c.color)?, hidden: c.hidden, fill, stroke })
+            })
+            .collect();
+        VectorStyle { outline_only: self.outline_only, colors }
+    }
 }
 
 /// 画像トレースの元（ファイルでの形）。
@@ -1358,7 +1489,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }), traced: placed.layer.traced.as_ref().map(|t| TracedEntry { layer: t.layer, settings: t.settings.clone() }) }
+                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }), traced: placed.layer.traced.as_ref().map(|t| TracedEntry { layer: t.layer, settings: t.settings.clone() }), vector: placed.layer.vector.as_ref().filter(|v| !v.is_plain()).map(VectorEntry::of) }
                 })
                 .collect(),
             finishes: self
@@ -1796,7 +1927,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
         let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
         let tileable = !matches!(source, Source::Group { .. } | Source::Adjustment);
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }), traced: entry.traced.as_ref().filter(|_| tileable).map(|t| TraceSource { layer: t.layer, settings: t.settings.clone() }) } });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }), traced: entry.traced.as_ref().filter(|_| tileable).map(|t| TraceSource { layer: t.layer, settings: t.settings.clone() }), vector: entry.vector.as_ref().filter(|_| tileable).map(VectorEntry::style).filter(|v| !v.is_plain()) } });
     }
     tidy_groups(&mut decals);
 
@@ -2004,6 +2135,7 @@ mod tests {
                     clipped: panel % 2 == 1,
                     tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0 }),
                     traced: (panel % 4 == 3).then(|| TraceSource { layer: 7, settings: "{\"preset\":\"3 Colors\"}".to_owned() }),
+                    vector: (panel % 4 == 3).then(|| VectorStyle { outline_only: panel % 2 == 0, colors: vec![ColorStyle { color: [200, 10, 30], hidden: true, fill: Paint::None, stroke: Some(([0, 0, 0], 35)) }, ColorStyle { fill: Paint::Color([1, 2, 3]), ..ColorStyle::new([255, 255, 255]) }] }),
                 } }
             })
             .collect::<Vec<_>>();

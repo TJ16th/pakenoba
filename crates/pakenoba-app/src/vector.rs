@@ -368,3 +368,251 @@ mod size_tests {
         assert_eq!(super::size_mm(br#"<svg width="2048" height="2048">"#), None);
     }
 }
+
+// ---- ベクターの柄の、色ごとの見せ方 ----
+
+use pakenoba_core::project::{ColorStyle, Paint, VectorStyle};
+use std::sync::{Arc, Mutex, Weak};
+
+/// 描いた絵（の画素の入れ物）から、もとの SVG を引く表。素材を読んだときに覚える。
+static SOURCES: Mutex<Vec<Remembered>> = Mutex::new(Vec::new());
+
+/// 覚えた SVG 1 つ: 絵の入れ物の場所、絵（まだ使われているか）、SVG。
+type Remembered = (usize, Weak<Vec<u8>>, Arc<str>);
+
+/// 色、形の数。
+pub type ColorCount = ([u8; 3], usize);
+
+/// SVG から描いた絵 `rgba` の、もとの SVG を覚える（色ごとの見せ方を変えて描き直すため）。
+pub fn remember_svg(rgba: &Arc<Vec<u8>>, svg: &[u8]) {
+    let Ok(text) = std::str::from_utf8(svg) else { return };
+    let mut table = SOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    // もう使われていない絵のぶんは、忘れる。
+    table.retain(|(_, weak, _)| weak.strong_count() > 0);
+    let key = Arc::as_ptr(rgba) as usize;
+    if !table.iter().any(|(k, _, _)| *k == key) {
+        table.push((key, Arc::downgrade(rgba), Arc::from(text)));
+    }
+}
+
+/// 絵 `rgba` のもとの SVG（覚えていれば）。
+pub fn svg_of(rgba: &Arc<Vec<u8>>) -> Option<Arc<str>> {
+    let key = Arc::as_ptr(rgba) as usize;
+    let table = SOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    table.iter().find(|(k, weak, _)| *k == key && weak.strong_count() > 0).map(|(_, _, svg)| svg.clone())
+}
+
+/// 形の要素の名前。
+const SHAPE_TAGS: [&str; 7] = ["path", "rect", "circle", "ellipse", "polygon", "polyline", "line"];
+
+/// `#rrggbb` か `#rgb` を読む。
+fn parse_hex(text: &str) -> Option<[u8; 3]> {
+    let h = text.trim().strip_prefix('#')?;
+    let v = |s: &str| u8::from_str_radix(s, 16).ok();
+    match h.len() {
+        6 => Some([v(&h[0..2])?, v(&h[2..4])?, v(&h[4..6])?]),
+        3 => Some([v(&h[0..1])? * 17, v(&h[1..2])? * 17, v(&h[2..3])? * 17]),
+        _ => None,
+    }
+}
+
+/// 開きタグ `tag` の属性 `name` の値。`style` の中に書いてあれば、そちらも見る。
+fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    if let Some(at) = tag.find(&key) {
+        let rest = &tag[at + key.len()..];
+        return rest.find('"').map(|end| &rest[..end]);
+    }
+    let style = attribute_plain(tag, "style")?;
+    style.split(';').find_map(|decl| {
+        let (k, v) = decl.split_once(':')?;
+        (k.trim() == name).then_some(v.trim())
+    })
+}
+
+fn attribute_plain<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let at = tag.find(&key)?;
+    let rest = &tag[at + key.len()..];
+    rest.find('"').map(|end| &rest[..end])
+}
+
+/// 形の要素の、色（塗りの色。塗りがなければ線の色）と、線だけの形か。
+fn element_color(tag: &str) -> Option<([u8; 3], bool)> {
+    match attribute(tag, "fill") {
+        Some("none") => attribute(tag, "stroke").and_then(parse_hex).map(|c| (c, true)),
+        Some(fill) => parse_hex(fill).map(|c| (c, false)),
+        // 塗りを書いていなければ、黒で塗る（SVG の決まり）。
+        None => Some(([0, 0, 0], false)),
+    }
+}
+
+/// SVG の形の開きタグを、順に `f(タグの名前, 開きタグ)` で置き換える。
+fn each_shape(svg: &str, mut f: impl FnMut(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(svg.len() + 256);
+    let mut rest = svg;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let name_end = after.find(|c: char| c.is_whitespace() || c == '/' || c == '>').unwrap_or(after.len());
+        let name = &after[..name_end];
+        let Some(close) = after.find('>') else {
+            out.push_str(&rest[at..]);
+            return out;
+        };
+        let tag = &rest[at..at + close + 2];
+        match SHAPE_TAGS.contains(&name).then(|| f(tag)).flatten() {
+            Some(new) => out.push_str(&new),
+            None => out.push_str(tag),
+        }
+        rest = &rest[at + close + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// SVG の色の一覧（形の数の多い順）。値は、色、形の数、線だけの形か。
+pub fn color_groups(svg: &str) -> Vec<ColorCount> {
+    let mut counts: Vec<ColorCount> = Vec::new();
+    each_shape(svg, |tag| {
+        if let Some((color, _)) = element_color(tag) {
+            match counts.iter_mut().find(|(c, _)| *c == color) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((color, 1)),
+            }
+        }
+        None
+    });
+    counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+    counts
+}
+
+/// 開きタグから、属性（と `style` の中の同じ名前の宣言）を取り除く。
+fn without(tag: &str, names: &[&str]) -> String {
+    let mut tag = tag.to_owned();
+    for name in names {
+        let key = format!(" {name}=\"");
+        while let Some(at) = tag.find(&key) {
+            let Some(end) = tag[at + key.len()..].find('"') else { break };
+            tag.replace_range(at..at + key.len() + end + 1, "");
+        }
+    }
+    if let Some(style) = attribute_plain(&tag, "style") {
+        let kept: Vec<&str> = style.split(';').filter(|d| d.split_once(':').is_none_or(|(k, _)| !names.contains(&k.trim()))).collect();
+        let new = format!(" style=\"{}\"", kept.join(";"));
+        let old = format!(" style=\"{style}\"");
+        tag = tag.replacen(&old, &new, 1);
+    }
+    tag
+}
+
+/// 開きタグに属性を足す（`/>` か `>` の前に）。
+fn with(tag: &str, extra: &str) -> String {
+    let end = if tag.ends_with("/>") { tag.len() - 2 } else { tag.len() - 1 };
+    format!("{}{extra}{}", tag[..end].trim_end(), &tag[end..])
+}
+
+/// SVG の 1 mm が、SVG の座標でいくつか（`width` が mm で書いてあり、`viewBox` があるとき）。なければ 1。
+fn units_per_mm(svg: &str) -> f32 {
+    let Some(start) = svg.find("<svg") else { return 1.0 };
+    let Some(end) = svg[start..].find('>') else { return 1.0 };
+    let tag = &svg[start..start + end];
+    let width = size_mm(svg.as_bytes()).map(|s| s[0]);
+    let view = attribute_plain(tag, "viewBox").and_then(|v| v.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).nth(2)?.parse::<f32>().ok());
+    match (width, view) {
+        (Some(w), Some(v)) if w > 0.0 && v > 0.0 => v / w,
+        _ => 1.0,
+    }
+}
+
+fn hex3(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// SVG に、色ごとの見せ方を効かせる。もとの SVG は変えずに、新しい SVG を返す。
+pub fn restyle(svg: &str, style: &VectorStyle) -> String {
+    let upm = units_per_mm(svg);
+    // アウトラインの線は 0.1 mm。
+    let hair = 0.1 * upm;
+    each_shape(svg, |tag| {
+        let (color, stroke_only) = element_color(tag)?;
+        let own = style.colors.iter().find(|c| c.color == color).copied().unwrap_or_else(|| ColorStyle::new(color));
+        if own.is_plain() && !style.outline_only {
+            return None;
+        }
+        if own.hidden {
+            return Some(with(&without(tag, &["display"]), " display=\"none\""));
+        }
+        if style.outline_only {
+            let bare = without(tag, &["fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity"]);
+            return Some(with(&bare, &format!(" fill=\"none\" stroke=\"#1b1b1b\" stroke-width=\"{hair:.3}\" stroke-linejoin=\"round\"")));
+        }
+        let mut tag = tag.to_owned();
+        // 塗り（線だけの形では、線の色に効かせる）。
+        let paint_attr = if stroke_only { "stroke" } else { "fill" };
+        match own.fill {
+            Paint::Keep => {}
+            Paint::None => tag = with(&without(&tag, &[paint_attr]), &format!(" {paint_attr}=\"none\"")),
+            Paint::Color(c) => tag = with(&without(&tag, &[paint_attr]), &format!(" {paint_attr}=\"{}\"", hex3(c))),
+        }
+        if let (Some((c, width)), false) = (own.stroke, stroke_only) {
+            let w = width as f32 / 100.0 * upm;
+            tag = with(&without(&tag, &["stroke", "stroke-width", "stroke-linejoin"]), &format!(" stroke=\"{}\" stroke-width=\"{w:.3}\" stroke-linejoin=\"round\"", hex3(c)));
+        }
+        Some(tag)
+    })
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20.00mm" height="10.00mm" viewBox="0 0 200 100">
+<path fill="#c81e28" d="M0 0L10 0L10 10Z"/>
+<path fill="#c81e28" d="M20 0L30 0L30 10Z"/>
+<path fill="#1e5ab4" d="M40 0L50 0L50 10Z"/>
+<path fill="none" stroke="#000000" stroke-width="2" d="M0 50L100 50"/>
+</svg>"##;
+
+    #[test]
+    fn 色ごとに数える() {
+        let groups = color_groups(SVG);
+        assert_eq!(groups[0], ([200, 30, 40], 2));
+        assert_eq!(groups.len(), 3);
+    }
+
+    #[test]
+    fn 色ごとに隠したり_塗りを変えたり_線を足したりできる() {
+        let style = VectorStyle {
+            outline_only: false,
+            colors: vec![
+                ColorStyle { hidden: true, ..ColorStyle::new([200, 30, 40]) },
+                ColorStyle { fill: Paint::None, stroke: Some(([0, 0, 0], 50)), ..ColorStyle::new([30, 90, 180]) },
+                ColorStyle { fill: Paint::Color([255, 0, 0]), ..ColorStyle::new([0, 0, 0]) },
+            ],
+        };
+        let out = restyle(SVG, &style);
+        assert_eq!(out.matches("display=\"none\"").count(), 2);
+        // 0.5 mm の線は、10 倍の座標で 5。
+        assert!(out.contains("fill=\"none\" stroke=\"#000000\" stroke-width=\"5.000\""), "{out}");
+        // 線だけの形は、線の色が変わる。
+        assert!(out.contains("stroke=\"#ff0000\""), "{out}");
+        // 読んで描ける（属性が重なっていない）。
+        assert!(decode_svg(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn アウトラインは_すべてを細い線にする() {
+        let out = restyle(SVG, &VectorStyle { outline_only: true, colors: vec![] });
+        assert_eq!(out.matches("fill=\"none\" stroke=\"#1b1b1b\"").count(), 4);
+        assert!(decode_svg(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn 覚えた_svg_を引ける() {
+        let rgba = Arc::new(vec![0u8; 4]);
+        remember_svg(&rgba, SVG.as_bytes());
+        assert_eq!(svg_of(&rgba).as_deref(), Some(SVG));
+        assert!(svg_of(&Arc::new(vec![0u8; 4])).is_none());
+    }
+}
