@@ -292,6 +292,220 @@ pub fn print_pdf(sheet: &SheetPrint, settings: &PrintSettings) -> Result<Vec<u8>
     Ok(pdf.finish())
 }
 
+/// 入稿用の PDF の、紙の面 1 つ（表か裏）。座標は、展開図の mm（`print_ready_pdf` に渡す `min`、`max` の範囲）。
+pub struct ReadySide<'a> {
+    /// 面の名前（"Front" や "Back"。英数字だけ刷る）。
+    pub label: &'a str,
+    /// 刷る絵（RGBA、左上から、展開図の大きさ）。紙の色は入れない（アルファが 0 の所は、刷らない）。
+    pub rgba: &'a [u8],
+    /// 加工の版（特色）。`ink` が 128 以上の所が版。
+    pub plates: &'a [crate::art::Plate],
+    pub cuts: &'a [(P2, P2)],
+    pub folds: &'a [(P2, P2)],
+}
+
+/// 入稿用の PDF の、紙の端の余白（mm）。面の名前を刷る。
+const READY_MARGIN: f32 = 15.0;
+
+/// 版の、代わりに見せる CMYK（特色を刷れない機械や、画面で見るときの色）。画面の色から作り、白は薄い水色にする。
+fn plate_cmyk(rgb: [u8; 3]) -> [f32; 4] {
+    let [r, g, b] = rgb.map(|v| v as f32 / 255.0);
+    let k = 1.0 - r.max(g).max(b);
+    if k >= 0.999 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    let cmyk = [(1.0 - r - k) / (1.0 - k), (1.0 - g - k) / (1.0 - k), (1.0 - b - k) / (1.0 - k), k];
+    if cmyk.iter().all(|&v| v < 0.05) { [0.15, 0.0, 0.0, 0.0] } else { cmyk }
+}
+
+/// 入稿用の PDF を作る。面ごとに 1 ページ（展開図の実寸に、余白を足した大きさ）。
+///
+/// - 絵は、白の上に重ねた RGB の画像。
+/// - 切り線は特色「Die Cut」、折り線は特色「Crease」の線（ベクター、オーバープリント）。
+/// - 加工の版は、版の名前の特色（Separation）で、オーバープリントにして、絵の上に重ねる。
+///   版の形は 1 ビットのステンシル（画像マスク）なので、特色を見せない画面では、代わりの CMYK で絵の上に見える。
+/// - 最後のページに、加工の指示（`notes`。英数字だけ刷る）。
+pub fn print_ready_pdf(min: P2, max: P2, w: usize, h: usize, sides: &[ReadySide], title: &str, notes: &[String]) -> Result<Vec<u8>, String> {
+    let size = [max[0] - min[0], max[1] - min[1]];
+    let k = PT_PER_MM;
+    let m = READY_MARGIN;
+    let (pw, ph) = (size[0] + 2.0 * m, size[1] + 2.0 * m);
+    let mut pdf = Pdf::new();
+    let catalog = Ref::new(1);
+    let tree = Ref::new(2);
+    let font = Ref::new(3);
+    let overprint = Ref::new(4);
+    let die = Ref::new(5);
+    let crease = Ref::new(6);
+    let mut next = 7;
+    let mut alloc = || {
+        let r = Ref::new(next);
+        next += 1;
+        r
+    };
+    pdf.type1_font(font).base_font(Name(b"Helvetica"));
+    pdf.ext_graphics(overprint).overprint(true).overprint_fill(true).overprint_mode(pdf_writer::types::OverprintMode::IgnoreZeroChannel);
+    let separation = |pdf: &mut Pdf, id: Ref, name: &str, cmyk: [f32; 4]| {
+        let mut space = pdf.color_space(id).separation(Name(name.as_bytes()));
+        space.alternate_color_space().device_cmyk();
+        space.tint_exponential().domain([0.0, 1.0]).c0([0.0; 4]).c1(cmyk).n(1.0);
+    };
+    separation(&mut pdf, die, "Die Cut", [0.0, 1.0, 0.0, 0.0]);
+    separation(&mut pdf, crease, "Crease", [1.0, 0.0, 0.0, 0.0]);
+    let deflate = |data: &[u8]| -> Result<Vec<u8>, String> {
+        let mut zip = ZlibEncoder::new(Vec::new(), Compression::default());
+        zip.write_all(data).map_err(|e| e.to_string())?;
+        zip.finish().map_err(|e| e.to_string())
+    };
+    // 同じ名前の特色は、どの面でも同じ色空間を使う。
+    let mut spaces: Vec<(String, Ref)> = Vec::new();
+    let mut page_ids = Vec::new();
+    for side in sides {
+        let page_id = alloc();
+        let content_id = alloc();
+        let image = alloc();
+        page_ids.push(page_id);
+        let rgb: Vec<u8> = side
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let a = p[3] as u32;
+                [0, 1, 2].map(|i| ((p[i] as u32 * a + 255 * (255 - a) + 127) / 255) as u8)
+            })
+            .collect();
+        let compressed = deflate(&rgb)?;
+        let mut xobject = pdf.image_xobject(image, &compressed);
+        xobject.filter(Filter::FlateDecode);
+        xobject.width(w as i32).height(h as i32).bits_per_component(8);
+        xobject.color_space().device_rgb();
+        xobject.finish();
+        let mut masks = Vec::new();
+        for plate in side.plates {
+            let space = match spaces.iter().find(|(n, _)| *n == plate.name) {
+                Some(&(_, r)) => r,
+                None => {
+                    let r = alloc();
+                    separation(&mut pdf, r, &plate.name, plate_cmyk(plate.rgb));
+                    spaces.push((plate.name.clone(), r));
+                    r
+                }
+            };
+            // 1 ビットの画像マスク。0 の所に塗る。行はバイトの切れ目でそろえる。
+            let row = w.div_ceil(8);
+            let mut bits = vec![0xffu8; row * h];
+            for y in 0..h {
+                for x in 0..w {
+                    if plate.ink[y * w + x] >= 128 {
+                        bits[y * row + x / 8] &= !(0x80 >> (x % 8));
+                    }
+                }
+            }
+            let mask = alloc();
+            let compressed = deflate(&bits)?;
+            let mut xobject = pdf.image_xobject(mask, &compressed);
+            xobject.filter(Filter::FlateDecode);
+            xobject.width(w as i32).height(h as i32).image_mask(true);
+            xobject.finish();
+            masks.push((space, mask));
+        }
+
+        let to_page = |p: P2| [(m + p[0] - min[0]) * k, (m + p[1] - min[1]) * k];
+        let mut content = Content::new();
+        content.save_state();
+        content.transform([size[0] * k, 0.0, 0.0, size[1] * k, m * k, m * k]);
+        content.x_object(Name(b"Im0"));
+        content.restore_state();
+        content.save_state();
+        content.set_parameters(Name(b"GS0"));
+        for (i, _) in masks.iter().enumerate() {
+            let (cs, mk) = (format!("CS{i}"), format!("Mk{i}"));
+            content.save_state();
+            content.set_fill_color_space(Name(cs.as_bytes()));
+            content.set_fill_color([1.0]);
+            content.transform([size[0] * k, 0.0, 0.0, size[1] * k, m * k, m * k]);
+            content.x_object(Name(mk.as_bytes()));
+            content.restore_state();
+        }
+        content.set_line_width(0.25 * k);
+        for (name, lines, dash) in [(b"CSDie".as_slice(), side.cuts, false), (b"CSCrease".as_slice(), side.folds, true)] {
+            content.set_stroke_color_space(Name(name));
+            content.set_stroke_color([1.0]);
+            if dash {
+                content.set_dash_pattern([3.0 * k, 1.5 * k], 0.0);
+            }
+            for &(a, b) in lines {
+                let (a, b) = (to_page(a), to_page(b));
+                content.move_to(a[0], a[1]);
+                content.line_to(b[0], b[1]);
+            }
+            content.stroke();
+        }
+        content.restore_state();
+        let label = format!("PAKENOBA print-ready  {}  {}  actual size  ({:.1} x {:.1} mm)  plates: {}", ascii(title), ascii(side.label), size[0], size[1], side.plates.iter().map(|p| ascii(&p.name)).collect::<Vec<_>>().join(", "));
+        content.begin_text();
+        content.set_font(Name(b"F1"), 7.0);
+        content.set_fill_gray(0.35);
+        content.next_line(m * k, (ph - m * 0.6) * k);
+        content.show(Str(label.as_bytes()));
+        content.end_text();
+
+        let mut page = pdf.page(page_id);
+        page.media_box(Rect::new(0.0, 0.0, pw * k, ph * k));
+        page.trim_box(Rect::new(m * k, m * k, (pw - m) * k, (ph - m) * k));
+        page.parent(tree);
+        page.contents(content_id);
+        let mut resources = page.resources();
+        let mut objects = resources.x_objects();
+        objects.pair(Name(b"Im0"), image);
+        for (i, &(_, mask)) in masks.iter().enumerate() {
+            objects.pair(Name(format!("Mk{i}").as_bytes()), mask);
+        }
+        objects.finish();
+        let mut colors = resources.color_spaces();
+        colors.pair(Name(b"CSDie"), die);
+        colors.pair(Name(b"CSCrease"), crease);
+        for (i, &(space, _)) in masks.iter().enumerate() {
+            colors.pair(Name(format!("CS{i}").as_bytes()), space);
+        }
+        colors.finish();
+        resources.ext_g_states().pair(Name(b"GS0"), overprint);
+        resources.fonts().pair(Name(b"F1"), font);
+        resources.finish();
+        page.finish();
+        pdf.stream(content_id, &content.finish());
+    }
+
+    // 指示のページ（A4 縦）。
+    let page_id = alloc();
+    let content_id = alloc();
+    page_ids.push(page_id);
+    let mut content = Content::new();
+    content.begin_text();
+    content.set_font(Name(b"F1"), 14.0);
+    content.set_fill_gray(0.0);
+    content.next_line(20.0 * k, 275.0 * k);
+    content.show(Str(format!("Finishing instructions  {}", ascii(title)).as_bytes()));
+    content.set_font(Name(b"F1"), 10.0);
+    content.set_leading(14.0);
+    content.next_line(0.0, -24.0);
+    for line in notes {
+        content.show(Str(ascii(line).as_bytes()));
+        content.next_line_using_leading();
+    }
+    content.end_text();
+    let mut page = pdf.page(page_id);
+    page.media_box(Rect::new(0.0, 0.0, 210.0 * k, 297.0 * k));
+    page.parent(tree);
+    page.contents(content_id);
+    page.resources().fonts().pair(Name(b"F1"), font);
+    page.finish();
+    pdf.stream(content_id, &content.finish());
+
+    pdf.pages(tree).kids(page_ids.iter().copied()).count(page_ids.len() as i32);
+    pdf.catalog(catalog).pages(tree);
+    Ok(pdf.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +547,24 @@ mod tests {
         // 絵は全面に紙があるので、すべての紙を刷る。
         assert_eq!(text.matches("/Type /Page\n").count() + text.matches("/Type /Page ").count() + text.matches("/Type /Page/").count(), expected, "{expected} ページのはず");
         assert_eq!(text.matches("/Subtype /Image").count(), 1, "絵は 1 回だけ入れる");
+    }
+
+    #[test]
+    fn 入稿用の_pdf_は_版を特色で重ねる() {
+        let (w, h) = (20, 10);
+        let rgba = [0u8, 0, 0, 0].repeat(w * h);
+        let mut ink = vec![0u8; w * h];
+        ink[..30].fill(255);
+        let plates = [crate::art::Plate { name: "Foil Gold".into(), rgb: [212, 175, 55], ink }];
+        let cuts = [([0.0, 0.0], [200.0, 0.0])];
+        let side = ReadySide { label: "Front", rgba: &rgba, plates: &plates, cuts: &cuts, folds: &[] };
+        let bytes = print_ready_pdf([0.0, 0.0], [200.0, 100.0], w, h, &[side], "box", &["- Foil Gold (front)".into()]).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("/Separation /Foil#20Gold"), "特色の名前");
+        assert!(text.contains("/Separation /Die#20Cut") && text.contains("/Separation /Crease"));
+        assert!(text.contains("/OP true") && text.contains("/op true"));
+        assert!(text.contains("/ImageMask true"));
+        assert!(text.contains("/TrimBox"));
+        assert_eq!(plate_cmyk([255, 255, 255]), [0.15, 0.0, 0.0, 0.0]);
     }
 }

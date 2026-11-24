@@ -25,6 +25,29 @@ pub(crate) fn foil_swatch(foil: Foil) -> [u8; 3] {
     }
 }
 
+/// 版の名前（印刷所が読むので英語）と、画面で見せる色。
+pub(crate) fn plate_name(finish: &Finish) -> (String, [u8; 3]) {
+    match finish.kind {
+        FinishKind::Foil => {
+            let name = match finish.foil {
+                Foil::Gold => "Foil Gold",
+                Foil::Silver => "Foil Silver",
+                Foil::Copper => "Foil Copper",
+                Foil::RedGold => "Foil Red Gold",
+                Foil::MatteGold => "Foil Matte Gold",
+                Foil::MatteSilver => "Foil Matte Silver",
+                Foil::Hologram => "Foil Hologram",
+            };
+            (name.to_owned(), foil_swatch(finish.foil))
+        }
+        FinishKind::Emboss if finish.deboss => ("Deboss".to_owned(), [120, 90, 200]),
+        FinishKind::Emboss => ("Emboss".to_owned(), [230, 60, 160]),
+        FinishKind::SpotUv if finish.matte => ("Spot UV Matte".to_owned(), [60, 170, 120]),
+        FinishKind::SpotUv => ("Spot UV".to_owned(), [40, 160, 230]),
+        FinishKind::White => ("White".to_owned(), [255, 255, 255]),
+    }
+}
+
 /// 加工の版の絵の A に入れる高さの、いちばん高い値（mm）。A は 128 が高さ 0。
 pub(crate) const MAX_RELIEF_MM: f32 = 2.0;
 
@@ -193,6 +216,87 @@ impl App {
             }
         }
         Some([map?, extra?])
+    }
+
+    /// 書き出しに入れる、加工の版（同じ名前の版は 1 枚にまとめる）。版の形はぼかさない（縁の坂は、印刷所の型が作る）。
+    /// 並びは、はじめに出てきた順。展開図の表の向き（裏の版は、書き出すときに裏返す）。
+    pub(crate) fn finish_plates(&self, back: bool) -> Vec<crate::art::Plate> {
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        let mut plates: Vec<crate::art::Plate> = Vec::new();
+        for index in 0..self.finishes.len() {
+            let finish = &self.finishes[index];
+            let Some(link) = self.finish_link(index).filter(|&i| !finish.hidden && self.decals[i].back == back) else { continue };
+            let mut shape = self.decals[link].clone();
+            shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, ..Layer::default() };
+            let mut layer = vec![0u8; w * h * 4];
+            paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::screen(w, h, &mut layer));
+            let (name, rgb) = plate_name(finish);
+            let at = match plates.iter().position(|p| p.name == name) {
+                Some(at) => at,
+                None => {
+                    plates.push(crate::art::Plate { name, rgb, ink: vec![0; w * h] });
+                    plates.len() - 1
+                }
+            };
+            for (v, p) in plates[at].ink.iter_mut().zip(layer.chunks_exact(4)) {
+                *v = (*v).max(p[3]);
+            }
+        }
+        plates
+    }
+
+    /// 印刷所へ渡す、加工の指示書（版の名前と、高さ、縁の幅、元の柄）。
+    pub(crate) fn finish_notes(&self) -> String {
+        let mut text = t!("Finishes for this dieline (PAKENOBA)").to_owned();
+        text.push_str("\n\n");
+        for index in 0..self.finishes.len() {
+            let finish = &self.finishes[index];
+            let Some(link) = self.finish_link(index).filter(|_| !finish.hidden) else { continue };
+            let (plate, _) = plate_name(finish);
+            let side = if self.decals[link].back { t!("Back") } else { t!("Front") };
+            let shape = self.layer_label(link);
+            text.push_str(&format!("- {plate} ({side}): {}\n", self.finish_label(index)));
+            text.push_str(&t!("    shape: {shape}\n"));
+            if finish.kind == FinishKind::Emboss {
+                text.push_str(&t!("    height: {height:.2} mm, edge: {edge:.1} mm\n", height = finish.height, edge = finish.edge));
+            }
+        }
+        text.push('\n');
+        text.push_str(t!("Each plate is a spot color channel in the PSD (and a spot color with overprint in the print-ready PDF). Black in the channel is where the finish goes."));
+        text.push('\n');
+        text
+    }
+
+    /// 入稿用の PDF の指示のページに刷る行（英数字だけ。柄の名前は刷らない）。
+    pub(crate) fn finish_notes_ascii(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        for index in 0..self.finishes.len() {
+            let finish = &self.finishes[index];
+            let Some(link) = self.finish_link(index).filter(|_| !finish.hidden) else { continue };
+            let (plate, _) = plate_name(finish);
+            let side = if self.decals[link].back { "back" } else { "front" };
+            let mut line = format!("- {plate} ({side}, layer {})", self.decals[link].layer.id);
+            if finish.kind == FinishKind::Emboss {
+                line.push_str(&format!(": height {:.2} mm, edge {:.1} mm", finish.height, finish.edge));
+            }
+            lines.push(line);
+        }
+        if lines.is_empty() {
+            lines.push("- No finishes.".to_owned());
+        }
+        lines.push(String::new());
+        for note in [
+            "Each finish is a spot color plate (Separation) set to overprint. Full tint = where the finish goes.",
+            "Plates with the same name are one plate. Emboss / Deboss plates show the top of the relief;",
+            "the slope (edge width) and height are listed above.",
+            "Die Cut = cut lines, Crease = fold lines (spot colors, overprint; not to be printed).",
+            "The back page is seen from the back (mirrored left to right).",
+            "The artwork is RGB at about 100 dpi (4 px/mm). Use high-resolution artwork for production.",
+            "Made with PAKENOBA. Check the die line against the printer's own die before production.",
+        ] {
+            lines.push(note.to_owned());
+        }
+        lines
     }
 
     /// 展開図の表示の絵に、加工の場所を重ねて見せる（箔はその箔の色、部分 UV ニスは薄い水色、白版は白）。

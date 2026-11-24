@@ -318,6 +318,9 @@ impl App {
                 if self.actor != "person" && self.has_back_decals() && super::export::back_path(&path).exists() {
                     return Err(t!("{} already exists. AI does not overwrite files; choose another name.", super::export::back_path(&path).display()));
                 }
+                if self.actor != "person" && !self.finishes.is_empty() && super::export::notes_path(&path).exists() {
+                    return Err(t!("{} already exists. AI does not overwrite files; choose another name.", super::export::notes_path(&path).display()));
+                }
                 let files = self.psd_files(&path)?;
                 Ok(json!({ "files": files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>() }))
             }
@@ -325,6 +328,11 @@ impl App {
                 let path = self.checked_path(args, true)?;
                 let pages = self.print_file(&path)?;
                 Ok(json!({ "path": path.display().to_string(), "sheets": pages }))
+            }
+            "export.print_ready" => {
+                let path = self.checked_path(args, true)?;
+                let pages = self.ready_file(&path)?;
+                Ok(json!({ "path": path.display().to_string(), "pages": pages }))
             }
             "version.list" => Ok(Value::Array(self.versions.iter().map(|v| json!({ "name": v.name, "time": v.time, "auto": v.auto, "layers": v.project.decals.len() })).collect())),
             "version.keep" => {

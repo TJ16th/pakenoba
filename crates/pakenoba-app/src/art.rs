@@ -325,10 +325,15 @@ pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], 
 pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let paper: Vec<u8> = custom.map_or_else(|| back_paper(sheet), <[u8]>::to_vec);
     let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
-    let flip_gray = |image: &[u8]| (0..sheet.h).flat_map(|y| image[y * sheet.w..(y + 1) * sheet.w].iter().rev().copied().collect::<Vec<u8>>()).collect::<Vec<u8>>();
+    let flip_gray = |image: &[u8]| mirror_gray(image, sheet.w);
     let decals = decals.iter().map(|layer| DecalLayer { image: if layer.group.is_some() { Vec::new() } else { flip(&layer.image) }, mask: layer.mask.as_deref().map(flip_gray), ..layer.clone() }).collect();
     let guides = t!("{guides} (cut lines, fold lines)", guides = tr(GUIDE_LAYER_PREFIX));
     build_psd(sheet.w, sheet.h, (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
+}
+
+/// 白黒の画像（1 画素 1 バイト）を左右に裏返す。
+pub fn mirror_gray(image: &[u8], w: usize) -> Vec<u8> {
+    image.chunks_exact(w).flat_map(|row| row.iter().rev().copied()).collect()
 }
 
 /// 画像を左右に裏返す。
@@ -411,6 +416,54 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
     builder.push_layer(LayerSpec::new(guides.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(guides.1)));
     builder.composite(PixelData::Rgba8(composite));
     builder.to_bytes().map_err(|e| t!("Could not write the PSD: {e}"))
+}
+
+/// 加工の版 1 枚（印刷所へ渡す特色の版）。`ink` は展開図の大きさの白黒（255 が版のある所）。
+#[derive(Clone, Debug)]
+pub struct Plate {
+    /// 版の名前（「Foil Gold」「Emboss」など。印刷所の機械が読む）。
+    pub name: String,
+    /// 画面で見せる色。
+    pub rgb: [u8; 3],
+    pub ink: Vec<u8>,
+}
+
+/// PSD に、加工の版をスポットカラーチャンネルとして足す（Photoshop と同じく、名前、表示の色、
+/// 濃さ 100%、種類「スポット」を書く）。版の中身は、Photoshop と同じく 0 が版のある所（白黒を反転して入れる）。
+pub fn add_spot_channels(bytes: Vec<u8>, plates: &[Plate]) -> Result<Vec<u8>, String> {
+    if plates.is_empty() {
+        return Ok(bytes);
+    }
+    let fail = |e: &dyn std::fmt::Display| t!("Could not add the finish plates to the PSD: {e}");
+    let mut file = PsdFile::from_bytes(&bytes).map_err(|e| fail(&e))?;
+    file.image_data.load().map_err(|e| fail(&e))?;
+    let (w, h) = (file.header.width as usize, file.header.height as usize);
+    if plates.iter().any(|p| p.ink.len() != w * h) || file.header.depth != 8 {
+        return Err(fail(&"size"));
+    }
+    let mut planes = file.image_data.decode(&file.header).map_err(|e| fail(&e))?;
+    // いまの合成画像に、透明のチャンネルがあるか（RGB なら 3 色、4 つ目が透明）。
+    let transparency = file.header.channels > 3;
+    for plate in plates {
+        planes.extend(plate.ink.iter().map(|&v| 255 - v));
+    }
+    file.header.channels += plates.len() as u16;
+    file.image_data = craft_psd::ImageData::encode(file.image_data.compression, &planes, &file.header).map_err(|e| fail(&e))?;
+    let names: Vec<&str> = transparency.then_some("Transparency").into_iter().chain(plates.iter().map(|p| p.name.as_str())).collect();
+    file.resources.retain(|r| !matches!(r.id, 1006 | 1045 | 1053 | 1077));
+    file.resources.push(craft_psd::ImageResource::new(1006, craft_psd::channel_resources::pascal_names(names.iter().copied())));
+    file.resources.push(craft_psd::ImageResource::new(1045, craft_psd::unicode_names::write(names.iter().copied())));
+    let mut display = 1u32.to_be_bytes().to_vec();
+    if transparency {
+        display.extend_from_slice(&[0, 0, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 100, 1]);
+    }
+    for plate in plates {
+        let c = plate.rgb.map(|v| v as u16 * 257);
+        display.extend_from_slice(&craft_psd::channel_resources::DisplayInfo { space: 0, components: [c[0], c[1], c[2], 0], opacity: 100, kind: 2 }.to_bytes());
+    }
+    file.resources.push(craft_psd::ImageResource::new(1077, display));
+    file.resources.push(craft_psd::ImageResource::new(1053, craft_psd::tiff::layered::alpha_identifiers(transparency, plates.len())));
+    file.to_bytes().map_err(|e| fail(&e))
 }
 
 /// ガイドのレイヤーの名前は、この文字（の、いまの言語の訳）で始まる。読み込むときに、どの言語の名前でも見分けて除く。

@@ -142,7 +142,6 @@
 	{project}_dieline.psd	{project}_型紙.psd
 	Could not save: {e}	保存できませんでした: {e}
 	Saved: {}	保存しました: {}
-	Saved both the front and the back: {}, {}	表と裏の 2 つを保存しました: {}、{}
 	Saved the front, but could not save the back: {e}	表は保存しましたが、裏を保存できませんでした: {e}
 # pakenoba-app/src/app/file.rs
 	Untitled	名前なし
@@ -1155,3 +1154,21 @@ blend	Color	カラー
 	Varnish and white	ニスと白版
 	Unknown finish "{key}" (foil, emboss, spot_uv, white)	知らない加工です（{key}）。foil、emboss、spot_uv、white のどれか
 	Remove the foil	箔を外す
+	    height: {height:.2} mm, edge: {edge:.1} mm\n	    高さ: {height:.2} mm、縁の幅: {edge:.1} mm\n
+	    shape: {shape}\n	    形: {shape}\n
+	Could not add the finish plates to the PSD: {e}	PSD に加工の版を入れられませんでした: {e}
+	Could not save the print-ready PDF: {e}	入稿用の PDF を保存できませんでした: {e}
+	Cut lines are the spot color "Die Cut" and fold lines "Crease". Every plate is set to overprint. The last page lists the finishes, heights and edges. The artwork is about 100 dpi, so send high-resolution artwork separately for production.	切り線は特色「Die Cut」、折り線は「Crease」で入ります。版はどれもオーバープリントです。最後のページに、加工と高さ、縁の幅を載せます。絵は約 100 dpi なので、本番には高解像度の絵を別に渡してください。
+	Each plate is a spot color channel in the PSD (and a spot color with overprint in the print-ready PDF). Black in the channel is where the finish goes.	版は、PSD ではスポットカラーチャンネル（入稿用の PDF では、オーバープリントの特色）です。チャンネルの黒い所が加工の場所です。
+	Exported the print-ready PDF	入稿用の PDF を書き出した
+	Finishes for this dieline (PAKENOBA)	この型紙の加工（PAKENOBA）
+	Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate.	印刷所へ渡す PDF を作ります。面ごとに実寸で 1 ページ、切り線と折り線と、加工ごとの特色の版が入ります。
+	Plates: {}	版: {}
+	Save the print-ready PDF	入稿用の PDF を保存
+	Save the print-ready PDF…	入稿用の PDF を保存…
+	Saved the PSD, but could not save the finish notes: {e}	PSD は保存しましたが、加工の指示書を保存できませんでした: {e}
+	Saved {} ({pages} page(s), with the finishing instructions on the last page).	保存しました: {}（{pages} ページ。最後のページが加工の指示）
+	Saved: {} (and {})	保存しました: {}（ほかに {}）
+	There are no finishes (foil, embossing, spot UV, white ink) yet. Add them from the star button in the Layers panel.	加工（箔押し、エンボス、部分 UV ニス、白版）がまだありません。レイヤーの欄の星のボタンから足せます。
+	print-ready	入稿用
+	Print-ready PDF (full size, with finish plates)	入稿用 PDF（実寸、加工の版つき）

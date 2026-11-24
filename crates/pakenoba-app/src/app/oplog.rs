@@ -46,6 +46,7 @@ pub(super) fn command_label(name: &str) -> String {
         "shape_art.set" => t!("Changed a shape"),
         "export.psd" => t!("Exported the dieline (PSD)"),
         "export.pdf" => t!("Exported the full-size dieline (PDF)"),
+        "export.print_ready" => t!("Exported the print-ready PDF"),
         "project.new" => t!("New project"),
         "project.open" => t!("Opened a project"),
         "project.save_as" => t!("Saved as"),

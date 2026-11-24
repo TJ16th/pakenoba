@@ -19,13 +19,15 @@ use pakenoba_core::math::{Mat4, look_at, mat4_mul};
 use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown};
-use crate::art::{compose, sheet_lines};
+use crate::art::{compose, compose_split, mirror, mirror_gray, sheet_lines};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Canvas, Marks, paint};
-use crate::print::{Paper, PrintSettings, SheetPrint, print_pdf, tile};
+use crate::print::{Paper, PrintSettings, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
-pub(super) const OUTPUTS: [(&str, bool); 6] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true)];
+pub(super) const OUTPUTS: [(&str, bool); 7] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true)];
+/// 入稿用の PDF の出力の番号。
+pub(super) const READY_OUTPUT: usize = 6;
 
 /// 画像の大きさ（16:9）。
 const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160 (4K)", [3840, 2160])];
@@ -287,6 +289,43 @@ impl App {
         Ok(self.used_tiles(size, &tile(size, &self.output.print)).len())
     }
 
+    /// 入稿用の PDF を保存する（ダイアログで場所を選ぶ）。
+    pub(super) fn export_ready(&mut self) {
+        let Some(path) = self.ask_output(t!("Save the print-ready PDF"), "PDF", "pdf", t!("print-ready")) else { return };
+        match self.ready_file(&path) {
+            Ok(pages) => self.say(t!("Saved {} ({pages} page(s), with the finishing instructions on the last page).", path.display())),
+            Err(e) => self.say(t!("Could not save the print-ready PDF: {e}")),
+        }
+    }
+
+    /// 入稿用に刷る絵（紙の色は入れない。読み込んだ絵柄があれば、それごと）。展開図の表の向き。
+    fn ready_art(&self, back: bool) -> Vec<u8> {
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        let (flat, printed) = compose_split(&self.sheet, back, self.custom[usize::from(back)].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::output(w, h, rgba)));
+        printed.unwrap_or(flat)
+    }
+
+    /// 入稿用の PDF を書き、ページの数を返す。表と、裏に柄があれば裏（裏から見た向き、左右を裏返す）。最後に指示のページ。
+    pub(super) fn ready_file(&self, path: &Path) -> Result<usize, String> {
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        let (min, max) = (self.template.min, self.template.max);
+        let (cuts, folds) = sheet_lines(&self.template);
+        let flip = |lines: &[(pakenoba_core::template::P2, pakenoba_core::template::P2)]| lines.iter().map(|&(a, b)| ([min[0] + max[0] - a[0], a[1]], [min[0] + max[0] - b[0], b[1]])).collect::<Vec<_>>();
+        let front = (self.ready_art(false), self.finish_plates(false));
+        let back = self.has_back_decals().then(|| {
+            let plates = self.finish_plates(true).into_iter().map(|p| crate::art::Plate { ink: mirror_gray(&p.ink, w), ..p }).collect::<Vec<_>>();
+            (mirror(&self.ready_art(true), w, h), plates, flip(&cuts), flip(&folds))
+        });
+        let mut sides = vec![ReadySide { label: "Front", rgba: &front.0, plates: &front.1, cuts: &cuts, folds: &folds }];
+        if let Some((art, plates, cuts, folds)) = &back {
+            sides.push(ReadySide { label: "Back (seen from the back)", rgba: art, plates, cuts, folds });
+        }
+        let pages = sides.len() + 1;
+        let title = self.project_name();
+        print_ready_pdf(min, max, w, h, &sides, &title, &self.finish_notes_ascii()).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
+        Ok(pages)
+    }
+
     /// 右（出力）: 選んだ出力の設定。
     pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
         egui::Panel::right("output-settings").resizable(false).exact_size(320.0).frame(super::theme::side_frame()).show(ui, |ui| {
@@ -384,6 +423,19 @@ impl App {
                     ui.small(t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
                 }
                 super::peek::PEEK_OUTPUT => self.peek_settings(ui),
+                READY_OUTPUT => {
+                    ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
+                    let plates: Vec<String> = self.finish_plates(false).into_iter().chain(if self.has_back_decals() { self.finish_plates(true) } else { Vec::new() }).map(|p| p.name).collect();
+                    if plates.is_empty() {
+                        ui.small(t!("There are no finishes (foil, embossing, spot UV, white ink) yet. Add them from the star button in the Layers panel."));
+                    } else {
+                        ui.label(t!("Plates: {}", plates.join(", ")));
+                    }
+                    if ui.button(t!("Save the print-ready PDF…")).clicked() {
+                        self.export_ready();
+                    }
+                    ui.small(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges. The artwork is about 100 dpi, so send high-resolution artwork separately for production."));
+                }
                 _ => {}
             }
             ui.add_space(6.0);
@@ -446,6 +498,25 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 入稿用の_pdf_には_見本の加工がすべて特色で入る() {
+        let mut app = App::new(&super::super::Initial::default());
+        let (_, text) = super::super::samples::SAMPLES[3];
+        let opened = pakenoba_core::project::Project::from_text(text).unwrap();
+        assert!(app.apply_project(opened.project).is_empty());
+        let dir = std::env::temp_dir().join(format!("pakenoba-ready-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ready.pdf");
+        let pages = app.ready_file(&path).unwrap();
+        let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+        for plate in app.finish_plates(false) {
+            let name = plate.name.replace(' ', "#20");
+            assert!(text.contains(&format!("/Separation /{name}")), "{name}");
+        }
+        assert!(pages >= 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn 動画は_閉じたまま始まり_開けたまま終わる() {
