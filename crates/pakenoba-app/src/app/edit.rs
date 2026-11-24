@@ -78,6 +78,7 @@ impl App {
                 Some(asset) => self.start_edit(asset),
                 None => self.say(t!("The asset for this artwork was not found.")),
             },
+            Picture::Group { .. } | Picture::Adjustment => {}
         }
     }
 

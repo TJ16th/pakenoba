@@ -96,4 +96,6 @@ cargo test --workspace
 
 のぞき込みの顔と目の検出には、MediaPipe BlazeFace のモデル（`crates/pakenoba-app/assets/blazeface-short-range-128.onnx`、Apache-2.0。Google の MediaPipe のモデルを PINTO0309 さんが ONNX にし、keijiro さんが手を入れたものを、tract で読めるように形を単純にした。条文は同じ場所の `blazeface-LICENSE.txt`）を同梱しています。
 
+被写体を選択には、U²-Net（Xuebin Qin ほか、Apache-2.0）を使います。軽いモデル u2netp（`crates/pakenoba-app/assets/u2netp.onnx`、条文は同じ場所の `u2netp-LICENSE.txt`）を同梱し、「高画質」を選んだときだけ、大きいモデル u2net を rembg の配布物から 1 回だけ取ってきます。どちらも PC の中で動き、絵を外へ送りません。
+
 「パケノバ」の名称とロゴは、コードのライセンスの対象外です。詳しくは [TRADEMARKS.md](TRADEMARKS.md) を見てください。

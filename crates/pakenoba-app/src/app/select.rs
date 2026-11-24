@@ -74,7 +74,7 @@ impl App {
 
     /// すべての柄を選ぶ（隠した柄は除く）。
     pub(super) fn select_all(&mut self) {
-        let all: Vec<usize> = (0..self.decals.len()).filter(|&i| !self.decals[i].layer.hidden).collect();
+        let all: Vec<usize> = (0..self.decals.len()).filter(|&i| crate::paint::is_artwork(&self.decals[i].picture) && crate::paint::shown_in_group(&self.decals, i)).collect();
         self.selected = all.last().copied();
         self.extra = all[..all.len().saturating_sub(1)].to_vec();
         (self.art_dirty, self.back_dirty) = (true, true);
@@ -89,7 +89,7 @@ impl App {
             return;
         }
         for index in self.selection() {
-            if index == moved || self.decals[index].layer.locked {
+            if index == moved || self.decals[index].layer.locked || !crate::paint::is_artwork(&self.decals[index].picture) {
                 continue;
             }
             self.shift_decal(index, delta);
@@ -120,7 +120,7 @@ impl App {
     /// 選んでいる柄をそろえる。2 つ以上なら、選んだもの全体の四角に。1 つなら、置いているパネルに（面の中央に置く、など）。
     /// 裏の柄だけを選んでいるときは、「裏」の表示（左右が逆）で見た左右にする。
     pub(super) fn align(&mut self, how: Align) {
-        let chosen: Vec<usize> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.locked).collect();
+        let chosen: Vec<usize> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.locked && crate::paint::is_artwork(&self.decals[i].picture)).collect();
         if chosen.is_empty() {
             return;
         }

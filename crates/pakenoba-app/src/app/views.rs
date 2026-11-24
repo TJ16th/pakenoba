@@ -331,14 +331,16 @@ impl App {
         let knobs = self.knob_target(None).and_then(|i| quad_of(&self.decals[i]).map(|q| (i, q)));
         let handle_under = |p: Pos2| knobs.and_then(|(i, quad)| transform::handle_at(quad, p).map(|h| (i, h, quad)));
         let press = ui.input(|i| i.pointer.press_origin());
-        if response.drag_started() && let Some((index, handle, _)) = press.and_then(handle_under) {
+        // マスクを筆で描いている間は、柄をつかまず、箱も回さない。
+        let brushing = self.brush_target().is_some();
+        if response.drag_started() && !brushing && let Some((index, handle, _)) = press.and_then(handle_under) {
             let start = self.decals[index].decal;
             if let Some(pressed) = press.and_then(|p| { let (o, d) = ray(p); transform::ray_to_sheet(&frame_of(&start), o, d) }) {
                 self.history.record(self.snapshot());
                 self.transforming = Some(Transforming { index, handle, start, pressed });
             }
         }
-        if response.drag_started() && self.transforming.is_none() {
+        if response.drag_started() && self.transforming.is_none() && !brushing {
             // 押した場所に柄があれば、柄をつかむ。なければ、箱を回す。
             let pressed = press.and_then(under);
             self.grab = pressed.and_then(decal_at);
@@ -365,7 +367,7 @@ impl App {
                 self.art_dirty = true;
                 self.back_dirty = true;
             }
-        } else if response.dragged() {
+        } else if response.dragged() && !brushing {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at, back))) => {
                     // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
@@ -391,6 +393,19 @@ impl App {
             self.grab = None;
             self.transforming = None;
         }
+        if brushing {
+            if (response.drag_started() || response.clicked()) && let Some((panel, at, back)) = press.and_then(under) {
+                self.brush_at(panel, at, back, true);
+            } else if response.dragged() && let Some((panel, at, back)) = hit {
+                self.brush_at(panel, at, back, false);
+            }
+            if response.drag_stopped() {
+                self.brush_end();
+            }
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+        }
         let on_handle = pointer.and_then(handle_under);
         // 文字の道具では、文字の柄を押せば選び、ほかを押せば、そこに文字を置く。
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
@@ -402,7 +417,7 @@ impl App {
             self.add_text_at(panel, at, back);
         } else if shape_click && let Some((panel, at, back)) = hit {
             self.add_shape_at(panel, at, back);
-        } else if response.clicked() && self.tool != Tool::Hand {
+        } else if response.clicked() && self.tool != Tool::Hand && !brushing {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
         }
@@ -563,11 +578,13 @@ impl App {
         let knobs = self.knob_target(back).map(|i| (i, transform::corners(&self.decals[i], template).map(to_screen)));
         let handle_under = |p: Pos2| knobs.and_then(|(i, quad)| transform::handle_at(quad, p).map(|h| (i, h, quad)));
         let press = ui.input(|i| i.pointer.press_origin());
-        if response.drag_started() && let Some((index, handle, _)) = press.and_then(handle_under) {
+        // マスクを筆で描いている間は、柄をつかまず、箱も回さない。
+        let brushing = self.brush_target().is_some();
+        if response.drag_started() && !brushing && let Some((index, handle, _)) = press.and_then(handle_under) {
             self.history.record(self.snapshot());
             self.transforming = Some(Transforming { index, handle, start: self.decals[index].decal, pressed: to_sheet(press.unwrap_or_default()) });
         }
-        if response.drag_started() && self.transforming.is_none() {
+        if response.drag_started() && self.transforming.is_none() && !brushing {
             let pressed = press.and_then(under);
             self.grab = pressed.and_then(decal_at);
             if let Some((index, _)) = self.grab {
@@ -591,7 +608,7 @@ impl App {
             self.decals[t.index].decal = transform::apply(&t, template, to_sheet(p), keys.shift == self.ratio_lock, keys.alt, keys.shift);
             self.art_dirty = true;
             self.back_dirty = true;
-        } else if response.dragged() {
+        } else if response.dragged() && !brushing {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at))) => {
                     if let Some(decal) = self.decals.get_mut(index) {
@@ -610,6 +627,23 @@ impl App {
             self.grab = None;
             self.transforming = None;
         }
+        if brushing {
+            if (response.drag_started() || response.clicked()) && let Some((panel, at)) = press.and_then(under) {
+                self.brush_at(panel, at, back, true);
+            } else if response.dragged() && let Some((panel, at)) = hit {
+                self.brush_at(panel, at, back, false);
+            }
+            if response.drag_stopped() {
+                self.brush_end();
+            }
+            // 筆の大きさの丸を、カーソルのところに出す。
+            if let (Some(p), Some(brush)) = (response.hover_pos(), self.brush.as_ref()) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+                let r = brush.size * 0.5 * scale;
+                ui.painter().circle_stroke(p, r, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                ui.painter().circle_stroke(p, r + 1.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+            }
+        }
         let on_handle = response.interact_pointer_pos().or(response.hover_pos()).and_then(handle_under);
         let text_click = response.clicked() && self.tool == Tool::Text && !decal_under.is_some_and(|(index, _)| matches!(self.decals[index].picture, Picture::Text(_)));
         // 図形の道具では、図形を押せば選び、ほかを押せば、そこに図形を置く。
@@ -620,7 +654,7 @@ impl App {
             self.add_text_at(panel, at, back);
         } else if shape_click && let Some((panel, at)) = hit {
             self.add_shape_at(panel, at, back);
-        } else if response.clicked() && self.tool != Tool::Hand {
+        } else if response.clicked() && self.tool != Tool::Hand && !brushing {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
         }

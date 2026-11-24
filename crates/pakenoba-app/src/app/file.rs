@@ -143,6 +143,8 @@ impl App {
                 .map(Source::Asset),
             Picture::Text(art) => Some(Source::Text(art.spec.clone())),
             Picture::Shape(spec) => Some(Source::Shape(spec.clone())),
+            Picture::Group { open } => Some(Source::Group { open: *open }),
+            Picture::Adjustment => Some(Source::Adjustment),
         }
     }
 
@@ -192,6 +194,8 @@ impl App {
                 Some(Source::Asset(index)) => (1u8, index).hash(&mut hasher),
                 Some(Source::Text(spec)) => (3u8, &spec.text, &spec.font, [spec.size, spec.spacing, spec.leading].map(f32::to_bits), spec.color, spec.align).hash(&mut hasher),
                 Some(Source::Shape(spec)) => (4u8, spec.kind, spec.fill, spec.stroke, [spec.stroke_width, spec.radius].map(f32::to_bits)).hash(&mut hasher),
+                Some(Source::Group { open }) => (5u8, open).hash(&mut hasher),
+                Some(Source::Adjustment) => 6u8.hash(&mut hasher),
                 None => 2u8.hash(&mut hasher),
             }
         }
@@ -257,6 +261,8 @@ impl App {
                     None => continue,
                 },
                 Source::Shape(spec) => Picture::Shape(spec.clone()),
+                Source::Group { open } => Picture::Group { open: *open },
+                Source::Adjustment => Picture::Adjustment,
                 Source::Text(spec) => match self.text_picture(spec) {
                     Ok(picture) => {
                         if let Picture::Text(art) = &picture

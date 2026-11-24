@@ -174,6 +174,7 @@ pub fn psd(mode: Blend) -> craft_psd::BlendMode {
     use craft_psd::BlendMode as P;
     match mode {
         Blend::Normal => P::Normal,
+        Blend::PassThrough => P::PassThrough,
         Blend::Darken => P::Darken,
         Blend::Multiply => P::Multiply,
         Blend::ColorBurn => P::ColorBurn,

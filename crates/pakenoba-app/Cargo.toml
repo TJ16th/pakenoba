@@ -47,6 +47,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # のぞき込み（出力）: Web カメラで顔を見つけ、画面の向こうの箱をのぞき込めるようにする。
 # 顔と目の検出は、MediaPipe BlazeFace（Apache-2.0。モデルは assets/ に同梱）を、Rust だけで書かれた tract で動かす。
 tract-onnx = "0.23.10"
+ureq = "3"
+sha2 = "0.11"
 
 # Web カメラの映像。JPEG のほどき（mozjpeg、C の部品）は使わず、zune-jpeg でほどく。
 [target.'cfg(windows)'.dependencies]

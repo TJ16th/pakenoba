@@ -6,6 +6,8 @@
 mod app;
 mod art;
 mod blend;
+mod effects;
+mod models;
 mod gpu;
 mod paint;
 mod print;

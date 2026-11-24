@@ -271,7 +271,7 @@ impl App {
         let Some(path) = self.ask_output(t!("Save the full-size dieline"), "PDF", "pdf", t!("full-size dieline")) else { return };
         let (w, h) = (self.sheet.w, self.sheet.h);
         // 柄と紙の色だけの絵（ガイドの線は、PDF に線で描く）。
-        let art = compose(&self.sheet, self.custom[0].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), false, Canvas { w, h, rgba }));
+        let art = compose(&self.sheet, self.custom[0].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), false, Canvas::output(w, h, rgba)));
         let (cuts, folds) = sheet_lines(&self.template);
         let title = self.project_name();
         let sheet = SheetPrint { min: self.template.min, max: self.template.max, w, h, rgba: &art, cuts: &cuts, folds: &folds, title: &title };

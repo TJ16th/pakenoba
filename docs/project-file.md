@@ -309,6 +309,15 @@ X（フォルダ）をやめる理由: 利点は「素材を外のアプリで�
 - 知らない描画モードは、通常として読み、知らせる。
 - 型紙の PSD では、PSD のレイヤーの不透明度と描画モードとして入れる。
 
+### 柄の調整、マスク、グループ、調整レイヤー（2026-11-24）
+
+- `[[decal]]` に、`kind`（柄でないレイヤーの種類。`group` か `adjustment`。柄のときは書かない）、`closed`（グループを閉じている）、`in_group`（すぐ上のグループに入っている）を足した。グループの中身は、`[[decal]]` の並びで、見出しのすぐ前に続けて書く。グループと調整レイヤーでは、`panel`、`at`、`size`、`angle` は使わない（決まった値を書く）。
+- 調整は `[[decal.adjust]]` として、下から順に書く。`kind`（`brightness_contrast`、`hue_saturation`、`levels`、`invert`、`clear_background`、`flatten_shading`、`reduce_colors`、`subject`）と、その種類の数値（`brightness`、`contrast`、`hue`、`saturation`、`lightness`、`black`、`white`、`gamma`（100 倍）、`tolerance`、`colors`、`fine`）、切っていれば `off = true`。
+- マスクは `[decal.mask]` として、`file`（`masks/<中身の印>.gray`）、`width`、`height`、反転していれば `invert`、使っていなければ `disabled`。中身は 1 画素 1 バイトの白黒（255 が見せる）。同じ中身は 1 回しか入れない。
+- グループの描画モードには `pass_through`（通過）がある。
+- 知らない種類のレイヤーと、知らない調整は、外して知らせる。大きさの合わないマスクも外して知らせる。調整レイヤーに画素ごとでない調整があれば、外して知らせる。
+- 足すだけなので、形式の版は 1 のまま。
+
 ### 設定のテキストの例
 
 ```toml
@@ -384,6 +393,8 @@ back = false
 画面のほうにも、設定（コレクションの登録）を書くために、serde と toml を足した。中核と同じ版で、ライセンスも同じ。JPEG を読むために、zune-jpeg 0.5.15（と、それが使う zune-core 0.5.3）を足した。どちらも MIT、Apache-2.0、Zlib のどれかを選べる。書き出しのために、gif 0.14.2（MIT か Apache-2.0）、pdf-writer 0.15.0（MIT か Apache-2.0）、flate2 1.1.11（MIT か Apache-2.0。すでに zip が使っていた版）を足した。
 
 のぞき込み（2026-11-23）のために、nokhwa 0.10.11（Web カメラ。Apache-2.0。Windows では nokhwa-bindings-windows、Linux では v4l と v4l2-sys-mit（MIT））を足した。連れてくる部品は flume（MIT か Apache-2.0）、nanorand（Zlib）、spin（MIT）。nokhwa の既定の機能（mozjpeg、C の部品）は切った。顔の検出は、はじめ rustface（SeetaFace、BSD-2-Clause）だったが、枠のぶれが大きかったので、2026-11-24 に MediaPipe BlazeFace（Apache-2.0、モデル 0.4 MB を `assets/` に同梱）を tract-onnx 0.23.10（MIT か Apache-2.0。Rust だけで書かれた ONNX の実行部品）で動かす形に替えた。tract が連れてくる部品も、MIT か Apache-2.0。どれも「MIT または Apache-2.0」での公開と両立する。案件のファイルには何も足していない。
+
+被写体を選択（2026-11-24）のために、U²-Net の軽いモデル u2netp（Apache-2.0、4.6 MB）を `assets/` に同梱した（条文は `u2netp-LICENSE.txt`）。大きいモデル u2net（Apache-2.0、176 MB）は同梱せず、初回に取ってくる。取ってくるために ureq 3（MIT か Apache-2.0）と sha2（MIT か Apache-2.0）を足した。ureq が連れてくる部品は rustls（Apache-2.0 か ISC か MIT）、ring（Apache-2.0 と ISC）、untrusted（ISC）、webpki-roots（CDLA-Permissive-2.0。証明書の一覧のデータ）など。どれも制限のゆるい形で、「MIT または Apache-2.0」での公開と両立する。
 
 ベクター化と SVG のために、vectorcraft-trace（VectorCraft のコミット `db9acab4`）と craft-svg（craft-libs の `ba25ccd2`、`tree-render`）を足した（2026-11-22）。どちらも MIT か Apache-2.0。craft-libs は同じコミットにそろえる決まりなので、craft-psd も `9eb02be8` から `ba25ccd2`（vectorcraft-trace が使う craft-image-codecs と同じ）へ上げた。新しく入る部品は 52 個で、ほとんどが MIT か Apache-2.0。それ以外は、usvg と resvg（0.48.1、MIT か Apache-2.0）が描くのに使う tiny-skia と tiny-skia-path（BSD-3-Clause）、画像の読み込みの exr、lebe、alloc-no-stdlib、alloc-stdlib（BSD-3-Clause）、arrayref（BSD-2-Clause）、slotmap（Zlib）。どれも「MIT または Apache-2.0」での公開と両立する（配るときに、ライセンスの文を添える）。vectorcraft-geom は、vectorcraft-trace の版と、craft-svg が使う古い版の 2 つが入る（型を渡し合わないので、動きには関わらない）。
 

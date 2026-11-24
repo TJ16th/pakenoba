@@ -52,7 +52,7 @@ impl DerefMut for Placed {
 /// 表か裏の、どちらかの面にある柄のうち、つかめるもの（隠していない、ロックしていない）の場所を取り出す（中核の関数に渡すため）。
 /// 返すのは、もとの番号の並びと、場所の並び。
 pub fn spots_on(decals: &[Placed], back: bool) -> (Vec<usize>, Vec<Decal>) {
-    decals.iter().enumerate().filter(|(_, p)| p.back == back && !p.layer.hidden && !p.layer.locked).map(|(index, p)| (index, p.decal)).unzip()
+    decals.iter().enumerate().filter(|(i, p)| p.back == back && is_artwork(&p.picture) && !p.layer.locked && shown_in_group(decals, *i) && !group_of(decals, *i).is_some_and(|g| decals[g].layer.locked)).map(|(index, p)| (index, p.decal)).unzip()
 }
 
 /// 柄の絵。
@@ -68,6 +68,10 @@ pub enum Picture {
     Text(Arc<crate::text::TextArt>),
     /// 図形（形と色から、その場で描く。拡大してもぼやけない）。
     Shape(pakenoba_core::project::ShapeSpec),
+    /// グループの見出し（絵はない）。`open` はレイヤーの欄で開いているか。
+    Group { open: bool },
+    /// 調整レイヤー（絵はない。下の絵に、レイヤーの調整を効かせる）。
+    Adjustment,
 }
 
 impl Picture {
@@ -79,6 +83,8 @@ impl Picture {
             Picture::Image { .. } => t!("Image"),
             Picture::Text(_) => t!("Text"),
             Picture::Shape(_) => t!("Shape"),
+            Picture::Group { .. } => t!("Group"),
+            Picture::Adjustment => t!("Adjustment layer"),
         }
     }
 
@@ -117,6 +123,7 @@ impl Picture {
             Picture::Text(art) => Picture::sample_rgba(art.w, art.h, &art.rgba, q, size),
             Picture::Shape(spec) => Picture::sample_shape(spec, q, half),
             Picture::Image { w, h, rgba, .. } => Picture::sample_rgba(*w, *h, rgba, q, size),
+            Picture::Group { .. } | Picture::Adjustment => [0.0; 4],
         }
     }
 
@@ -182,17 +189,73 @@ pub struct Canvas<'a> {
     pub w: usize,
     pub h: usize,
     pub rgba: &'a mut [u8],
+    /// 調整した絵ができるまで待つ（書き出すとき）。待たないときは、できるまで元の絵で描く。
+    pub wait: bool,
 }
 
-/// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
-/// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。
-pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks, back: bool, canvas: Canvas) {
-    let Canvas { w, h, rgba } = canvas;
-    for (index, decal) in decals.iter().enumerate().filter(|(_, decal)| decal.back == back && !decal.layer.hidden) {
+impl<'a> Canvas<'a> {
+    /// 画面に出すための描き込み先（調整した絵を待たない）。
+    pub fn screen(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
+        Canvas { w, h, rgba, wait: false }
+    }
+
+    /// 書き出すための描き込み先（調整した絵ができるまで待つ）。
+    pub fn output(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
+        Canvas { w, h, rgba, wait: true }
+    }
+}
+
+/// 柄として、場所と大きさを持つものか（グループの見出しと調整レイヤーは持たない）。
+pub fn is_artwork(picture: &Picture) -> bool {
+    !matches!(picture, Picture::Group { .. } | Picture::Adjustment)
+}
+
+/// 柄 `index` が、グループごと隠れていないか（グループの見出しが隠れていれば、中身も見えない）。
+pub fn shown_in_group(decals: &[Placed], index: usize) -> bool {
+    let Some(placed) = decals.get(index) else { return false };
+    if placed.layer.hidden {
+        return false;
+    }
+    if !placed.layer.in_group {
+        return true;
+    }
+    group_of(decals, index).is_none_or(|g| !decals[g].layer.hidden)
+}
+
+/// 柄 `index` が入っているグループの見出しの番号（同じ面の、中身の続きのすぐ後ろ）。
+pub fn group_of(decals: &[Placed], index: usize) -> Option<usize> {
+    let placed = decals.get(index)?;
+    if !placed.layer.in_group {
+        return None;
+    }
+    let back = placed.back;
+    (index + 1..decals.len()).filter(|&i| decals[i].back == back).find(|&i| !decals[i].layer.in_group).filter(|&i| matches!(decals[i].picture, Picture::Group { .. }))
+}
+
+/// グループ `header` の中身の番号（下から）。
+pub fn members_of(decals: &[Placed], header: usize) -> Vec<usize> {
+    let back = decals[header].back;
+    let mut out: Vec<usize> = (0..header).rev().filter(|&i| decals[i].back == back).take_while(|&i| decals[i].layer.in_group).collect();
+    out.reverse();
+    out
+}
+
+/// 描くときに使う、決まった値。
+struct Painter<'a> {
+    surface: &'a Surface,
+    tpl: &'a Template,
+    decals: &'a [Placed],
+    back: bool,
+    w: usize,
+    h: usize,
+    wait: bool,
+}
+
+impl Painter<'_> {
+    /// 柄がかかる画素ごとに、`f(画素の場所, 柄の座標)` を呼ぶ。柄の座標は、裏の柄では左右を逆にしたもの（絵の向き）。
+    fn each_pixel(&self, decal: &Placed, mut f: impl FnMut(usize, P2, f32)) {
+        let (surface, tpl, w, h, back) = (self.surface, self.tpl, self.w, self.h, self.back);
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
-        let opacity = decal.layer.opacity.min(100) as f32 / 100.0;
-        let picked = marks.selected.contains(&index);
-        let hovered = marks.hover == Some(index) && !picked;
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
         for piece in surface.layout(tpl, decal).iter().rev() {
             let outline = &tpl.panels[piece.panel].outline;
@@ -217,26 +280,162 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
                     if q[0].abs() > half[0] || q[1].abs() > half[1] || !inside(outline, at) || tpl.in_hole(at[0], at[1]) {
                         continue;
                     }
-                    // 裏の柄は、裏から見て正しく読めるように、左右を逆にして描く。
-                    let mut color = decal.picture.sample(if back { [-q[0], q[1]] } else { q }, decal.size);
                     let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
-                    if picked && from_edge < 0.6 {
-                        // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。
-                        let dash = ((q[0] + q[1]) / 3.0).rem_euclid(2.0) < 1.0;
-                        color = if dash { [255.0, 255.0, 255.0, 1.0] } else { [20.0, 30.0, 40.0, 1.0] };
-                    } else if hovered && from_edge < 1.2 {
-                        // カーソルの下の柄の枠。
-                        color = HOVER;
-                    }
-                    let o = (y * w + x) * 4;
-                    // 枠は、不透明度と描画モードによらず、そのまま描く。
-                    let mark = (picked && from_edge < 0.6) || (hovered && from_edge < 1.2);
-                    let (a, mode) = if mark { (color[3], Blend::Normal) } else { (color[3] * opacity, decal.layer.blend) };
-                    crate::blend::over(&mut rgba[o..o + 4], [color[0], color[1], color[2]], a, mode);
+                    // 裏の柄は、裏から見て正しく読めるように、左右を逆にして描く。
+                    f((y * w + x) * 4, if back { [-q[0], q[1]] } else { q }, from_edge);
                 }
             }
         }
     }
+
+    /// 並び `items`（下から）を、`target` に重ねる。`scale` は、外のグループ（通過）の不透明度。
+    fn stack(&self, items: &[usize], target: &mut [u8], scale: f32) {
+        let mut k = 0;
+        while k < items.len() {
+            let i = items[k];
+            if self.decals[i].layer.in_group {
+                let start = k;
+                while k < items.len() && self.decals[items[k]].layer.in_group {
+                    k += 1;
+                }
+                let run = &items[start..k];
+                match items.get(k).copied().filter(|&j| matches!(self.decals[j].picture, Picture::Group { .. })) {
+                    Some(header) => {
+                        self.group(run, header, target, scale);
+                        k += 1;
+                    }
+                    None => run.iter().for_each(|&j| self.item(j, target, scale)),
+                }
+                continue;
+            }
+            self.item(i, target, scale);
+            k += 1;
+        }
+    }
+
+    fn group(&self, run: &[usize], header: usize, target: &mut [u8], scale: f32) {
+        let layer = &self.decals[header].layer;
+        if layer.hidden {
+            return;
+        }
+        let opacity = layer.opacity.min(100) as f32 / 100.0 * scale;
+        if layer.blend == Blend::PassThrough {
+            // 通過: 中身を、そのまま外へ重ねる（グループの不透明度は、中身それぞれに掛ける）。
+            run.iter().for_each(|&j| self.item(j, target, opacity));
+            return;
+        }
+        // 中身を透明な絵に重ねてから、グループの描画モードと不透明度で、外へ重ねる。
+        let mut buffer = vec![0u8; target.len()];
+        run.iter().for_each(|&j| self.item(j, &mut buffer, 1.0));
+        for (dst, src) in target.chunks_exact_mut(4).zip(buffer.chunks_exact(4)) {
+            if src[3] > 0 {
+                crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
+            }
+        }
+    }
+
+    fn item(&self, index: usize, target: &mut [u8], scale: f32) {
+        let placed = &self.decals[index];
+        if placed.layer.hidden {
+            return;
+        }
+        match placed.picture {
+            Picture::Group { .. } => {}
+            Picture::Adjustment => adjust_below(placed, target, scale),
+            _ => self.artwork(placed, target, scale),
+        }
+    }
+
+    fn artwork(&self, decal: &Placed, target: &mut [u8], scale: f32) {
+        let opacity = decal.layer.opacity.min(100) as f32 / 100.0 * scale;
+        let picture = crate::effects::shown(decal, self.wait);
+        let mask = decal.layer.mask.as_ref().filter(|m| m.enabled);
+        let size = decal.size;
+        self.each_pixel(decal, |o, q, _| {
+            let color = picture.sample(q, size);
+            let mut a = color[3] * opacity;
+            if let Some(mask) = mask {
+                a *= mask_at(mask, q, size);
+            }
+            crate::blend::over(&mut target[o..o + 4], [color[0], color[1], color[2]], a, decal.layer.blend);
+        });
+    }
+
+    /// 選んでいる柄の枠と、カーソルの下の柄の枠。描画モードやグループに関係なく、いちばん上に描く。
+    fn marks(&self, decal: &Placed, picked: bool, target: &mut [u8]) {
+        self.each_pixel(decal, |o, q, from_edge| {
+            let color = if picked && from_edge < 0.6 {
+                // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。
+                let dash = ((q[0] + q[1]) / 3.0).rem_euclid(2.0) < 1.0;
+                if dash { [255.0, 255.0, 255.0, 1.0] } else { [20.0, 30.0, 40.0, 1.0] }
+            } else if !picked && from_edge < 1.2 {
+                HOVER
+            } else {
+                return;
+            };
+            crate::blend::over(&mut target[o..o + 4], [color[0], color[1], color[2]], color[3], Blend::Normal);
+        });
+    }
+}
+
+/// マスクの、柄の座標 `q` での値（0〜1）。
+pub fn mask_at(mask: &pakenoba_core::project::Mask, q: P2, size: P2) -> f32 {
+    let (w, h) = (mask.w as usize, mask.h as usize);
+    let fx = ((q[0] / size[0] + 0.5) * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+    let fy = ((0.5 - q[1] / size[1]) * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+    let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+    let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+    let v = |x: usize, y: usize| mask.data[y * w + x] as f32;
+    let m = ((v(x0, y0) * (1.0 - tx) + v(x1, y0) * tx) * (1.0 - ty) + (v(x0, y1) * (1.0 - tx) + v(x1, y1) * tx) * ty) / 255.0;
+    if mask.invert { 1.0 - m } else { m }
+}
+
+/// 調整レイヤーを、下の絵（`target`）に効かせる。透明な所はそのまま。透明度は変えない。
+pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32) {
+    let stack: Vec<_> = crate::effects::enabled(&placed.layer.adjust).into_iter().filter(|k| k.per_pixel()).collect();
+    let opacity = placed.layer.opacity.min(100) as f32 / 100.0 * scale;
+    if stack.is_empty() || opacity <= 0.0 {
+        return;
+    }
+    let mode = placed.layer.blend;
+    for px in target.chunks_exact_mut(4) {
+        if px[3] == 0 {
+            continue;
+        }
+        let below = [px[0] as f32, px[1] as f32, px[2] as f32];
+        let adjusted = crate::effects::pixels(&stack, below).map(|v| v / 255.0);
+        let b = below.map(|v| v / 255.0);
+        let mixed = if mode == Blend::Normal { adjusted } else { crate::blend::mix(mode, b, adjusted) };
+        for i in 0..3 {
+            px[i] = ((b[i] + (mixed[i] - b[i]) * opacity).clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+}
+
+/// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
+/// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。グループと調整レイヤーも、ここで効かせる。
+pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks, back: bool, canvas: Canvas) {
+    let Canvas { w, h, rgba, wait } = canvas;
+    let painter = Painter { surface, tpl, decals, back, w, h, wait };
+    let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
+    painter.stack(&items, rgba, 1.0);
+    for &index in &items {
+        let picked = marks.selected.contains(&index);
+        let hovered = marks.hover == Some(index) && !picked;
+        if (picked || hovered) && is_artwork(&decals[index].picture) && shown_in_group(decals, index) {
+            painter.marks(&decals[index], picked, rgba);
+        }
+    }
+}
+
+/// 柄 1 つのマスクを、展開図の大きさの白黒の絵にする（PSD のレイヤーマスク用。柄のない所は 0）。
+pub fn paint_mask(surface: &Surface, tpl: &Template, decal: &Placed, back: bool, w: usize, h: usize) -> Option<Vec<u8>> {
+    let mask = decal.layer.mask.as_ref()?;
+    let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, h, wait: true };
+    let mut out = vec![0u8; w * h];
+    painter.each_pixel(decal, |o, q, _| out[o / 4] = (mask_at(mask, q, decal.size) * 255.0).round() as u8);
+    Some(out)
 }
 
 #[cfg(test)]
@@ -272,14 +471,14 @@ mod tests {
 
         // 表の画像には、表の柄だけ。左が赤、右が青。
         let mut image = vec![0u8; w * h * 4];
-        paint(&surface, &tpl, &decals, Marks::default(), false, Canvas { w, h, rgba: &mut image });
+        paint(&surface, &tpl, &decals, Marks::default(), false, Canvas::screen(w, h, &mut image));
         assert_eq!(pixel(&tpl, w, &image, left(front_at)), [255, 0, 0, 255]);
         assert_eq!(pixel(&tpl, w, &image, right(front_at)), [0, 0, 255, 255]);
         assert_eq!(pixel(&tpl, w, &image, back_at)[3], 0, "裏の柄は、表の画像に出ない");
 
         // 裏の画像には、裏の柄だけ。展開図の座標では左右が逆（裏返して見ると、左が赤になる）。
         let mut image = vec![0u8; w * h * 4];
-        paint(&surface, &tpl, &decals, Marks::default(), true, Canvas { w, h, rgba: &mut image });
+        paint(&surface, &tpl, &decals, Marks::default(), true, Canvas::screen(w, h, &mut image));
         assert_eq!(pixel(&tpl, w, &image, left(back_at)), [0, 0, 255, 255]);
         assert_eq!(pixel(&tpl, w, &image, right(back_at)), [255, 0, 0, 255]);
         assert_eq!(pixel(&tpl, w, &image, front_at)[3], 0, "表の柄は、裏の画像に出ない");

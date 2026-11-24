@@ -164,8 +164,8 @@ mod tests {
         let mut app = App::new(&Initial::default());
         let (w, h) = (app.sheet.w, app.sheet.h);
         // 表の型紙と、裏の型紙を書き出して、読み込む。
-        let front = crate::art::save_psd(&app.sheet, None, &[]).unwrap();
-        let back = crate::art::save_back_psd(&app.sheet, None, &[]).unwrap();
+        let front = crate::art::save_psd(&app.sheet, None, &[], None).unwrap();
+        let back = crate::art::save_back_psd(&app.sheet, None, &[], None).unwrap();
         assert!(!crate::art::psd_is_back(&front));
         assert!(crate::art::psd_is_back(&back));
         std::fs::write(dir.join("表.psd"), &front).unwrap();
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(again.bases.each_ref().map(|b| b.as_ref().map(|b| b.file.name.clone())), [Some("表.psd".to_owned()), Some("裏.psd".to_owned())]);
         assert_eq!(again.custom[1], app.custom[1]);
         // 裏の型紙を書き出すと、紙の裏のレイヤーに、読み込んだ裏の絵が入る（裏から見た向きに戻して）。
-        let written = crate::art::save_back_psd(&again.sheet, again.custom[1].as_deref(), &[]).unwrap();
+        let written = crate::art::save_back_psd(&again.sheet, again.custom[1].as_deref(), &[], None).unwrap();
         let reread = crate::art::load_psd(&written).unwrap();
         assert_eq!(mirror(&reread.source, w, h).len(), again.custom[1].as_ref().unwrap().len());
         std::fs::remove_dir_all(dir).unwrap();

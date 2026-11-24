@@ -16,10 +16,10 @@ mod outputs;
 mod panels;
 mod recovery;
 mod select;
-mod settings;
+pub(crate) mod settings;
 mod typing;
 mod shapes;
-mod adjust;
+pub(crate) mod adjust;
 mod vectorize;
 mod menus;
 mod peek;
@@ -28,6 +28,7 @@ mod tabs;
 mod home;
 mod transform;
 mod views;
+mod layers;
 
 use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
@@ -127,6 +128,7 @@ pub fn run(initial: Initial) -> eframe::Result {
         options,
         Box::new(move |cc| {
             setup_style(&cc.egui_ctx);
+            crate::effects::set_wake(&cc.egui_ctx);
             Ok(Box::new(App::new(&initial)))
         }),
     )
@@ -491,6 +493,14 @@ struct App {
     ratio_lock: bool,
     /// 素材を置く向き（90 度の何回ぶんか。0〜3）。
     place_turn: u8,
+    /// マスクを筆で描いている（選んでいる柄のマスクに描く）。
+    brush: Option<layers::Brush>,
+    /// 別のスレッドで作っているマスク（被写体から）。
+    mask_job: Option<layers::MaskJob>,
+    /// レイヤーの欄で選んだ、柄の調整（柄の番号と、調整の番号）。プロパティで、その調整を開く。
+    adjust_focus: Option<(usize, usize)>,
+    /// 調整した絵ができた回数の、最後に見た値（変わったら描き直す）。
+    effects_seen: u64,
     /// 立体の表示を平行投影で見る（遠近を付けない）。
     ortho: bool,
     /// はじめの画面（ホーム）を出している。
@@ -539,8 +549,6 @@ struct App {
     text_style: pakenoba_core::project::TextSpec,
     /// 次に置く図形の形と色。
     shape_style: pakenoba_core::project::ShapeSpec,
-    /// 画像の調整の欄の値。
-    adjust: adjust::AdjustSettings,
     /// ベクター化の設定と、別のスレッドで動いているベクター化。
     trace: crate::vector::TraceSettings,
     vectorizing: Option<vectorize::VectorizeJob>,
@@ -642,6 +650,10 @@ impl App {
             transforming: None,
             ratio_lock: true,
             place_turn: 0,
+            brush: None,
+            mask_job: None,
+            adjust_focus: None,
+            effects_seen: 0,
             ortho: false,
             home: initial.home,
             home_shape: None,
@@ -678,7 +690,6 @@ impl App {
             fonts: Default::default(),
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),
-            adjust: Default::default(),
             trace: vectorize::default_settings(),
             vectorizing: None,
             about_open: false,
@@ -833,6 +844,14 @@ impl App {
             return;
         }
         let mut gone: Vec<usize> = chosen.iter().copied().filter(|&i| !self.decals[i].layer.locked).collect();
+        // グループを消すときは、中身も消す。
+        for header in gone.clone() {
+            if matches!(self.decals[header].picture, Picture::Group { .. }) {
+                gone.extend(crate::paint::members_of(&self.decals, header));
+            }
+        }
+        gone.sort_unstable();
+        gone.dedup();
         if gone.is_empty() {
             self.say(t!("Locked artwork cannot be deleted. Unlock it in the Layers panel."));
             return;
@@ -843,6 +862,8 @@ impl App {
         for &index in gone.iter().rev() {
             self.decals.remove(index);
         }
+        self.tidy_groups();
+        (self.adjust_focus, self.brush) = (None, None);
         self.select_only(None);
         self.grab = None;
         self.hover_decal = None;
@@ -913,24 +934,69 @@ impl App {
 
     /// 表か裏の柄を 1 つずつ、展開図の大きさの透明な画像に描く（PSD のレイヤー用）。名前は、付けた名前か「番号（種類）」。
     /// 向きは、どちらも表の展開図の向き（裏の型紙では、書くときに左右を裏返す）。隠した柄は、隠したレイヤーにする。
+    /// 柄だけに効く調整は、絵に効かせて入れる。マスクは PSD のレイヤーマスクに、グループは PSD のグループにする。
+    /// 調整レイヤーは、下の絵に調整を効かせた絵を、同じ不透明度と描画モードのレイヤーとして入れる（Photoshop で開いても同じ見た目）。
     fn decal_layers(&self, back: bool) -> Vec<crate::art::DecalLayer> {
-        self.decals
-            .iter()
-            .enumerate()
-            .filter(|(_, decal)| decal.back == back)
-            .map(|(index, decal)| {
-                let mut image = vec![0u8; self.sheet.w * self.sheet.h * 4];
-                let mut shown = decal.clone();
-                // レイヤーの絵は、不透明度と描画モードを効かせずに描き、PSD のレイヤーの設定として入れる。
-                (shown.layer.hidden, shown.layer.opacity, shown.layer.blend) = (false, 100, Default::default());
-                paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas { w: self.sheet.w, h: self.sheet.h, rgba: &mut image });
-                let name = match &decal.layer.name {
-                    Some(name) => t!("{} ({name})", index + 1),
-                    None => t!("{} ({})", index + 1, decal.picture.label()),
-                };
-                crate::art::DecalLayer { name, image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend }
-            })
-            .collect()
+        use crate::art::{DecalLayer, PsdGroup};
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        let items: Vec<usize> = (0..self.decals.len()).filter(|&i| self.decals[i].back == back).collect();
+        let name_of = |index: usize| match &self.decals[index].layer.name {
+            Some(name) => t!("{} ({name})", index + 1),
+            None => t!("{} ({})", index + 1, self.decals[index].picture.label()),
+        };
+        let mut out = Vec::new();
+        for (k, &index) in items.iter().enumerate() {
+            let decal = &self.decals[index];
+            let first_in_group = decal.layer.in_group && (k == 0 || !self.decals[items[k - 1]].layer.in_group);
+            if first_in_group && let Some(header) = crate::paint::group_of(&self.decals, index) {
+                let g = &self.decals[header];
+                let Picture::Group { open } = g.picture else { unreachable!() };
+                out.push(DecalLayer { name: name_of(header), image: Vec::new(), visible: !g.layer.hidden, opacity: g.layer.opacity, blend: g.layer.blend, mask: None, group: Some(PsdGroup::Start { open }) });
+            }
+            let layer = match decal.picture {
+                Picture::Group { .. } => DecalLayer { group: Some(PsdGroup::End), ..DecalLayer::shown(String::new(), Vec::new()) },
+                Picture::Adjustment => {
+                    // 下の絵。グループ（通過でない）の中なら、そのグループの中で下にあるものだけ。
+                    let header = crate::paint::group_of(&self.decals, index).filter(|&g| self.decals[g].layer.blend != project::Blend::PassThrough);
+                    let below: Vec<Placed> = match header {
+                        Some(g) => crate::paint::members_of(&self.decals, g).into_iter().filter(|&i| i < index).map(|i| self.decals[i].clone()).collect(),
+                        None => self.decals[..index].to_vec(),
+                    };
+                    let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &below, Marks::default(), back, Canvas::output(w, h, art));
+                    let mut image = match (header, back) {
+                        (Some(_), _) => {
+                            let mut image = vec![0u8; w * h * 4];
+                            draw(&mut image);
+                            image
+                        }
+                        (None, false) => compose(&self.sheet, self.custom[0].as_deref(), false, draw),
+                        (None, true) => compose_back(&self.sheet, self.custom[1].as_deref(), false, draw),
+                    };
+                    let mut plain = decal.clone();
+                    (plain.layer.opacity, plain.layer.blend) = (100, project::Blend::Normal);
+                    crate::paint::adjust_below(&plain, &mut image, 1.0);
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask: None, group: None }
+                }
+                _ => {
+                    let mut image = vec![0u8; w * h * 4];
+                    let mut shown = decal.clone();
+                    // レイヤーの絵は、不透明度、描画モード、マスクを効かせずに描き、PSD のレイヤーの設定として入れる。
+                    (shown.layer.hidden, shown.layer.opacity, shown.layer.blend, shown.layer.in_group, shown.layer.mask) = (false, 100, Default::default(), false, None);
+                    paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas::output(w, h, &mut image));
+                    let mask = decal.layer.mask.as_ref().filter(|m| m.enabled).and_then(|_| crate::paint::paint_mask(&self.surface, &self.template, decal, back, w, h));
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None }
+                }
+            };
+            out.push(layer);
+        }
+        out
+    }
+
+    /// 型紙の PSD の統合した絵（柄まで重ね、ガイドなし。表の展開図の向き）。
+    fn painted(&self, back: bool) -> Vec<u8> {
+        let (w, h) = (self.sheet.w, self.sheet.h);
+        let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::output(w, h, art));
+        if back { compose_back(&self.sheet, self.custom[1].as_deref(), false, draw) } else { compose(&self.sheet, self.custom[0].as_deref(), false, draw) }
     }
 
     /// レイヤーの欄などに出す、柄の名前。付けた名前がなければ「種類 番号」。
@@ -938,6 +1004,10 @@ impl App {
         let decal = &self.decals[index];
         if let Some(name) = &decal.layer.name {
             return name.clone();
+        }
+        // 調整レイヤーは、調整の名前（Photoshop と同じ）。
+        if let (Picture::Adjustment, Some(first)) = (&decal.picture, decal.layer.adjust.first()) {
+            return format!("{} {}", layers::adjust_label(first.kind), index + 1);
         }
         // 文字の柄は、文字の 1 行目を名前にする（Photoshop の文字のレイヤーと同じ）。
         if let Picture::Text(art) = &decal.picture {
@@ -970,17 +1040,6 @@ impl App {
         let back = self.decals.get(index)?.back;
         let same = |i: &usize| self.decals[*i].back == back;
         if step > 0 { (index + 1..self.decals.len()).find(same) } else { (0..index).rev().find(same) }
-    }
-
-    /// 選んでいる柄を、同じ面の中で、重なりの上（+1）か下（-1）へ 1 つ動かす。
-    fn reorder_selected(&mut self, step: isize) {
-        let Some(index) = self.selected else { return };
-        let Some(other) = self.neighbor(index, step) else { return };
-        self.checkpoint();
-        self.decals.swap(index, other);
-        self.select_only(Some(other));
-        self.grab = None;
-        self.art_dirty = true;
     }
 
     /// 組み立てる（1）か、展開図に戻す（0）。
@@ -1016,7 +1075,7 @@ impl App {
         };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas { w, h, rgba: art }));
+            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
             }
@@ -1030,7 +1089,7 @@ impl App {
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas { w, h, rgba: art }));
+            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
             if let Some(rs) = rs {
                 self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
             }
@@ -1103,6 +1162,22 @@ impl App {
         // Ctrl+A ですべての柄を選び、Esc で選ぶのをやめる。
         if command && a && self.workspace == Workspace::Design {
             self.select_all();
+        }
+        // Ctrl+G でグループにし、Ctrl+Shift+G でグループを解く（Photoshop と同じ）。
+        let (g, b) = ctx.input(|i| (i.key_pressed(egui::Key::G), i.key_pressed(egui::Key::B)));
+        if command && g && self.workspace == Workspace::Design {
+            if shift {
+                let header = self.selected.and_then(|i| if matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. })) { Some(i) } else { crate::paint::group_of(&self.decals, i) });
+                if let Some(header) = header {
+                    self.ungroup(header);
+                }
+            } else {
+                self.group_selected();
+            }
+        }
+        // B で、マスクを筆で描く（選んでいる柄にマスクがあるとき）。
+        if plain && b && self.workspace == Workspace::Design {
+            self.toggle_brush();
         }
         if plain && escape && self.workspace == Workspace::Design && self.carry.is_none() {
             self.select_only(None);
@@ -1204,6 +1279,7 @@ impl eframe::App for App {
             }
         }
 
+        self.layers_frame();
         // 数値の欄から手を離したら、ひと続きの変更は終わり。
         if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() {
             self.editing = false;

@@ -158,7 +158,7 @@ impl super::App {
         }
         let index = self.selected?;
         let placed = self.decals.get(index)?;
-        (back.is_none_or(|b| b == placed.back) && !placed.layer.locked && !placed.layer.hidden).then_some(index)
+        (back.is_none_or(|b| b == placed.back) && !placed.layer.locked && !placed.layer.hidden && crate::paint::is_artwork(&placed.picture) && self.brush.is_none()).then_some(index)
     }
 }
 

@@ -281,7 +281,7 @@ impl App {
 
     /// 選んでいる柄を 90 度回す。
     pub(super) fn rotate_selected(&mut self) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len() && !self.decals[i].layer.locked) else { return };
+        let Some(index) = self.selected.filter(|&i| i < self.decals.len() && !self.decals[i].layer.locked && crate::paint::is_artwork(&self.decals[i].picture)) else { return };
         self.checkpoint();
         let decal = &mut self.decals[index];
         let turned = decal.angle + std::f32::consts::FRAC_PI_2;

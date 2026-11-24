@@ -49,7 +49,7 @@ impl App {
 
     /// 型紙の PSD を書く（ダイアログのあと）。
     pub(super) fn write_psds(&mut self, path: &Path) {
-        let front = save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false)).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
+        let front = save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false), Some(&self.painted(false))).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
         if let Err(e) = front {
             return self.say(t!("Could not save: {e}"));
         }
@@ -57,7 +57,7 @@ impl App {
             return self.say(t!("Saved: {}", path.display()));
         }
         let back = back_path(path);
-        match save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true)).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())) {
+        match save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true), Some(&self.painted(true))).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())) {
             Ok(()) => self.say(t!("Saved both the front and the back: {}, {}", path.display(), back.file_name().unwrap_or_default().to_string_lossy())),
             Err(e) => self.say(t!("Saved the front, but could not save the back: {e}")),
         }

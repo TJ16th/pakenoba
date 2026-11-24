@@ -246,12 +246,23 @@ pub struct DecalLayer {
     /// 不透明度（%）と描画モード。PSD のレイヤーの設定として入れ、統合した絵にも効かせる。
     pub opacity: u8,
     pub blend: pakenoba_core::project::Blend,
+    /// レイヤーマスク（展開図の大きさの白黒。柄のない所は 0）。
+    pub mask: Option<Vec<u8>>,
+    /// グループの始まりか終わり（このときは、絵は使わない）。グループは、下から「始まり、中身、終わり」の順に並べる。
+    pub group: Option<PsdGroup>,
 }
 
-#[cfg(test)]
+/// PSD のグループの区切り。
+#[derive(Clone, Copy, PartialEq)]
+pub enum PsdGroup {
+    /// 始まり。グループの名前、表示、不透明度、描画モードは、この項目のものを使う。`open` は、レイヤーの欄で開いているか。
+    Start { open: bool },
+    End,
+}
+
 impl DecalLayer {
     pub fn shown(name: impl Into<String>, image: Vec<u8>) -> DecalLayer {
-        DecalLayer { name: name.into(), image, visible: true, opacity: 100, blend: Default::default() }
+        DecalLayer { name: name.into(), image, visible: true, opacity: 100, blend: Default::default(), mask: None, group: None }
     }
 }
 
@@ -272,9 +283,10 @@ pub fn psd_is_back(bytes: &[u8]) -> bool {
 }
 
 /// 型紙を PSD にする。`custom` は、読み込んである展開図の絵（あれば「絵柄」のレイヤーにする）。
-pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
+/// `painted` は、柄まで重ねた絵（ガイドなし）。統合した絵に使う。なければ、レイヤーを順に重ねて作る（グループや調整は効かない）。
+pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let guides = t!("{guides} (cut lines, fold lines, glue flaps)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()))
+    build_psd(sheet.w, sheet.h, (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()), painted.map(<[u8]>::to_vec))
 }
 
 /// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
@@ -282,12 +294,13 @@ pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) 
 /// レイヤーは下から「紙の裏」、裏に置いた柄、「ガイド（切り線、折り線）」。のりしろの斜線は入れない（のりを付けるのは表の面）。
 /// `decals` は、表と同じ展開図の向きで描いた、裏の柄の画像（`paint` で裏を描いたもの）。ここで左右を裏返す。
 /// `custom` は、読み込んである裏の絵（表の向きに直したもの）。あれば「紙の裏」のレイヤーにする。
-pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer]) -> Result<Vec<u8>, String> {
+pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let paper: Vec<u8> = custom.map_or_else(|| back_paper(sheet), <[u8]>::to_vec);
     let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
-    let decals = decals.iter().map(|layer| DecalLayer { image: flip(&layer.image), ..layer.clone() }).collect();
+    let flip_gray = |image: &[u8]| (0..sheet.h).flat_map(|y| image[y * sheet.w..(y + 1) * sheet.w].iter().rev().copied().collect::<Vec<u8>>()).collect::<Vec<u8>>();
+    let decals = decals.iter().map(|layer| DecalLayer { image: if layer.group.is_some() { Vec::new() } else { flip(&layer.image) }, mask: layer.mask.as_deref().map(flip_gray), ..layer.clone() }).collect();
     let guides = t!("{guides} (cut lines, fold lines)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)))
+    build_psd(sheet.w, sheet.h, (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
 }
 
 /// 画像を左右に裏返す。
@@ -303,19 +316,40 @@ pub fn mirror(image: &[u8], w: usize, h: usize) -> Vec<u8> {
 }
 
 /// PSD を組み立てる。いちばん下に `base`、その上に柄、いちばん上に `guides`。
-fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>)) -> Result<Vec<u8>, String> {
+fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(w * h);
-    alpha_over(&mut composite, &base.1);
-    for layer in decals.iter().filter(|layer| layer.visible) {
-        let opacity = layer.opacity.min(100) as f32 / 100.0;
-        for (dst, src) in composite.chunks_exact_mut(4).zip(layer.image.chunks_exact(4)) {
-            crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
+    match &painted {
+        Some(painted) => alpha_over(&mut composite, painted),
+        None => {
+            alpha_over(&mut composite, &base.1);
+            for layer in decals.iter().filter(|layer| layer.visible && layer.group.is_none()) {
+                let opacity = layer.opacity.min(100) as f32 / 100.0;
+                for (dst, src) in composite.chunks_exact_mut(4).zip(layer.image.chunks_exact(4)) {
+                    crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
+                }
+            }
         }
     }
     alpha_over(&mut composite, &guides.1);
     let mut builder = PsdBuilder::new(w as u32, h as u32);
     builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
-    for DecalLayer { name, image, visible, opacity, blend } in decals {
+    let mut open_groups = 0usize;
+    for DecalLayer { name, image, visible, opacity, blend, mask, group } in decals {
+        match group {
+            Some(PsdGroup::Start { open }) => {
+                open_groups += 1;
+                builder.begin_group(craft_psd::GroupSpec { name: format!("{} {name}", tr(DECAL_LAYER_PREFIX)), blend_mode: crate::blend::psd(blend), opacity: ((opacity.min(100) as u32 * 255 + 50) / 100) as u8, visible, open });
+                continue;
+            }
+            Some(PsdGroup::End) => {
+                if open_groups > 0 {
+                    open_groups -= 1;
+                    builder.end_group().map_err(|e| t!("Could not write the PSD: {e}"))?;
+                }
+                continue;
+            }
+            None => {}
+        }
         // 何か描かれている範囲。
         let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
         for y in 0..h {
@@ -333,7 +367,14 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
         spec.visible = visible;
         spec.opacity = ((opacity.min(100) as u32 * 255 + 50) / 100) as u8;
         spec.blend_mode = crate::blend::psd(blend);
+        if let Some(mask) = mask {
+            let data: Vec<u8> = (y0..y1).flat_map(|y| mask[y * w + x0..y * w + x1].iter().copied()).collect();
+            spec.mask = Some(craft_psd::MaskSpec { rect: craft_psd::Rect { top: y0 as i32, left: x0 as i32, bottom: y1 as i32, right: x1 as i32 }, data, default_color: 0, disabled: false });
+        }
         builder.push_layer(spec);
+    }
+    for _ in 0..open_groups {
+        builder.end_group().map_err(|e| t!("Could not write the PSD: {e}"))?;
     }
     builder.push_layer(LayerSpec::new(guides.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(guides.1)));
     builder.composite(PixelData::Rgba8(composite));
@@ -460,7 +501,7 @@ pub fn psd_is_dieline(bytes: &[u8]) -> bool {
 pub fn tests_psd(w: usize, h: usize, dieline: bool) -> Vec<u8> {
     let art = [30u8, 120, 200, 255].repeat(w * h);
     let guide_name = if dieline { format!("{GUIDE_LAYER_PREFIX}（切り線）") } else { "飾り".to_owned() };
-    build_psd(w, h, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4])).unwrap()
+    build_psd(w, h, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4]), None).unwrap()
 }
 
 /// 画像を、展開図の大きさ（`w` x `h`）に合わせる。近い画素を拾うだけの単純な拡大縮小。
@@ -485,7 +526,7 @@ mod tests {
         // 言語を切り替える前（日本語で書いていたころ）の名前。
         let (w, h) = (4, 4);
         let art = vec![255u8; w * h * 4];
-        let bytes = build_psd(w, h, ("紙の裏", art.clone()), vec![DecalLayer::shown("1（ロゴ）", art.clone())], ("ガイド（切り線、折り線）".to_owned(), art)).unwrap();
+        let bytes = build_psd(w, h, ("紙の裏", art.clone()), vec![DecalLayer::shown("1（ロゴ）", art.clone())], ("ガイド（切り線、折り線）".to_owned(), art), None).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
         assert_eq!(names[1], "3D artwork 1（ロゴ）");
@@ -506,7 +547,7 @@ mod tests {
         assert!(sheet.art.chunks_exact(4).any(|p| p[3] == 255));
         assert!(sheet.guides.chunks_exact(4).any(|p| p[3] == 255));
 
-        let bytes = save_psd(&sheet, None, &[]).unwrap();
+        let bytes = save_psd(&sheet, None, &[], None).unwrap();
         let loaded = load_psd(&bytes).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.source_size, [sheet.w, sheet.h]);
@@ -525,18 +566,18 @@ mod tests {
         let sheet = make_sheet_art(&tpl);
         let mut layer = vec![0u8; sheet.w * sheet.h * 4];
         let logo = Placed { picture: Picture::Logo, decal: Decal { panel: 0, at: [0.5, 0.5], size: [40.0, 40.0], angle: 0.0 }, back: false, layer: Default::default() };
-        paint(&surface, &tpl, &[logo], Marks::default(), false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut layer });
+        paint(&surface, &tpl, &[logo], Marks::default(), false, Canvas::output(sheet.w, sheet.h, &mut layer));
         let painted: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| layer[i * 4 + 3] == 255).collect();
         assert!(painted.len() > 10_000);
         let mut band_layer = vec![0u8; sheet.w * sheet.h * 4];
         let band = Placed { picture: Picture::Band, decal: Decal { panel: 0, at: [0.5, 0.2], size: [360.0, 14.0], angle: 0.0 }, back: false, layer: Default::default() };
-        paint(&surface, &tpl, &[band], Marks::default(), false, Canvas { w: sheet.w, h: sheet.h, rgba: &mut band_layer });
+        paint(&surface, &tpl, &[band], Marks::default(), false, Canvas::output(sheet.w, sheet.h, &mut band_layer));
 
         // 柄 1 つにつき 1 レイヤー。何も描かれていない柄は入れない。
         // 隠した柄（帯）は、隠したレイヤーとして入れる。
         let band_pixels: Vec<usize> = (0..sheet.w * sheet.h).filter(|&i| band_layer[i * 4 + 3] == 255 && layer[i * 4 + 3] == 0 && sheet.guides[i * 4 + 3] == 0).collect();
         let decals = [DecalLayer { visible: false, ..DecalLayer::shown("1（帯）", band_layer) }, DecalLayer::shown("2（ロゴ）", layer.clone()), DecalLayer::shown("3（空）", vec![0u8; sheet.w * sheet.h * 4])];
-        let bytes = save_psd(&sheet, None, &decals).unwrap();
+        let bytes = save_psd(&sheet, None, &decals, None).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let hidden: Vec<String> = file.iter_layers().filter(|l| !l.record.is_visible()).map(|l| l.name()).collect();
         assert_eq!(hidden, vec!["3D artwork 1（帯）".to_owned()]);
@@ -600,7 +641,7 @@ mod tests {
         let mut mark = vec![0u8; sheet.w * sheet.h * 4];
         let (x, y) = (sheet.w / 5, sheet.h / 2);
         mark[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4].copy_from_slice(&[255, 0, 0, 255]);
-        let bytes = save_back_psd(&sheet, None, &[DecalLayer::shown("1（ロゴ）", mark)]).unwrap();
+        let bytes = save_back_psd(&sheet, None, &[DecalLayer::shown("1（ロゴ）", mark)], None).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
         assert_eq!(names, ["Back of sheet", "3D artwork 1（ロゴ）", "Guides (cut lines, fold lines)"]);
@@ -619,7 +660,7 @@ mod tests {
     fn guides_are_removed_on_load() {
         let tpl = Template::tuck_box(120.0, 60.0, 160.0, 1.5);
         let sheet = make_sheet_art(&tpl);
-        let loaded = load_psd(&save_psd(&sheet, None, &[]).unwrap()).unwrap();
+        let loaded = load_psd(&save_psd(&sheet, None, &[], None).unwrap()).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.guides, GuideHandling::Removed);
         // ガイドの線があった画素でも、読み込んだ絵は元の絵柄と同じになる（線が焼き込まれていない）。

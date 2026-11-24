@@ -175,6 +175,9 @@ impl App {
             ui.weak(t!("Select artwork to see its settings here."));
             return;
         };
+        if !crate::paint::is_artwork(&self.decals[index].picture) {
+            return self.layer_properties(ui, index);
+        }
         // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
         let others = self.selection().len() - 1;
         if others > 0 {
@@ -186,6 +189,8 @@ impl App {
         }
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
+        self.brush_options(ui);
+        self.adjust_properties(ui, index, locked);
         self.adjust_controls(ui, index, locked);
         self.edit_controls(ui, index);
         let earlier = self.snapshot();
@@ -289,149 +294,8 @@ impl App {
         }
     }
 
-    fn layers(&mut self, ui: &mut egui::Ui) {
-        ui.strong(t!("Layers"));
-        self.blend_controls(ui);
-        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            if ui.checkbox(&mut self.show_guides, t!("Guides (cut lines, fold lines, glue flaps)")).changed() {
-                self.art_dirty = true;
-                self.back_dirty = true;
-            }
-            // 紙の表と裏に分けて、上に重なっているものから並べる。
-            // 行ごとに、目（見せる、隠す）、鍵（ロック）、名前。名前をダブルクリックで名前を変える。行をドラッグで重なり順を変える。
-            let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
-            for back in [false, true] {
-                ui.label(if back { t!("Back (inside of the box)") } else { t!("Front (outside of the box)") });
-                let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
-                if rows.is_empty() && self.bases[back as usize].is_none() {
-                    ui.small(t!("　No artwork"));
-                }
-                for index in rows {
-                    let row = ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let layer = self.decals[index].layer.clone();
-                        if icons::eye_button(ui, !layer.hidden).clicked() {
-                            self.checkpoint();
-                            self.decals[index].layer.hidden = !layer.hidden;
-                            (self.art_dirty, self.back_dirty) = (true, true);
-                        }
-                        if icons::lock_button(ui, layer.locked).clicked() {
-                            self.checkpoint();
-                            self.decals[index].layer.locked = !layer.locked;
-                            self.grab = None;
-                        }
-                        ui.add_space(4.0);
-                        if let Some((renamed, text)) = &mut self.renaming
-                            && *renamed == index
-                        {
-                            let edit = ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
-                            if !edit.has_focus() && !edit.lost_focus() {
-                                edit.request_focus();
-                            }
-                            let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                            if cancel || edit.lost_focus() {
-                                let text = text.trim().to_owned();
-                                self.renaming = None;
-                                if !cancel {
-                                    let name = (!text.is_empty()).then_some(text);
-                                    if name != self.decals[index].layer.name {
-                                        self.checkpoint();
-                                        self.decals[index].layer.name = name;
-                                    }
-                                }
-                            }
-                            return None;
-                        }
-                        let mut label = self.layer_label(index);
-                        if self.is_editing(&self.decals[index].picture) {
-                            label.push_str(t!(" (being edited elsewhere)"));
-                        }
-                        let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
-                        let selected = self.is_selected(index);
-                        let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag());
-                        Some(response)
-                    });
-                    rows_at.push((index, row.response.rect));
-                    let Some(response) = row.inner else { continue };
-                    if response.hovered() {
-                        self.hover_now = Some(index);
-                    }
-                    if response.double_clicked() {
-                        self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
-                    } else if response.clicked() {
-                        // Shift を押していれば、足すか外す。押していなければ、その柄だけを選ぶ（もう一度押しても外さない。
-                        // ダブルクリックで名前を変えるときに、表示がずれないように）。
-                        let shift = ui.input(|i| i.modifiers.shift);
-                        self.select_click(Some(index), shift);
-                    }
-                    if response.secondary_clicked() && !self.is_selected(index) {
-                        self.select_only(Some(index));
-                    }
-                    if response.drag_started() {
-                        self.layer_drag = Some(index);
-                    }
-                    let response = response.on_hover_text(t!("Double-click to rename. Drag to change the stacking order"));
-                    response.context_menu(|ui| {
-                        if ui.button(t!("Rename")).clicked() {
-                            self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
-                            ui.close();
-                        }
-                        ui.separator();
-                        self.decal_menu(ui);
-                    });
-                }
-                self.base_layer(ui, back as usize);
-            }
-            self.drag_layer(ui, &rows_at);
-        });
-        ui.add_space(6.0);
-        self.psd_loader(ui);
-    }
-
-    /// レイヤーの行のドラッグ。運んでいる間は、落とす場所に線を出し、放したら、同じ面の中で重なり順を変える。
-    fn drag_layer(&mut self, ui: &mut egui::Ui, rows: &[(usize, egui::Rect)]) {
-        let Some(dragged) = self.layer_drag.filter(|&i| i < self.decals.len()) else {
-            self.layer_drag = None;
-            return;
-        };
-        let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) else { return };
-        let back = self.decals[dragged].back;
-        // 同じ面の行のうち、カーソルにいちばん近い行の、上か下。
-        let target = rows
-            .iter()
-            .filter(|(i, _)| self.decals[*i].back == back)
-            .min_by(|a, b| (a.1.center().y - pointer.y).abs().total_cmp(&(b.1.center().y - pointer.y).abs()))
-            .map(|&(i, rect)| (i, rect, pointer.y < rect.center().y));
-        let Some((over, rect, above)) = target else { return };
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        let y = if above { rect.top() } else { rect.bottom() };
-        ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
-        if ui.input(|i| i.pointer.any_released()) {
-            self.layer_drag = None;
-            self.move_layer(dragged, over, above);
-        }
-    }
-
-    /// 柄 `dragged` を、柄 `over` のすぐ上（`above`）か、すぐ下へ動かす（重なり順）。動かしたら、その柄を選ぶ。
-    pub(super) fn move_layer(&mut self, dragged: usize, over: usize, above: bool) {
-        // 一覧は上が重なりの上。上に落としたら、その柄のすぐ上（並びでは、すぐ後ろ）へ。
-        let mut to = if above { over + 1 } else { over };
-        if dragged < to {
-            to -= 1;
-        }
-        if to == dragged || dragged >= self.decals.len() || to >= self.decals.len() {
-            return;
-        }
-        self.checkpoint();
-        let item = self.decals.remove(dragged);
-        self.decals.insert(to, item);
-        self.select_only(Some(to));
-        self.grab = None;
-        (self.art_dirty, self.back_dirty) = (true, true);
-    }
-
     /// 展開図まるごとの絵（PSD）の読み込み。
-    fn psd_loader(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn psd_loader(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new(t!("Load dieline artwork")).default_open(!self.psd_info.is_empty()).show(ui, |ui| {
             ui.small(t!("Draw on a dieline PSD saved from \"Output\" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with \"_back\") is laid on the back of the sheet."));
             let mut load_clicked = false;
@@ -579,18 +443,31 @@ impl App {
 
     /// レイヤーの欄の頭: 選んでいる柄の描画モードと不透明度（Photoshop のレイヤーパネルと同じ場所）。
     /// いくつも選んでいれば、まとめて変える。柄を選んでいなければ、押せない形で出す。
-    fn blend_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn blend_controls(&mut self, ui: &mut egui::Ui) {
         use pakenoba_core::project::Blend;
-        let targets: Vec<usize> = self.selected.into_iter().chain(self.extra.iter().copied()).filter(|&i| self.decals.get(i).is_some_and(|d| !d.layer.locked)).collect();
+        let mut targets: Vec<usize> = self.selected.into_iter().chain(self.extra.iter().copied()).filter(|&i| self.decals.get(i).is_some_and(|d| !d.layer.locked)).collect();
+        // グループを選んでいるときは、グループの設定だけを変える（いっしょに選んでいる中身は変えない）。
+        if let Some(header) = self.selected.filter(|&i| matches!(self.decals.get(i).map(|d| &d.picture), Some(crate::paint::Picture::Group { .. }))) {
+            targets.retain(|&i| i == header);
+        }
         let first = targets.first().map(|&i| self.decals[i].layer.clone());
         let mut blend = first.as_ref().map_or(Blend::Normal, |l| l.blend);
         let mut opacity = first.as_ref().map_or(100.0, |l| l.opacity as f32);
         let (blend0, opacity0) = (blend, opacity);
         // 「Color」は、色の欄の「色」と同じ英語なので、描画モードの名前は文脈「blend」で訳す（Photoshop と同じ「カラー」）。
-        let name = |mode: Blend| if mode == Blend::Color { pakenoba_i18n::trc("blend", mode.label()) } else { pakenoba_i18n::tr(mode.label()) };
+        let name = |mode: Blend| match mode {
+            Blend::Color => pakenoba_i18n::trc("blend", mode.label()),
+            Blend::PassThrough => t!("Pass Through"),
+            _ => pakenoba_i18n::tr(mode.label()),
+        };
         ui.add_enabled_ui(first.is_some(), |ui| {
             ui.horizontal(|ui| {
+                // グループには「通過」がある（Photoshop と同じく、いちばん上）。
+                let groups = !targets.is_empty() && targets.iter().all(|&i| matches!(self.decals[i].picture, crate::paint::Picture::Group { .. }));
                 egui::ComboBox::from_id_salt("blend-mode").width(130.0).selected_text(name(blend)).show_ui(ui, |ui| {
+                    if groups {
+                        ui.selectable_value(&mut blend, Blend::PassThrough, name(Blend::PassThrough));
+                    }
                     for entry in Blend::MENU {
                         match entry {
                             Some(mode) => {

@@ -15,15 +15,9 @@ use super::assets::Asset;
 use super::{App, file};
 use crate::paint::Picture;
 
-/// 調整の種類。
+/// 1 回きりの調整の種類（あとから直せる調整は `Layer::adjust`。大きさが変わる切り落としだけは、ここ）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Adjust {
-    /// 縁につながる背景の色を、透明にする。数は、同じ色とみなす幅（0〜255）。
-    ClearBackground(f32),
-    /// 照明のむらによる明るさの差を、ならす（撮った写真の影を薄くする）。
-    FlattenShading,
-    /// 色の数を、この数まで減らす。
-    Posterize(usize),
     /// まわりの透明な余白を、切り落とす。
     Trim,
 }
@@ -31,9 +25,6 @@ pub(super) enum Adjust {
 impl Adjust {
     fn label(self) -> &'static str {
         match self {
-            Adjust::ClearBackground(_) => t!("Clear background"),
-            Adjust::FlattenShading => t!("Even out shading"),
-            Adjust::Posterize(_) => t!("Reduce colors"),
             Adjust::Trim => t!("Margins trimmed"),
         }
     }
@@ -83,7 +74,7 @@ fn border_color(w: usize, h: usize, rgba: &[u8]) -> Option<[f32; 3]> {
 }
 
 /// 縁からつながっている背景の色を、透明にする。背景との境目は、近さに応じて半ば透かす。
-pub(super) fn clear_background(w: usize, h: usize, rgba: &[u8], tolerance: f32) -> Option<Vec<u8>> {
+pub(crate) fn clear_background(w: usize, h: usize, rgba: &[u8], tolerance: f32) -> Option<Vec<u8>> {
     let seed = border_color(w, h, rgba)?;
     let tolerance = tolerance.max(1.0);
     let mut out = rgba.to_vec();
@@ -132,7 +123,7 @@ pub(super) fn clear_background(w: usize, h: usize, rgba: &[u8], tolerance: f32) 
 ///
 /// 照明は、紙の地（明るいところ）の明るさから見積もる。絵を粗いマスに分けて、マスの中でいちばん明るい値を取り、
 /// まわりのマスの最大でならしてから、ぼかす。暗い絵柄に引っぱられて、まわりが明るく浮くのを防ぐ。
-pub(super) fn flatten_shading(w: usize, h: usize, rgba: &[u8]) -> Vec<u8> {
+pub(crate) fn flatten_shading(w: usize, h: usize, rgba: &[u8]) -> Vec<u8> {
     let luma = |i: usize| {
         let c = rgb_at(rgba, i);
         0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
@@ -213,7 +204,7 @@ fn box_blur(w: usize, h: usize, values: &[f32], radius: usize) -> Vec<f32> {
 }
 
 /// 色を `count` 色に減らす（k 平均法）。透明な画素は、そのまま。
-pub(super) fn posterize(w: usize, h: usize, rgba: &[u8], count: usize) -> Vec<u8> {
+pub(crate) fn posterize(w: usize, h: usize, rgba: &[u8], count: usize) -> Vec<u8> {
     let count = count.clamp(2, 64);
     let opaque: Vec<usize> = (0..w * h).filter(|&i| rgba[i * 4 + 3] >= 8).collect();
     let mut out = rgba.to_vec();
@@ -279,28 +270,6 @@ pub(super) fn opaque_bounds(w: usize, h: usize, rgba: &[u8]) -> Option<[usize; 4
 pub(super) fn run(how: Adjust, w: usize, h: usize, rgba: &[u8]) -> Result<Adjusted, &'static str> {
     let whole = [0, 0, w, h];
     match how {
-        Adjust::ClearBackground(tolerance) => {
-            let rgba = clear_background(w, h, rgba, tolerance)
-                .ok_or(t!("No background that could be made transparent was found along the edges."))?;
-            Ok(Adjusted {
-                w,
-                h,
-                rgba,
-                crop: whole,
-            })
-        }
-        Adjust::FlattenShading => Ok(Adjusted {
-            w,
-            h,
-            rgba: flatten_shading(w, h, rgba),
-            crop: whole,
-        }),
-        Adjust::Posterize(count) => Ok(Adjusted {
-            w,
-            h,
-            rgba: posterize(w, h, rgba, count),
-            crop: whole,
-        }),
         Adjust::Trim => {
             let crop = opaque_bounds(w, h, rgba).ok_or(t!("Everything is transparent, so there is nothing to trim."))?;
             if crop == whole {
@@ -317,22 +286,6 @@ pub(super) fn run(how: Adjust, w: usize, h: usize, rgba: &[u8]) -> Result<Adjust
                 rgba: out,
                 crop,
             })
-        }
-    }
-}
-
-/// 調整の欄で覚えておく値。
-#[derive(Clone, Copy, Debug)]
-pub(super) struct AdjustSettings {
-    pub tolerance: f32,
-    pub colors: usize,
-}
-
-impl Default for AdjustSettings {
-    fn default() -> Self {
-        AdjustSettings {
-            tolerance: 40.0,
-            colors: 6,
         }
     }
 }
@@ -417,50 +370,12 @@ impl App {
             return;
         }
         let mut chosen = None;
-        egui::CollapsingHeader::new(t!("Image adjustments"))
+        egui::CollapsingHeader::new(t!("Image tools"))
             .id_salt("adjust")
             .show(ui, |ui| {
                 ui.add_enabled_ui(
                     !locked && !self.is_editing(&self.decals[index].picture),
                     |ui| {
-                        let settings = &mut self.adjust;
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(t!("Make background transparent"))
-                                .on_hover_text(t!("Makes colors similar to the edges, and connected to them, transparent"))
-                                .clicked()
-                            {
-                                chosen = Some(Adjust::ClearBackground(settings.tolerance));
-                            }
-                            ui.add(
-                                egui::DragValue::new(&mut settings.tolerance)
-                                    .range(1.0..=200.0)
-                                    .speed(0.5)
-                                    .max_decimals(0),
-                            )
-                            .on_hover_text(t!("How close a color must be to count as the background. Larger values make more of the picture transparent"));
-                        });
-                        if ui
-                            .button(t!("Even out shading"))
-                            .on_hover_text(t!("Lightens uneven lighting and shadows in photographs"))
-                            .clicked()
-                        {
-                            chosen = Some(Adjust::FlattenShading);
-                        }
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(t!("Reduce colors"))
-                                .on_hover_text(t!("Merges similar colors down to this many colors"))
-                                .clicked()
-                            {
-                                chosen = Some(Adjust::Posterize(settings.colors));
-                            }
-                            ui.add(
-                                egui::DragValue::new(&mut settings.colors)
-                                    .range(2..=64)
-                                    .suffix(t!(" colors")),
-                            );
-                        });
                         if ui
                             .button(t!("Trim margins"))
                             .on_hover_text(
@@ -470,9 +385,7 @@ impl App {
                         {
                             chosen = Some(Adjust::Trim);
                         }
-                        ui.weak(
-                            t!("The original asset is unchanged; only this artwork is switched to a new, adjusted asset."),
-                        );
+                        ui.weak(t!("Brightness, colors, background removal and subject selection are in \"Adjust\" at the bottom of the Layers panel. They can be changed later."));
                     },
                 );
                 let enabled = !locked && !self.is_editing(&self.decals[index].picture);

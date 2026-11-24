@@ -51,16 +51,9 @@
 	Could not make the adjusted picture: {e}	調整した絵を作れませんでした: {e}
 	{stem} ({}).png	{stem}（{}）.png
 	Applied "{}". It is a new asset, "{name}", and the original asset is unchanged. Press Ctrl+Z to undo.	「{}」をしました。新しい素材「{name}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
-	Image adjustments	画像の調整
-	Make background transparent	背景を透明にする
-	Makes colors similar to the edges, and connected to them, transparent	縁につながっている、縁と同じような色を透明にします
 	How close a color must be to count as the background. Larger values make more of the picture transparent	同じ色とみなす幅。大きいほど、多く透明になります
-	Lightens uneven lighting and shadows in photographs	撮った写真の、照明のむらや影を薄くします
-	Merges similar colors down to this many colors	似た色をまとめて、この数の色にします
-	 colors	 色
 	Trim margins	余白を切り落とす
 	Cuts away the transparent area around the picture. It stays where it appears now	まわりの透明な部分を切り落とします。見える位置は変わりません
-	The original asset is unchanged; only this artwork is switched to a new, adjusted asset.	元の素材は変えず、この柄だけを、調整した新しい素材に差し替えます。
 # pakenoba-app/src/app/assets.rs
 	Logo (sample)	ロゴ（見本）
 	Wrap-around band (sample)	一周する帯（見本）
@@ -725,3 +718,93 @@
 	Luminosity	輝度
 	Artwork {number} uses a blend mode this version does not know ("{key}"), so it was set to Normal	柄 {number} は、この版が知らない描画モード（「{key}」）を使っているので、通常にしました
 blend	Color	カラー
+
+# pakenoba-app/src/app/layers.rs ほか（レイヤーの調整、マスク、グループ）
+	A white mask that shows everything. Paint black with the brush to hide parts	すべてを見せる白いマスク。筆で黒を塗ると、そこが隠れます
+	Add a layer mask to the selected artwork	選んでいる柄に、レイヤーマスクを足します
+	Add an adjustment. You can change it, switch it off or remove it later	調整を足します。あとから数値を直す、切る、外すができます
+	Add to this adjustment layer	この調整レイヤーに足す
+	Added a mask. Paint black with the brush to hide parts, white to show them.	マスクを足しました。筆で黒を塗ると隠れ、白を塗ると見えます。
+	Adjust	調整
+	Adjustment layer (everything below)	調整レイヤー（下のすべてに）
+	Adjustment layer {number} cannot use "{}", so it was removed	調整レイヤー {number} では「{}」を使えないので、外しました
+	Adjustment layer	調整レイヤー
+	Adjustments (this artwork only)	調整（この柄だけ）
+	Adjustments	調整
+	Applied from the bottom up, like in Photoshop.	Photoshop と同じく、下から順に効きます。
+	Applies to all layers below it. Inside a group that is not "Pass Through", only to the layers below it in the group.	下のレイヤーすべてに効きます。「通過」でないグループの中では、そのグループの中で下にあるものだけに効きます。
+	Apply earlier	先に効かせる
+	Apply later	あとで効かせる
+	Applying adjustments…	調整を効かせています…
+	Artwork {number} uses an adjustment this version does not know ("{}"), so it was removed	柄 {number} は、この版が知らない調整（「{}」）を使っているので、その調整を外しました
+	Black point	黒の点
+	Brightness	明るさ
+	Brightness, colors, background removal and subject selection are in "Adjust" at the bottom of the Layers panel. They can be changed later.	明るさ、色、背景を透明にする、被写体を選択は、レイヤーの欄のいちばん下の「調整」にあります。あとから直せます。
+	Brightness/Contrast	明るさ・コントラスト
+	Click to change its settings in Properties	押すと、プロパティで数値を直せます
+	Close the group	グループを閉じる
+	Colors	色の数
+	Contrast	コントラスト
+	Could not download the model: {e}	モデルを取ってこられませんでした: {e}
+	Could not find the subject: {e}	被写体を見つけられませんでした: {e}
+	Could not make the folder for the model: {e}	モデルを置くフォルダを作れませんでした: {e}
+	Could not read the subject model: {e}	被写体のモデルを読めませんでした: {e}
+	Could not save the model: {e}	モデルを保存できませんでした: {e}
+	Delete group and contents	グループと中身を削除
+	Delete mask	マスクを削除
+	Delete the selected layers	選んでいるレイヤーを削除します
+	Disable mask	マスクを使わない
+	Done	終わる
+	Downloading the high-quality model… {} / {} MB	高画質のモデルを取ってきています… {} / {} MB
+	Enable mask	マスクを使う
+	Finding the subject on this PC. The picture is not sent anywhere.	この PC の中で被写体を探しています。絵はどこにも送りません。
+	Finds the main subject with AI on this PC and hides the rest	この PC の中の AI で主な被写体を見つけ、ほかを隠します
+	From the subject	被写体から
+	From transparency	透明な部分から
+	Group {number}	グループ {number}
+	Group	グループ
+	Grouped {count} layer(s). Press Ctrl+Z to undo.	{count} 個のレイヤーをグループにしました。Ctrl+Z で元に戻せます。
+	Hardness	硬さ
+	Hide (black)	隠す（黒）
+	High quality (downloads a 176 MB model the first time)	高画質（初回に 176 MB のモデルを取ってくる）
+	Hue/Saturation	色相・彩度
+	Image tools	画像の道具
+	Invert mask	マスクを反転
+	Invert	階調の反転
+	Layer mask. Click to paint on it with the brush. Right-click for more	レイヤーマスク。押すと筆で描けます。右クリックでほかの操作
+	Layer {number} is a kind this version does not know ("{other}"), so it was removed	レイヤー {number} は、この版が知らない種類（「{other}」）なので、外しました
+	Levels	レベル補正
+	Lightness	明度
+	Made a mask from the subject. Paint on it with the brush to fix the edges.	被写体からマスクを作りました。縁は、筆で塗って直せます。
+	Made a mask from the transparent parts.	透明な部分から、マスクを作りました。
+	Mask brush	マスクの筆
+	Mask	マスク
+	Midtones	中間の明るさ
+	Open the group	グループを開く
+	Paint on the mask	マスクに筆で描く
+	Painting on the mask: drag on the box or the dieline. Black hides, white shows. X switches, [ and ] change the size, Esc ends.	マスクに描いています。箱か展開図の上をドラッグします。黒は隠し、白は見せます。X で入れ替え、[ と ] で太さ、Esc で終わります。
+	Pass Through	通過
+	Put the selected layers in a group (Ctrl+G)	選んでいるレイヤーを、グループにまとめます（Ctrl+G）
+	Remove this adjustment	この調整を外す
+	Reveal all	すべて表示
+	Select subject	被写体を選択
+	Show (white)	見せる（白）
+	Switch this adjustment on or off	この調整を効かせる・切る
+	Take out of the group	グループから出す
+	The downloaded model was damaged, so it was not used. Please try again.	取ってきたモデルが壊れていたので、使いませんでした。もう一度試してください。
+	The high-quality model is not on this PC yet. Until it is, nothing is cut out.	高画質のモデルは、まだこの PC にありません。届くまでは、切り抜きません。
+	The high-quality subject model has not been downloaded yet.	高画質の被写体のモデルを、まだ取ってきていません。
+	The high-quality subject model is ready.	高画質の被写体のモデルが使えるようになりました。
+	The mask of artwork {number} could not be read, so it was removed ({why})	柄 {number} のマスクを読めなかったので、外しました（{why}）
+	The mask of artwork {number} does not match its size	柄 {number} のマスクの大きさが合いません
+	The mask of artwork {number} does not match its size, so it was removed	柄 {number} のマスクの大きさが合わないので、外しました
+	The picture is empty.	絵が空です。
+	There is no folder to keep the model in.	モデルを置くフォルダがありません。
+	This artwork only	この柄だけに
+	Tolerance	許容値
+	Ungroup	グループを解除
+	Uses a larger model for finer edges. It is downloaded once and kept on this PC	大きいモデルで、縁を細かく切り抜きます。1 回だけ取ってきて、この PC に置きます
+	Uses the transparent parts of the picture	絵の透明な部分を使います
+	White point	白の点
+	"Pass Through" mixes the contents with what is below as if there were no group. Other blend modes mix the group as one picture.	「通過」は、グループがないかのように、中身を下の絵と重ねます。ほかの描画モードでは、グループを 1 枚の絵として重ねます。
+	{count} layer(s) in this group. Drag layers onto the group to add them.	このグループには {count} 個のレイヤーがあります。レイヤーをグループへドラッグすると入ります。

@@ -4,6 +4,7 @@
 //!
 //! - `project.toml`: 設定のテキスト。型と寸法、素材の一覧、置いた柄、展開図まるごとの絵。
 //! - `assets/<中身の印>.<拡張子>`: 素材と、展開図まるごとの絵のファイル。取り込んだ元のファイルのまま。
+//! - `masks/<中身の印>.gray`: 柄のレイヤーマスク（1 画素 1 バイトの白黒。幅と高さは設定のテキストに書く）。
 //!
 //! 決まり（くわしくは `docs/project-file.md`）。
 //!
@@ -169,6 +170,11 @@ pub enum Source {
     Text(TextSpec),
     /// 図形（四角、丸）。絵は持たず、形と色から描く。
     Shape(ShapeSpec),
+    /// グループの見出し。中身は、並びの中で、この見出しのすぐ前に続く `in_group` の柄。`open` はレイヤーの欄で開いているか。
+    /// 場所と大きさは使わない。
+    Group { open: bool },
+    /// 調整レイヤー（`Layer::adjust` を、下の絵すべてに効かせる）。場所と大きさは使わない。
+    Adjustment,
 }
 
 /// 図形の形。
@@ -265,6 +271,12 @@ pub struct Placement {
 /// 柄のレイヤーとしての設定。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Layer {
+    /// 柄だけに効く調整（下から順に効かせる）。調整レイヤーでは、下の絵すべてに効く調整。
+    pub adjust: Vec<Adjustment>,
+    /// レイヤーマスク。
+    pub mask: Option<Mask>,
+    /// すぐ上のグループに入っている（グループの中身は、並びの中でグループの見出しのすぐ前に続けて置く）。
+    pub in_group: bool,
     /// 使う人が付けた名前。None なら、画面では「番号（種類）」と出す。
     pub name: Option<String>,
     /// 隠している（箱にも、書き出す型紙にも描かない。型紙の PSD では、隠したレイヤーとして入れる）。
@@ -279,7 +291,7 @@ pub struct Layer {
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { name: None, hidden: false, locked: false, opacity: 100, blend: Blend::Normal }
+        Layer { adjust: Vec::new(), mask: None, in_group: false, name: None, hidden: false, locked: false, opacity: 100, blend: Blend::Normal }
     }
 }
 
@@ -313,6 +325,8 @@ pub enum Blend {
     Saturation,
     Color,
     Luminosity,
+    /// 通過（グループだけ。中身を、そのまま外へ重ねる）。
+    PassThrough,
 }
 
 impl Blend {
@@ -380,11 +394,12 @@ impl Blend {
             Blend::Saturation => "saturation",
             Blend::Color => "color",
             Blend::Luminosity => "luminosity",
+            Blend::PassThrough => "pass_through",
         }
     }
 
     pub fn from_key(key: &str) -> Option<Blend> {
-        Blend::MENU.iter().flatten().copied().find(|b| b.key() == key)
+        Blend::MENU.iter().flatten().copied().chain([Blend::PassThrough]).find(|b| b.key() == key)
     }
 
     /// 画面に出す名前（英語。訳は画面の側で）。
@@ -416,8 +431,122 @@ impl Blend {
             Blend::Saturation => "Saturation",
             Blend::Color => "Color",
             Blend::Luminosity => "Luminosity",
+            Blend::PassThrough => "Pass Through",
         }
     }
+}
+
+/// 調整 1 つ。`on` が偽なら、効かせない（目のアイコンで切り替える）。
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Adjustment {
+    pub kind: AdjustKind,
+    pub on: bool,
+}
+
+impl Adjustment {
+    pub fn new(kind: AdjustKind) -> Adjustment {
+        Adjustment { kind, on: true }
+    }
+}
+
+/// 調整の種類と、その数値。数値は、保存しても同じに戻るよう整数で持つ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AdjustKind {
+    /// 明るさ（-150〜150）とコントラスト（-50〜100）。Photoshop の「明るさ・コントラスト」と同じ範囲。
+    BrightnessContrast { brightness: i16, contrast: i16 },
+    /// 色相（-180〜180 度）、彩度（-100〜100）、明度（-100〜100）。
+    HueSaturation { hue: i16, saturation: i16, lightness: i16 },
+    /// レベル補正。黒と白の点（0〜255）と、中間の明るさ（ガンマの 100 倍。10〜999）。
+    Levels { black: u8, white: u8, gamma: u16 },
+    /// 階調の反転。
+    Invert,
+    /// 縁の色と、それにつながる近い色を透明にする。`tolerance` は近さ（1〜200）。
+    ClearBackground { tolerance: u8 },
+    /// 写真の、ムラのある明るさや影をならす。
+    FlattenShading,
+    /// 近い色をまとめて、色の数を絞る（2〜64）。
+    ReduceColors { colors: u8 },
+    /// 主な被写体だけを残す（被写体のまわりを透明にする）。`fine` なら、大きいモデルで細かく。
+    Subject { fine: bool },
+}
+
+impl AdjustKind {
+    /// 案件のファイルに書く名前。
+    pub fn key(self) -> &'static str {
+        match self {
+            AdjustKind::BrightnessContrast { .. } => "brightness_contrast",
+            AdjustKind::HueSaturation { .. } => "hue_saturation",
+            AdjustKind::Levels { .. } => "levels",
+            AdjustKind::Invert => "invert",
+            AdjustKind::ClearBackground { .. } => "clear_background",
+            AdjustKind::FlattenShading => "flatten_shading",
+            AdjustKind::ReduceColors { .. } => "reduce_colors",
+            AdjustKind::Subject { .. } => "subject",
+        }
+    }
+
+    /// 画素ごとに決まる調整か（調整レイヤーとして、下の絵すべてに効かせられるもの）。
+    pub fn per_pixel(self) -> bool {
+        matches!(self, AdjustKind::BrightnessContrast { .. } | AdjustKind::HueSaturation { .. } | AdjustKind::Levels { .. } | AdjustKind::Invert)
+    }
+
+    /// 数値を、それぞれの範囲の中へ寄せる。
+    pub fn clamped(self) -> AdjustKind {
+        match self {
+            AdjustKind::BrightnessContrast { brightness, contrast } => AdjustKind::BrightnessContrast { brightness: brightness.clamp(-150, 150), contrast: contrast.clamp(-50, 100) },
+            AdjustKind::HueSaturation { hue, saturation, lightness } => AdjustKind::HueSaturation { hue: hue.clamp(-180, 180), saturation: saturation.clamp(-100, 100), lightness: lightness.clamp(-100, 100) },
+            AdjustKind::Levels { black, white, gamma } => {
+                let black = black.min(253);
+                AdjustKind::Levels { black, white: white.max(black + 2), gamma: gamma.clamp(10, 999) }
+            }
+            AdjustKind::ClearBackground { tolerance } => AdjustKind::ClearBackground { tolerance: tolerance.clamp(1, 200) },
+            AdjustKind::ReduceColors { colors } => AdjustKind::ReduceColors { colors: colors.clamp(2, 64) },
+            other => other,
+        }
+    }
+}
+
+/// レイヤーマスク。柄の絵と同じ向きの、白黒の絵（255 が見せる、0 が隠す）。柄と一緒に動く。
+#[derive(Clone, Debug, Eq)]
+pub struct Mask {
+    pub w: u32,
+    pub h: u32,
+    pub data: Arc<Vec<u8>>,
+    /// 白と黒を逆にして使う。
+    pub invert: bool,
+    /// 偽なら、マスクを効かせない（Photoshop の「レイヤーマスクを使用しない」）。
+    pub enabled: bool,
+}
+
+impl Mask {
+    /// どこも見せるマスク。
+    pub fn reveal_all(w: u32, h: u32) -> Mask {
+        Mask { w, h, data: Arc::new(vec![255; (w * h) as usize]), invert: false, enabled: true }
+    }
+
+    /// 案件のファイルの中での名前（中身の印から）。
+    fn file(&self) -> String {
+        let id: String = Sha256::digest(self.data.as_slice()).iter().map(|b| format!("{b:02x}")).collect();
+        format!("masks/{id}.gray")
+    }
+}
+
+impl PartialEq for Mask {
+    fn eq(&self, other: &Mask) -> bool {
+        (self.w, self.h, self.invert, self.enabled) == (other.w, other.h, other.invert, other.enabled) && (Arc::ptr_eq(&self.data, &other.data) || self.data == other.data)
+    }
+}
+
+impl std::hash::Hash for Mask {
+    /// 中身は大きいので、場所（同じ中身を共有しているか）で見分ける。描くたびに中身を作り直すので、描いたら印も変わる。
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.w, self.h, self.invert, self.enabled, Arc::as_ptr(&self.data) as usize, self.data.len()).hash(state);
+    }
+}
+
+/// マスクのファイルの名前として正しい形か（`masks/`、16 進 64 文字、`.gray`）。
+fn is_mask_file(file: &str) -> bool {
+    file.strip_prefix("masks/").and_then(|rest| rest.strip_suffix(".gray")).is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
 }
 
 /// 案件 1 つ。
@@ -574,12 +703,105 @@ struct DecalEntry {
     /// 描画モード。通常のときは書かない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blend: Option<String>,
+    /// 柄でないレイヤーの種類（`group` か `adjustment`）。柄のときは書かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    /// グループを、レイヤーの欄で閉じている。
+    #[serde(default, skip_serializing_if = "is_false")]
+    closed: bool,
+    /// すぐ上のグループに入っている。
+    #[serde(default, skip_serializing_if = "is_false")]
+    in_group: bool,
     /// 文字の柄（`asset`、`builtin` のかわりに書く）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<TextEntry>,
     /// 図形の柄（`asset`、`builtin` のかわりに書く）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shape: Option<FigureEntry>,
+    /// レイヤーマスク。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mask: Option<MaskEntry>,
+    /// 調整（下から順）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    adjust: Vec<AdjustEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MaskEntry {
+    /// 案件のファイルの中での名前（`masks/<中身の印>.gray`）。
+    file: String,
+    width: u32,
+    height: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    invert: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    disabled: bool,
+}
+
+/// 調整 1 つ。`kind` で種類を書き、その種類の数値だけを書く。
+#[derive(Serialize, Deserialize, Default)]
+struct AdjustEntry {
+    kind: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    off: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brightness: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contrast: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hue: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    saturation: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lightness: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    black: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    white: Option<i64>,
+    /// 中間の明るさ（ガンマの 100 倍）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gamma: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tolerance: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    colors: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    fine: bool,
+}
+
+impl AdjustEntry {
+    fn from(a: &Adjustment) -> AdjustEntry {
+        let n = |v: i64| Some(v);
+        let mut e = AdjustEntry { kind: a.kind.key().to_owned(), off: !a.on, ..Default::default() };
+        match a.kind {
+            AdjustKind::BrightnessContrast { brightness, contrast } => (e.brightness, e.contrast) = (n(brightness.into()), n(contrast.into())),
+            AdjustKind::HueSaturation { hue, saturation, lightness } => (e.hue, e.saturation, e.lightness) = (n(hue.into()), n(saturation.into()), n(lightness.into())),
+            AdjustKind::Levels { black, white, gamma } => (e.black, e.white, e.gamma) = (n(black.into()), n(white.into()), n(gamma.into())),
+            AdjustKind::ClearBackground { tolerance } => e.tolerance = n(tolerance.into()),
+            AdjustKind::ReduceColors { colors } => e.colors = n(colors.into()),
+            AdjustKind::Subject { fine } => e.fine = fine,
+            AdjustKind::Invert | AdjustKind::FlattenShading => {}
+        }
+        e
+    }
+
+    /// 知らない種類なら `None`。数値は範囲の中へ寄せる。書いていない数値は、はじめの値にする。
+    fn to_adjustment(&self) -> Option<Adjustment> {
+        let i16_ = |v: Option<i64>, d: i16| v.map_or(d, |v| v.clamp(-1000, 1000) as i16);
+        let u8_ = |v: Option<i64>, d: u8| v.map_or(d, |v| v.clamp(0, 255) as u8);
+        let kind = match self.kind.as_str() {
+            "brightness_contrast" => AdjustKind::BrightnessContrast { brightness: i16_(self.brightness, 0), contrast: i16_(self.contrast, 0) },
+            "hue_saturation" => AdjustKind::HueSaturation { hue: i16_(self.hue, 0), saturation: i16_(self.saturation, 0), lightness: i16_(self.lightness, 0) },
+            "levels" => AdjustKind::Levels { black: u8_(self.black, 0), white: u8_(self.white, 255), gamma: self.gamma.map_or(100, |v| v.clamp(10, 999) as u16) },
+            "invert" => AdjustKind::Invert,
+            "clear_background" => AdjustKind::ClearBackground { tolerance: u8_(self.tolerance, 40) },
+            "flatten_shading" => AdjustKind::FlattenShading,
+            "reduce_colors" => AdjustKind::ReduceColors { colors: u8_(self.colors, 8) },
+            "subject" => AdjustKind::Subject { fine: self.fine },
+            _ => return None,
+        };
+        Some(Adjustment { kind: kind.clamped(), on: !self.off })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -708,6 +930,11 @@ impl Project {
             if ![decal.at[0], decal.at[1], decal.size[0], decal.size[1], decal.angle].iter().all(|v| v.is_finite()) {
                 return Err(Error::Broken(t!("The position or size of artwork {number} is not a number")));
             }
+            if let Some(mask) = &placed.layer.mask
+                && (mask.w == 0 || mask.h == 0 || mask.data.len() != mask.w as usize * mask.h as usize)
+            {
+                return Err(Error::Broken(t!("The mask of artwork {number} does not match its size")));
+            }
             if let Source::Asset(asset) = placed.source
                 && asset >= self.assets.len()
             {
@@ -738,7 +965,14 @@ impl Project {
                 .iter()
                 .map(|placed| {
                     let (panel, nth) = panel_ref(tpl, placed.decal.panel);
+                    let kind = match &placed.source {
+                        Source::Group { .. } => Some("group".to_owned()),
+                        Source::Adjustment => Some("adjustment".to_owned()),
+                        _ => None,
+                    };
+                    let closed = matches!(placed.source, Source::Group { open: false });
                     let (asset, builtin, text, shape) = match &placed.source {
+                        Source::Group { .. } | Source::Adjustment => (None, None, None, None),
                         Source::Asset(index) => (Some(*index), None, None, None),
                         Source::Builtin(name) => (None, Some(name.clone()), None, None),
                         Source::Text(spec) => (
@@ -755,7 +989,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), text, shape }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: placed.layer.in_group, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
         }
@@ -782,6 +1016,15 @@ impl Project {
             let options = SimpleFileOptions::default().compression_method(method).large_file(asset.bytes.len() as u64 >= u64::from(u32::MAX));
             zip.start_file(file.as_str(), options).map_err(zip_error)?;
             zip.write_all(&asset.bytes)?;
+            written.push(file);
+        }
+        for mask in self.decals.iter().filter_map(|placed| placed.layer.mask.as_ref()) {
+            let file = mask.file();
+            if written.contains(&file) {
+                continue;
+            }
+            zip.start_file(file.as_str(), SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+            zip.write_all(&mask.data)?;
             written.push(file);
         }
         let mut out = zip.finish().map_err(zip_error)?;
@@ -935,6 +1178,15 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     for (index, entry) in manifest.decals.iter().enumerate() {
         let number = index + 1;
         let source = match (entry.asset, &entry.builtin) {
+            _ if entry.kind.is_some() => match entry.kind.as_deref() {
+                Some("group") => Source::Group { open: !entry.closed },
+                Some("adjustment") => Source::Adjustment,
+                Some(other) => {
+                    problems.push(t!("Layer {number} is a kind this version does not know (\"{other}\"), so it was removed"));
+                    continue;
+                }
+                None => unreachable!(),
+            },
             (None, None) if entry.shape.is_some() => {
                 let Some(shape) = &entry.shape else { unreachable!() };
                 let kind = match shape.kind.as_str() {
@@ -1024,10 +1276,76 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             }),
         };
         let opacity = entry.opacity.unwrap_or(100).min(100);
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, opacity, blend } });
+        let blend = if blend == Blend::PassThrough && !matches!(source, Source::Group { .. }) { Blend::Normal } else { blend };
+        let mut adjust = Vec::new();
+        for a in &entry.adjust {
+            match a.to_adjustment() {
+                Some(a) if matches!(source, Source::Adjustment) && !a.kind.per_pixel() => problems.push(t!("Adjustment layer {number} cannot use \"{}\", so it was removed", a.kind.key())),
+                Some(a) => adjust.push(a),
+                None => problems.push(t!("Artwork {number} uses an adjustment this version does not know (\"{}\"), so it was removed", a.kind)),
+            }
+        }
+        let mask = match &entry.mask {
+            Some(m) if is_mask_file(&m.file) && m.width > 0 && m.height > 0 && u64::from(m.width) * u64::from(m.height) <= 1 << 26 => match read_entry(zip, &m.file) {
+                Ok(data) if data.len() == m.width as usize * m.height as usize => Some(Mask { w: m.width, h: m.height, data: Arc::new(data), invert: m.invert, enabled: !m.disabled }),
+                Ok(_) => {
+                    problems.push(t!("The mask of artwork {number} does not match its size, so it was removed"));
+                    None
+                }
+                Err(why) => {
+                    problems.push(t!("The mask of artwork {number} could not be read, so it was removed ({why})"));
+                    None
+                }
+            },
+            Some(_) => {
+                problems.push(t!("The mask of artwork {number} could not be read, so it was removed ({why})", why = t!("The contents are not valid")));
+                None
+            }
+            None => None,
+        };
+        let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, in_group: entry.in_group, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, opacity, blend } });
     }
+    tidy_groups(&mut decals);
 
     Ok(Opened { project: Project { shape, assets, decals, base, back_base }, problems })
+}
+
+/// グループの並びを整える。グループの中身（`in_group`）は、同じ面のグループの見出しのすぐ前に続けて置く決まり。
+/// 見出しのない中身は、グループから出す。グループの中のグループは作らない（見出しの `in_group` は外す）。
+pub fn tidy_groups(decals: &mut [Placement]) {
+    let groups: Vec<bool> = decals.iter().map(|p| matches!(p.source, Source::Group { .. })).collect();
+    let backs: Vec<bool> = decals.iter().map(|p| p.back).collect();
+    let mut flags: Vec<bool> = decals.iter().map(|p| p.layer.in_group).collect();
+    group_rule(&groups, &backs, &mut flags);
+    for (p, f) in decals.iter_mut().zip(flags) {
+        p.layer.in_group = f;
+    }
+}
+
+/// グループの決まりを、印の並びに当てはめる（アプリの側の並びにも使う）。`groups[i]` は見出しか、`backs[i]` は紙の裏か。
+/// 中身の続きは、同じ面の次の項目が見出しでなければならない。そうでない中身は、グループから出す。
+pub fn group_rule(groups: &[bool], backs: &[bool], in_group: &mut [bool]) {
+    let n = in_group.len();
+    for i in 0..n {
+        if groups[i] {
+            in_group[i] = false;
+        }
+    }
+    // 上から見ていき、いま開いているグループ（見出しを見つけた面）を覚える。
+    let mut open = [false; 2];
+    for i in (0..n).rev() {
+        let side = backs[i] as usize;
+        if groups[i] {
+            open[side] = true;
+        } else if in_group[i] {
+            if !open[side] {
+                in_group[i] = false;
+            }
+        } else {
+            open[side] = false;
+        }
+    }
 }
 
 /// ZIP の中のファイルを 1 つ、全部読む。中身の傷（CRC の不一致）も、ここで見つかる。
@@ -1125,9 +1443,32 @@ mod tests {
                     }),
                     n => Source::Asset(n - 2),
                 };
-                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer { name: (panel % 4 == 1).then(|| format!("名前 {panel}")), hidden: panel % 5 == 2, locked: panel % 7 == 3, opacity: [100, 35, 0][panel % 3], blend: Blend::MENU.iter().flatten().copied().nth(panel % 26).unwrap_or_default() } }
+                Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer {
+                    name: (panel % 4 == 1).then(|| format!("名前 {panel}")),
+                    hidden: panel % 5 == 2,
+                    locked: panel % 7 == 3,
+                    opacity: [100, 35, 0][panel % 3],
+                    blend: Blend::MENU.iter().flatten().copied().nth(panel % 26).unwrap_or_default(),
+                    adjust: match panel % 4 {
+                        0 => vec![],
+                        1 => vec![Adjustment::new(AdjustKind::BrightnessContrast { brightness: -20, contrast: 35 }), Adjustment { kind: AdjustKind::Subject { fine: panel % 3 == 0 }, on: false }],
+                        2 => vec![Adjustment::new(AdjustKind::Levels { black: 10, white: 240, gamma: 125 }), Adjustment::new(AdjustKind::ReduceColors { colors: 6 }), Adjustment::new(AdjustKind::ClearBackground { tolerance: 33 })],
+                        _ => vec![Adjustment::new(AdjustKind::Invert), Adjustment::new(AdjustKind::FlattenShading), Adjustment::new(AdjustKind::HueSaturation { hue: -45, saturation: 20, lightness: -5 })],
+                    },
+                    mask: (panel % 3 == 1).then(|| Mask { w: 3 + panel as u32, h: 2, data: Arc::new((0..(3 + panel) * 2).map(|i| (i * 37) as u8).collect()), invert: panel % 2 == 0, enabled: panel % 5 != 1 }),
+                    in_group: false,
+                } }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // 調整レイヤーと、グループ（中身は図形と調整レイヤー）。グループの中身は、見出しのすぐ前に続ける。
+        let mut decals = decals;
+        let nowhere = Decal { panel: 0, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 };
+        let shape_spec = ShapeSpec { kind: ShapeKind::Rect, fill: Some([1, 2, 3]), stroke: None, stroke_width: 1.0, radius: 0.0 };
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { adjust: vec![Adjustment::new(AdjustKind::HueSaturation { hue: 30, saturation: -100, lightness: 0 })], opacity: 50, blend: Blend::Multiply, ..Layer::default() } });
+        decals.push(Placement { decal: Decal { panel: 1, at: [0.5, 0.5], size: [20.0, 10.0], angle: 0.0 }, back: false, source: Source::Shape(shape_spec), layer: Layer { in_group: true, ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { in_group: true, adjust: vec![Adjustment::new(AdjustKind::Invert)], ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Group { open: false }, layer: Layer { name: Some("グループ".to_owned()), blend: Blend::PassThrough, opacity: 80, ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: true, source: Source::Group { open: true }, layer: Layer::default() });
         // 展開図まるごとの絵は、型によって、あるものとないもの。素材と同じ中身のこともある。
         let base = match kind {
             Kind::TuckBox => Some(Asset::new("型紙に描いた絵.psd", fake_file(4, 5000), [0.0, 0.0], "2026-11-22T09:00:00Z")),
@@ -1176,6 +1517,32 @@ mod tests {
             assert!(opened.problems.is_empty(), "{kind:?}: {:?}", opened.problems);
             assert_eq!(opened.project, project, "{kind:?}");
         }
+    }
+
+    #[test]
+    fn グループの中身は_見出しのすぐ前に続くものだけ() {
+        // 下から: 中身, 中身(裏), 柄, 中身, 見出し, 中身(見出しなし)
+        let groups = [false, false, false, false, true, false];
+        let backs = [false, true, false, false, false, false];
+        let mut flags = [true, true, false, true, true, true];
+        group_rule(&groups, &backs, &mut flags);
+        assert_eq!(flags, [false, false, false, true, false, false]);
+        // 間に別の面の柄が挟まっていても、同じ面で続いていればよい。
+        let groups = [false, false, true];
+        let backs = [false, true, false];
+        let mut flags = [true, false, false];
+        group_rule(&groups, &backs, &mut flags);
+        assert_eq!(flags, [true, false, false]);
+    }
+
+    #[test]
+    fn 知らない調整とレイヤーの種類は_外して知らせる() {
+        let project = sample(Kind::TuckBox);
+        let bytes = with_manifest(&project, |text| text.replacen("kind = \"invert\"", "kind = \"magic\"", 1).replacen("kind = \"adjustment\"", "kind = \"sparkle\"", 1));
+        let opened = Project::read(Cursor::new(bytes)).unwrap();
+        assert!(opened.problems.iter().any(|p| p.contains("magic")), "{:?}", opened.problems);
+        assert!(opened.problems.iter().any(|p| p.contains("sparkle")), "{:?}", opened.problems);
+        assert_eq!(opened.project.decals.len(), project.decals.len() - 1);
     }
 
     #[test]
@@ -1232,8 +1599,8 @@ mod tests {
         assert_eq!(project.assets[0].id(), project.assets[3].id());
         let bytes = bytes_of(&project);
         let zip = ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        // 設定のテキストと、中身の違う素材 3 つと、展開図の絵。
-        assert_eq!(zip.len(), 5);
+        // 設定のテキストと、中身の違う素材 3 つと、展開図の絵（マスクのファイルは数えない）。
+        assert_eq!(zip.file_names().filter(|n| !n.as_ref().unwrap().starts_with("masks/")).count(), 5);
         let opened = Project::read(Cursor::new(bytes)).unwrap();
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -1375,7 +1742,7 @@ mod tests {
         // 素材と同じ中身の絵は、ファイルの中に 1 つだけ入り、開くと両方に戻る。
         let project = sample(Kind::Gable);
         let bytes = bytes_of(&project);
-        assert_eq!(ZipArchive::new(Cursor::new(&bytes)).unwrap().len(), 4);
+        assert_eq!(ZipArchive::new(Cursor::new(&bytes)).unwrap().file_names().filter(|n| !n.as_ref().unwrap().starts_with("masks/")).count(), 4);
         let opened = Project::read(Cursor::new(bytes)).unwrap();
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project.base, project.base);
