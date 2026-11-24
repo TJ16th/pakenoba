@@ -541,6 +541,10 @@ struct App {
     mask_job: Option<layers::MaskJob>,
     /// レイヤーの欄で選んだ、柄の調整（柄の番号と、調整の番号）。プロパティで、その調整を開く。
     adjust_focus: Option<(usize, usize)>,
+    /// レイヤーの欄で選んでいる、柄の下の行（タイル、ベクターの見せ方）。プロパティには、その設定だけを出す。
+    effect_focus: Option<(usize, layers::Effect)>,
+    /// ごみ箱へ運んでいる、柄の下の行。
+    effect_drag: Option<(usize, layers::Effect)>,
     /// ごみ箱へ運んでいる、柄だけに効く調整（柄の番号、調整の番号）と、ごみ箱のボタンの場所。
     adjust_drag: Option<(usize, usize)>,
     trash_rect: Option<egui::Rect>,
@@ -740,6 +744,8 @@ impl App {
             brush: None,
             mask_job: None,
             adjust_focus: None,
+            effect_focus: None,
+            effect_drag: None,
             adjust_drag: None,
             trash_rect: None,
             effects_seen: 0,
@@ -980,7 +986,7 @@ impl App {
             self.decals.remove(index);
         }
         self.tidy_groups();
-        (self.adjust_focus, self.brush) = (None, None);
+        (self.adjust_focus, self.effect_focus, self.brush) = (None, None, None);
         self.select_only(None);
         self.grab = None;
         self.hover_decal = None;
@@ -1360,7 +1366,10 @@ impl App {
             // 調整の行を選んでいれば、その調整だけを消す。
             match self.adjust_focus.filter(|(i, k)| self.selected == Some(*i) && *k < self.decals[*i].layer.adjust.len() && crate::paint::is_artwork(&self.decals[*i].picture)) {
                 Some((i, k)) => self.remove_adjustment(i, k),
-                None => self.cmd_delete(),
+                None => match self.focused_effect() {
+                    Some((i, e)) => self.remove_effect(i, e),
+                    None => self.cmd_delete(),
+                },
             }
         }
         // Ctrl+E で、選んでいる柄を外のアプリで直す。

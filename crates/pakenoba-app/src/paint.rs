@@ -334,7 +334,7 @@ impl Painter<'_> {
     /// 柄の座標は、裏の柄では左右を逆にしたもの（絵の向き）。広い範囲は、行の束に分けて、別のスレッドで描く。
     /// `tiled` なら、タイルの設定（`Layer::tile`）のある柄を、並べて敷き詰めた形で描く。
     fn each_pixel<T: Send>(&self, decal: &Placed, target: &mut [T], per: usize, tiled: bool, f: impl Fn(usize, &mut [T], P2, f32) + Sync) {
-        if let Some(tile) = decal.layer.tile.filter(|_| tiled) {
+        if let Some(tile) = decal.layer.tile.filter(|t| tiled && !t.off) {
             return self.each_tiled_pixel(decal, tile, target, per, f);
         }
         let (surface, tpl, w, back, frame) = (self.surface, self.tpl, self.w, self.back, &self.frame);
@@ -577,7 +577,7 @@ impl Painter<'_> {
         let blend = decal.layer.blend;
         // 敷き詰めた柄は、展開図の全体にかかって重いので、画面に描くときは、描いた絵を覚えておいて重ねるだけにする
         // （ほかの柄を動かしている間に、毎回描き直さない）。
-        if let Some(tile) = decal.layer.tile.filter(|_| !self.wait) {
+        if let Some(tile) = decal.layer.tile.filter(|t| !self.wait && !t.off) {
             let key = format!(
                 "{}|{:?}|{tile:?}|{:?}|{:?}|{}|{:p}|{:?}{:?}{}",
                 crate::effects::picture_key(&picture, size),

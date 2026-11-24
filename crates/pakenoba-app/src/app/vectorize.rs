@@ -243,7 +243,7 @@ impl App {
             return false;
         };
         // 隠したパスは選ばない（見えているものから選ぶ）。線だけ表示でも、形の中を押せば選べるように、塗りで見分ける。
-        let text = match placed.layer.vector.clone().filter(|v| !v.is_plain()) {
+        let text = match placed.layer.vector.clone().filter(|v| v.active()) {
             Some(mut style) => {
                 style.outline_only = false;
                 crate::vector::restyle(&svg, &style)
@@ -259,6 +259,7 @@ impl App {
                 let color = crate::vector::shape_colors(&svg).get(path as usize).copied().flatten();
                 self.select_only(Some(index));
                 self.path_pick = Some((index, path, color));
+                (self.adjust_focus, self.effect_focus) = (None, Some((index, super::layers::Effect::Vector)));
                 (self.art_dirty, self.back_dirty) = (true, true);
                 self.say(t!("Selected path {} of this vector artwork. Change it in Properties; press Esc to deselect.", path + 1));
                 true

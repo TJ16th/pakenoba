@@ -319,12 +319,19 @@ pub struct VectorStyle {
     pub colors: Vec<ColorStyle>,
     /// パスごとの設定（SVG の中の形の順番で引く）。色ごとの設定より優先する。
     pub paths: Vec<PathStyle>,
+    /// 一時的に効かせない（レイヤーの欄の目で切り替える。設定は残す）。
+    pub off: bool,
 }
 
 impl VectorStyle {
-    /// 何も変えていない。
+    /// 何も変えていない（効かせない印は見ない）。
     pub fn is_plain(&self) -> bool {
         !self.outline_only && self.colors.iter().all(ColorStyle::is_plain) && self.paths.iter().all(PathStyle::is_plain)
+    }
+
+    /// 描くときに効かせる。
+    pub fn active(&self) -> bool {
+        !self.off && !self.is_plain()
     }
 }
 
@@ -402,6 +409,8 @@ pub struct Tile {
     pub shift: u8,
     /// 置いたパネルの中だけに並べる。偽なら、展開図のすべての面に並べる。
     pub panel_only: bool,
+    /// 一時的に並べない（レイヤーの欄の目で切り替える。設定は残す）。
+    pub off: bool,
 }
 
 #[cfg(test)]
@@ -410,7 +419,7 @@ mod tile_tests {
 
     #[test]
     fn タイルは間隔ごとに繰り返し_すき間には描かない() {
-        let tile = Tile { gap: [20, 0], shift: 0, panel_only: false };
+        let tile = Tile { gap: [20, 0], shift: 0, panel_only: false, off: false };
         let size = [10.0, 6.0];
         // もとの柄の中。
         assert_eq!(tile.wrap([1.0, 1.0], size), Some([1.0, 1.0]));
@@ -1083,6 +1092,9 @@ struct VectorEntry {
     /// パスごと（`color` のかわりに `path` に、形の順番）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     paths: Vec<ColorEntry>,
+    /// 一時的に効かせない。
+    #[serde(default, skip_serializing_if = "is_false")]
+    off: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1131,7 +1143,7 @@ impl VectorEntry {
         };
         let colors = style.colors.iter().filter(|c| !c.is_plain()).map(|c| entry(hex_of(c.color), None, c.hidden, c.fill, c.stroke)).collect();
         let paths = style.paths.iter().filter(|p| !p.is_plain()).map(|p| entry(String::new(), Some(p.index), p.hidden, p.fill, p.stroke)).collect();
-        VectorEntry { outline_only: style.outline_only, colors, paths }
+        VectorEntry { outline_only: style.outline_only, colors, paths, off: style.off }
     }
 
     fn style(&self) -> VectorStyle {
@@ -1160,7 +1172,7 @@ impl VectorEntry {
                 Some(PathStyle { index: c.path?, hidden: c.hidden, fill, stroke })
             })
             .collect();
-        VectorStyle { outline_only: self.outline_only, colors, paths }
+        VectorStyle { outline_only: self.outline_only, colors, paths, off: self.off }
     }
 }
 
@@ -1184,6 +1196,9 @@ struct TileEntry {
     /// 置いたパネルの中だけ。
     #[serde(default, skip_serializing_if = "is_false")]
     panel_only: bool,
+    /// 一時的に並べない。
+    #[serde(default, skip_serializing_if = "is_false")]
+    off: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1528,7 +1543,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }), traced: placed.layer.traced.as_ref().map(|t| TracedEntry { layer: t.layer, settings: t.settings.clone() }), vector: placed.layer.vector.as_ref().filter(|v| !v.is_plain()).map(VectorEntry::of) }
+                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only, off: t.off }), traced: placed.layer.traced.as_ref().map(|t| TracedEntry { layer: t.layer, settings: t.settings.clone() }), vector: placed.layer.vector.as_ref().filter(|v| !v.is_plain()).map(VectorEntry::of) }
                 })
                 .collect(),
             finishes: self
@@ -1966,7 +1981,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
         let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
         let tileable = !matches!(source, Source::Group { .. } | Source::Adjustment);
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }), traced: entry.traced.as_ref().filter(|_| tileable).map(|t| TraceSource { layer: t.layer, settings: t.settings.clone() }), vector: entry.vector.as_ref().filter(|_| tileable).map(VectorEntry::style).filter(|v| !v.is_plain()) } });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only, off: t.off }), traced: entry.traced.as_ref().filter(|_| tileable).map(|t| TraceSource { layer: t.layer, settings: t.settings.clone() }), vector: entry.vector.as_ref().filter(|_| tileable).map(VectorEntry::style).filter(|v| !v.is_plain()) } });
     }
     tidy_groups(&mut decals);
 
@@ -2172,9 +2187,9 @@ mod tests {
                     mask: (panel % 3 == 1).then(|| Mask { w: 3 + panel as u32, h: 2, data: Arc::new((0..(3 + panel) * 2).map(|i| (i * 37) as u8).collect()), invert: panel % 2 == 0, enabled: panel % 5 != 1 }),
                     depth: 0,
                     clipped: panel % 2 == 1,
-                    tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0 }),
+                    tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0, off: panel % 5 == 2 }),
                     traced: (panel % 4 == 3).then(|| TraceSource { layer: 7, settings: "{\"preset\":\"3 Colors\"}".to_owned() }),
-                    vector: (panel % 4 == 3).then(|| VectorStyle { outline_only: panel % 2 == 0, colors: vec![ColorStyle { color: [200, 10, 30], hidden: true, fill: Paint::None, stroke: Some(([0, 0, 0], 35)) }, ColorStyle { fill: Paint::Color([1, 2, 3]), ..ColorStyle::new([255, 255, 255]) }], paths: vec![PathStyle { hidden: true, ..PathStyle::new(3) }, PathStyle { stroke: Some(([9, 9, 9], 120)), ..PathStyle::new(40) }] }),
+                    vector: (panel % 4 == 3).then(|| VectorStyle { outline_only: panel % 2 == 0, colors: vec![ColorStyle { color: [200, 10, 30], hidden: true, fill: Paint::None, stroke: Some(([0, 0, 0], 35)) }, ColorStyle { fill: Paint::Color([1, 2, 3]), ..ColorStyle::new([255, 255, 255]) }], paths: vec![PathStyle { hidden: true, ..PathStyle::new(3) }, PathStyle { stroke: Some(([9, 9, 9], 120)), ..PathStyle::new(40) }], off: panel % 8 == 7 }),
                 } }
             })
             .collect::<Vec<_>>();

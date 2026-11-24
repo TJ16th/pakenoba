@@ -279,6 +279,18 @@ impl App {
             self.adjust_properties(ui, index, locked);
             return;
         }
+        // タイルやベクターの見せ方の行を選んでいるときも、その設定だけを出す。
+        if let Some((_, effect)) = self.focused_effect().filter(|(i, _)| *i == index) {
+            if ui.small_button(t!("← Settings of this layer")).clicked() {
+                self.effect_focus = None;
+                self.path_pick = None;
+            }
+            match effect {
+                super::layers::Effect::Tile => self.tile_properties(ui, index, locked, true),
+                super::layers::Effect::Vector => self.vector_properties(ui, index, locked),
+            }
+            return;
+        }
         let earlier = self.snapshot();
         let template = &self.template;
         let ratio_lock = &mut self.ratio_lock;
@@ -383,8 +395,8 @@ impl App {
         if seams > 0 {
             ui.small(t!("Crosses {seams} seam(s)."));
         }
-        self.tile_properties(ui, index, locked);
-        self.vector_properties(ui, index, locked);
+        self.tile_properties(ui, index, locked, false);
+        self.effect_list(ui, index);
         // 中身ごとの設定（文字、図形）、柄だけの調整、画像の道具、外のアプリで直す。
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
@@ -421,7 +433,10 @@ impl App {
         // 色が多い（写真をトレースしたものなど）と並べきれないので、形の多い色から並べる。
         const SHOWN: usize = 40;
         let picked = self.path_pick.filter(|(i, ..)| *i == index);
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(edited || groups.len() <= 12).open(picked.is_some().then_some(true)).show(ui, |ui| {
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(true).open(picked.is_some().then_some(true)).show(ui, |ui| {
+            if style.off {
+                ui.weak(t!("Hidden for now. Turn it back on with the eye in the Layers panel."));
+            }
             ui.add_enabled_ui(!locked, |ui| {
                 // ダブルクリックで選んだパス 1 本の設定（色ごとの設定より優先する）。
                 match picked {
@@ -564,14 +579,21 @@ impl App {
     }
 
     /// タイル（柄を縦横に並べて敷き詰める）。
-    fn tile_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
+    /// `focused` でないとき（柄そのものの設定を出しているとき）は、並べていなければ始めるための欄だけ、並べていれば出さない（行は「効果」の一覧に出る）。
+    fn tile_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool, focused: bool) {
+        if !focused && self.decals[index].layer.tile.is_some() {
+            return;
+        }
         let earlier = self.snapshot();
         let before = self.decals[index].layer.tile;
         let mut on = before.is_some();
         let mut tile = before.unwrap_or_default();
         let mut gap = tile.gap_mm();
         let mut shift = tile.shift as f32;
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Tile")).strong()).id_salt("tile").default_open(before.is_some()).show(ui, |ui| {
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Tile")).strong()).id_salt("tile").default_open(focused).show(ui, |ui| {
+            if tile.off {
+                ui.weak(t!("Hidden for now. Turn it back on with the eye in the Layers panel."));
+            }
             ui.add_enabled_ui(!locked, |ui| {
                 ui.checkbox(&mut on, t!("Repeat as tiles")).on_hover_text(t!("Repeat this artwork across the panels, like wallpaper. Move or turn the artwork to shift or turn the whole pattern."));
                 ui.add_enabled_ui(on, |ui| {
@@ -595,6 +617,14 @@ impl App {
         tile.shift = shift.round().clamp(0.0, 99.0) as u8;
         let after = on.then_some(tile);
         if after != before {
+            // 並べ始めたら、タイルの行を選んで、その設定だけを出す。
+            if before.is_none() {
+                self.effect_focus = Some((index, super::layers::Effect::Tile));
+                self.adjust_focus = None;
+            }
+            if after.is_none() {
+                self.effect_focus = None;
+            }
             self.decals[index].layer.tile = after;
             self.art_dirty = true;
             self.back_dirty = true;

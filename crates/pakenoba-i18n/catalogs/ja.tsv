@@ -1319,3 +1319,14 @@ blend	Color	カラー
 	Saves the box as a 3D model, folded and opened as it is now on screen, with the artwork on the outside and inside.	いま画面に出ている組み立て具合・開き具合のまま、箱を 3D モデルとして保存します。外側と内側の柄も入ります。
 	To look at it on Windows, use Blender, or open it in a browser viewer such as Babylon.js Sandbox.	Windows で見るには、Blender か、Babylon.js Sandbox などのブラウザのビューアで開いてください。
 	3D model (GLB, OBJ)	3D モデル（GLB、OBJ）
+	Effects	効果
+	Hidden for now. Turn it back on with the eye in the Layers panel.	いまは隠しています。レイヤーの欄の目で、もとに戻せます。
+	Hide the tiles	タイルを隠す
+	Hide the vector style	ベクターの見せ方を隠す
+	Reset the vector style	ベクターの見せ方をもとに戻す
+	Show only these settings	この設定だけを出す
+	Show the tiles	タイルを見せる
+	Show the vector style	ベクターの見せ方を見せる
+	Stop tiling	タイルをやめる
+	This layer is locked.	このレイヤーはロックされています。
+	Vector style	ベクターの見せ方

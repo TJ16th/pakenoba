@@ -676,6 +676,7 @@ mod style_tests {
     fn 色ごとに隠したり_塗りを変えたり_線を足したりできる() {
         let style = VectorStyle {
             outline_only: false,
+            off: false,
             colors: vec![
                 ColorStyle { hidden: true, ..ColorStyle::new([200, 30, 40]) },
                 ColorStyle { fill: Paint::None, stroke: Some(([0, 0, 0], 50)), ..ColorStyle::new([30, 90, 180]) },
@@ -704,6 +705,7 @@ mod style_tests {
     fn パスごとの設定は色ごとの設定より強い() {
         let style = VectorStyle {
             outline_only: false,
+            off: false,
             colors: vec![ColorStyle { fill: Paint::Color([0, 255, 0]), ..ColorStyle::new([200, 30, 40]) }],
             paths: vec![PathStyle { hidden: true, ..PathStyle::new(1) }, PathStyle { fill: Paint::Color([0, 0, 255]), ..PathStyle::new(0) }],
         };

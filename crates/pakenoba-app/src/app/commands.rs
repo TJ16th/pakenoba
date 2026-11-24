@@ -494,7 +494,7 @@ impl App {
                     }
                     _ => {
                         list.remove(at);
-                        self.adjust_focus = None;
+                        (self.adjust_focus, self.effect_focus) = (None, None);
                     }
                 }
                 Ok(Value::Null)

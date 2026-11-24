@@ -98,6 +98,15 @@ pub(in crate::app) fn adjust_label(kind: AdjustKind) -> &'static str {
 }
 
 /// 調整を選ぶ一覧（画素ごとの調整を区切りつきで）。押したものを返す。
+/// 柄の下に並ぶ、調整のほかの行（PhotoCraft の効果と同じく、選ぶとプロパティにその設定だけを出す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum Effect {
+    /// タイル（柄を並べて敷き詰める）。
+    Tile,
+    /// ベクターの柄の見せ方（色ごと、パスごと、線だけ）。
+    Vector,
+}
+
 fn pixel_adjust_menu(ui: &mut egui::Ui) -> Option<AdjustKind> {
     let mut picked = None;
     for entry in PIXEL_ADJUST {
@@ -397,7 +406,9 @@ impl App {
                     if let Some(rect) = self.layer_row(ui, index) {
                         rows_at.push((index, rect));
                     }
+                    self.effect_row(ui, index, Effect::Tile);
                     self.adjust_rows(ui, index);
+                    self.effect_row(ui, index, Effect::Vector);
                     self.vector_rows(ui, index);
                 }
                 if !filtering {
@@ -784,7 +795,7 @@ impl App {
         } else if response.clicked() {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(Some(index), shift);
-            self.adjust_focus = None;
+            (self.adjust_focus, self.effect_focus) = (None, None);
             // グループを押したら、中身もいっしょに選ぶ（まとめて動かせるように）。
             if !shift && matches!(self.decals[index].picture, Picture::Group { .. }) {
                 self.extra = members_of(&self.decals, index).into_iter().filter(|&i| is_artwork(&self.decals[i].picture)).collect();
@@ -875,7 +886,7 @@ impl App {
             }
             if clicked {
                 self.select_only(Some(index));
-                self.adjust_focus = Some((index, k));
+                (self.adjust_focus, self.effect_focus) = (Some((index, k)), None);
             }
             // 右クリック: 表示の切り替え、順、削除。
             response.context_menu(|ui| {
@@ -910,6 +921,150 @@ impl App {
                     self.remove_adjustment(index, k);
                 }
                 self.adjust_drag = None;
+            }
+        }
+    }
+
+    /// いま選んでいる、柄の下の行（タイル、ベクターの見せ方）。柄が選ばれていて、その行がまだあるときだけ。
+    pub(super) fn focused_effect(&self) -> Option<(usize, Effect)> {
+        self.effect_focus.filter(|&(i, e)| self.selected == Some(i) && i < self.decals.len() && self.has_effect(i, e))
+    }
+
+    /// 柄に、その行があるか。ベクターの見せ方の行は、ベクターの柄で、見せ方を変えたか、柄を選んでいるときに出す。
+    fn has_effect(&self, index: usize, effect: Effect) -> bool {
+        let placed = &self.decals[index];
+        if !is_artwork(&placed.picture) {
+            return false;
+        }
+        match effect {
+            Effect::Tile => placed.layer.tile.is_some(),
+            Effect::Vector => matches!(placed.picture, Picture::Image { vector: true, .. }),
+        }
+    }
+
+    /// 行の目: 一時的に効かせない・効かせる（設定は残す）。
+    fn effect_on(&self, index: usize, effect: Effect) -> bool {
+        let layer = &self.decals[index].layer;
+        match effect {
+            Effect::Tile => layer.tile.is_some_and(|t| !t.off),
+            Effect::Vector => layer.vector.as_ref().is_none_or(|v| !v.off),
+        }
+    }
+
+    /// 柄のレイヤーを 1 回ぶん変える（元に戻せる）。
+    fn change_layer(&mut self, index: usize, change: impl FnOnce(&mut pakenoba_core::project::Layer)) {
+        if self.decals[index].layer.sealed() {
+            self.say(t!("This layer is locked."));
+            return;
+        }
+        let earlier = self.snapshot();
+        let before = self.decals[index].layer.clone();
+        change(&mut self.decals[index].layer);
+        if let Some(v) = &self.decals[index].layer.vector
+            && v.is_plain()
+            && !v.off
+        {
+            self.decals[index].layer.vector = None;
+        }
+        if self.decals[index].layer != before {
+            self.history.record(earlier);
+            (self.art_dirty, self.back_dirty) = (true, true);
+        }
+    }
+
+    fn toggle_effect(&mut self, index: usize, effect: Effect) {
+        let on = self.effect_on(index, effect);
+        self.change_layer(index, |layer| match effect {
+            Effect::Tile => {
+                if let Some(t) = &mut layer.tile {
+                    t.off = on;
+                }
+            }
+            Effect::Vector => layer.vector.get_or_insert_with(Default::default).off = on,
+        });
+    }
+
+    /// タイルをやめる、ベクターの見せ方をもとに戻す（元に戻せる）。
+    pub(super) fn remove_effect(&mut self, index: usize, effect: Effect) {
+        self.change_layer(index, |layer| match effect {
+            Effect::Tile => layer.tile = None,
+            Effect::Vector => layer.vector = None,
+        });
+        self.effect_focus = None;
+        self.path_pick = None;
+    }
+
+    fn effect_label(effect: Effect) -> &'static str {
+        match effect {
+            Effect::Tile => t!("Tile"),
+            Effect::Vector => t!("Vector style"),
+        }
+    }
+
+    /// 柄の下の、タイルやベクターの見せ方の行。押すとプロパティにその設定だけを出し、右クリックやごみ箱で外す。
+    fn effect_row(&mut self, ui: &mut egui::Ui, index: usize, effect: Effect) {
+        if !self.has_effect(index, effect) {
+            return;
+        }
+        // ベクターの見せ方は、見せ方を変えたか、柄を選んでいるときだけ（ベクターの柄すべてに行を出すと、うるさい）。
+        if effect == Effect::Vector && self.selected != Some(index) && self.decals[index].layer.vector.is_none() {
+            return;
+        }
+        let depth = self.decals[index].layer.depth as f32;
+        let on = self.effect_on(index, effect);
+        let focused = self.focused_effect() == Some((index, effect));
+        let (toggled, clicked, response) = self.sub_row_with(ui, depth, on, Self::effect_label(effect), false, focused);
+        if toggled {
+            self.toggle_effect(index, effect);
+        }
+        if clicked {
+            self.select_only(Some(index));
+            (self.adjust_focus, self.effect_focus) = (None, Some((index, effect)));
+        }
+        let styled = self.decals[index].layer.vector.as_ref().is_some_and(|v| !v.is_plain());
+        response.context_menu(|ui| {
+            let (show, hide, remove) = match effect {
+                Effect::Tile => (t!("Show the tiles"), t!("Hide the tiles"), t!("Stop tiling")),
+                Effect::Vector => (t!("Show the vector style"), t!("Hide the vector style"), t!("Reset the vector style")),
+            };
+            if ui.button(if on { hide } else { show }).clicked() {
+                self.toggle_effect(index, effect);
+                ui.close();
+            }
+            ui.separator();
+            if ui.add_enabled(effect == Effect::Tile || styled, egui::Button::new(remove)).clicked() {
+                self.remove_effect(index, effect);
+                ui.close();
+            }
+        });
+        if response.drag_started() {
+            self.effect_drag = Some((index, effect));
+        }
+        if response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        if response.drag_stopped() {
+            let over_trash = ui.input(|i| i.pointer.interact_pos()).zip(self.trash_rect).is_some_and(|(p, r)| r.expand(4.0).contains(p));
+            if over_trash && self.effect_drag == Some((index, effect)) {
+                self.remove_effect(index, effect);
+            }
+            self.effect_drag = None;
+        }
+    }
+
+    /// 柄そのものの設定を出しているときの、タイルとベクターの見せ方の一覧（押すと、その設定だけを出す）。
+    pub(super) fn effect_list(&mut self, ui: &mut egui::Ui, index: usize) {
+        let effects: Vec<Effect> = [Effect::Tile, Effect::Vector].into_iter().filter(|&e| self.has_effect(index, e)).collect();
+        if effects.is_empty() {
+            return;
+        }
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(t!("Effects")).strong());
+        for effect in effects {
+            let label = egui::RichText::new(Self::effect_label(effect));
+            let label = if self.effect_on(index, effect) { label } else { label.weak() };
+            if ui.selectable_label(false, label).on_hover_text(t!("Show only these settings")).clicked() {
+                (self.adjust_focus, self.effect_focus) = (None, Some((index, effect)));
             }
         }
     }
@@ -985,7 +1140,7 @@ impl App {
             }
             ui.painter().vline(rect.left() + EYE_W, rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
             let eye = ui.put(egui::Rect::from_center_size(egui::pos2(rect.left() + EYE_W / 2.0, rect.center().y), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !hidden));
-            let x = rect.left() + EYE_W + 6.0 + DEPTH_W * depth + THUMB_PT / 2.0 + 18.0;
+            let x = rect.left() + EYE_W + 6.0 + DEPTH_W * depth + THUMB_PT / 2.0 + 32.0;
             let swatch = egui::Rect::from_center_size(egui::pos2(x + 6.0, rect.center().y), egui::vec2(12.0, 12.0));
             ui.painter().rect_filled(swatch, 2.0, egui::Color32::from_rgb(color[0], color[1], color[2]));
             ui.painter().rect_stroke(swatch, 2.0, egui::Stroke::new(1.0, visuals.weak_text_color()), egui::StrokeKind::Outside);
@@ -1019,14 +1174,17 @@ impl App {
                 let trash = icons::bare_button(ui, size, false, deletable || self.adjust_drag.is_some(), t!("Delete the selected layers"), icons::draw_trash);
                 self.trash_rect = Some(trash.rect);
                 // 調整の行を運んでいる間は、ごみ箱を光らせる。
-                if self.adjust_drag.is_some() && trash.contains_pointer() {
+                if (self.adjust_drag.is_some() || self.effect_drag.is_some()) && trash.contains_pointer() {
                     ui.painter().rect_stroke(trash.rect, 4.0, egui::Stroke::new(1.5, super::theme::BAD), egui::StrokeKind::Inside);
                 }
                 if trash.clicked() {
                     // 調整を選んでいれば、その調整だけを消す。
                     match self.adjust_focus.filter(|(i, k)| Some(*i) == index && *k < self.decals[*i].layer.adjust.len()) {
                         Some((i, k)) => self.remove_adjustment(i, k),
-                        None => self.cmd_delete(),
+                        None => match self.focused_effect() {
+                            Some((i, e)) => self.remove_effect(i, e),
+                            None => self.cmd_delete(),
+                        },
                     }
                 }
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {

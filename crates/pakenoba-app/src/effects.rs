@@ -483,7 +483,7 @@ pub fn enabled(stack: &[Adjustment]) -> Vec<AdjustKind> {
 pub fn shown(placed: &Placed, wait: bool) -> Picture {
     let stack = enabled(&placed.layer.adjust);
     // ベクターの柄の、色ごとの見せ方（もとの SVG を覚えているときだけ）。
-    let restyle = match (&placed.picture, placed.layer.vector.as_ref().filter(|v| !v.is_plain())) {
+    let restyle = match (&placed.picture, placed.layer.vector.as_ref().filter(|v| v.active())) {
         (Picture::Image { rgba, vector: true, .. }, Some(style)) => crate::vector::svg_of(rgba).map(|svg| (svg, style.clone())),
         _ => None,
     };
