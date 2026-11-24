@@ -37,6 +37,10 @@ struct Globals {
     paper_edge: vec4<f32>,
     // コート: 強さ、粗さ、色の深まり（グロス PP で色が濃く見える）、使わない。
     coat: vec4<f32>,
+    // 紙のきめ: 繊維の大きさ（mm）、表と裏の凹凸の高さ（mm）、色のむら。
+    grain: vec4<f32>,
+    // 展開図の大きさ（mm）と、段ボールの段の間隔（mm）と高さ（mm）。
+    sheet: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var art: texture_2d<f32>;
@@ -53,6 +57,7 @@ struct VertexOut {
     @location(1) uv: vec2<f32>,
     @location(2) kind: f32,
     @location(3) clip: vec4<f32>,
+    @location(4) world: vec3<f32>,
 };
 
 @vertex
@@ -60,6 +65,7 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
     var out: VertexOut;
     out.position = globals.view_proj * vec4<f32>(pos, 1.0);
     out.clip = out.position;
+    out.world = pos;
     out.normal = normal;
     out.uv = uv;
     out.kind = kind;
@@ -121,6 +127,46 @@ fn neutral(c0: vec3<f32>) -> vec3<f32> {
     return mix(c, vec3<f32>(new_peak), g);
 }
 
+// 紙のきめ。値の雑音（0〜1）を、大きさを変えて重ねる。繊維の向きに少し伸ばす。
+fn hash2(p: vec2<f32>) -> f32 {
+    var q = fract(p * vec2<f32>(123.34, 456.21));
+    q = q + dot(q, q + 45.32);
+    return fract(q.x * q.y);
+}
+
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i);
+    let b = hash2(i + vec2<f32>(1.0, 0.0));
+    let c = hash2(i + vec2<f32>(0.0, 1.0));
+    let d = hash2(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// 紙の表面の高さ（0〜1 くらい）。`p` は mm を繊維の大きさで割ったもの。
+fn fibers(p: vec2<f32>) -> f32 {
+    var v = value_noise(p) * 0.45;
+    v += value_noise(p * 2.07 + vec2<f32>(17.0, 3.0)) * 0.3;
+    v += value_noise(vec2<f32>(p.x * 4.3, p.y * 1.4) + vec2<f32>(31.0, 11.0)) * 0.25;
+    return v;
+}
+
+// 紙の高さ（mm）。繊維と、段ボールの段。
+fn paper_height(mm: vec2<f32>, amp: f32) -> f32 {
+    var h = fibers(mm / globals.grain.x) * amp;
+    if globals.sheet.z > 0.0 {
+        h += (0.5 + 0.5 * cos(mm.x / globals.sheet.z * 2.0 * PI)) * globals.sheet.w;
+    }
+    return h;
+}
+
+// 刷った色は、紙の色と掛け合わさる（インキは透ける）。白い紙ではほぼそのまま、クラフト紙では暗く茶色っぽくなる。
+fn ink_on(paper: vec3<f32>) -> vec3<f32> {
+    return min(paper / 0.88, vec3<f32>(1.0));
+}
+
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
@@ -129,6 +175,12 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    // 紙のきめのための、画面の 1 画素あたりの変化（分岐の前に求める）。
+    let mm = in.uv * globals.sheet.xy;
+    let dpx = dpdx(in.world);
+    let dpy = dpdy(in.world);
+    let dmx = dpdx(mm);
+    let dmy = dpdy(mm);
     // 抜き穴の中は描かない。角の丸い四角として判定する。
     for (var i = 0; i < 2; i++) {
         let hole = globals.holes[i];
@@ -144,12 +196,37 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let near = globals.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
     let far = globals.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
     let v = normalize(near.xyz / near.w - far.xyz / far.w);
-    var n = normalize(in.normal);
-    if dot(n, v) < 0.0 {
-        n = -n;
+    var n0 = normalize(in.normal);
+    if dot(n0, v) < 0.0 {
+        n0 = -n0;
+    }
+    // 紙のきめで、面の向きを少しずらす（コートの膜は平らなので、膜の映り込みには使わない）。
+    // 1 画素が繊維より大きく見えるほど遠いときは、ちらつかないよう、きめを薄くする。
+    var amp = globals.grain.y;
+    if in.kind > 0.5 && in.kind < 1.5 {
+        amp = globals.grain.z;
+    }
+    var n = n0;
+    var grain = 0.5;
+    let footprint = max(length(dmx), length(dmy));
+    let det = dmx.x * dmy.y - dmy.x * dmx.y;
+    let fade = 1.0 - smoothstep(0.35, 1.2, footprint / globals.grain.x);
+    if in.kind < 1.5 && abs(det) > 1e-12 && fade > 0.0 {
+        let t_mm = normalize((dpx * dmy.y - dpy * dmx.y) / det);
+        let b_mm = normalize((dpy * dmx.x - dpx * dmy.x) / det);
+        let e = globals.grain.x * 0.25;
+        let gx = (paper_height(mm + vec2<f32>(e, 0.0), amp) - paper_height(mm - vec2<f32>(e, 0.0), amp)) / (2.0 * e);
+        let gy = (paper_height(mm + vec2<f32>(0.0, e), amp) - paper_height(mm - vec2<f32>(0.0, e), amp)) / (2.0 * e);
+        n = normalize(n0 - (gx * t_mm + gy * b_mm) * fade);
+        if dot(n, v) < 0.02 {
+            n = n0;
+        }
+        grain = mix(0.5, fibers(mm / globals.grain.x), fade);
     }
     let nv = max(dot(n, v), 1e-4);
     let r = reflect(-v, n);
+    let nv0 = max(dot(n0, v), 1e-4);
+    let r0 = reflect(-v, n0);
 
     var paper = globals.paper_front;
     var base: vec3<f32>;
@@ -161,21 +238,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // 紙の裏（箱の内側の面）。裏に置いた柄が見える。箱の中は、外より暗い。
         paper = globals.paper_back;
         let back = textureSample(back_art, art_sampler, in.uv);
-        base = mix(paper.rgb, back.rgb, back.a);
+        base = mix(paper.rgb, back.rgb * ink_on(paper.rgb), back.a);
         shade = 0.7;
     } else {
         let texel = textureSample(art, art_sampler, in.uv);
-        base = mix(paper.rgb, texel.rgb, texel.a);
+        base = mix(paper.rgb, texel.rgb * ink_on(paper.rgb), texel.a);
         // コートで色が少し深く（グロス）、または少し白っぽく（マット）見える。
         base = pow(max(base, vec3<f32>(0.0)), vec3<f32>(1.0 + globals.coat.z));
     }
-    let rough = paper.a;
+    // 繊維のむら: 色を少し変え、粗さも場所ごとに少し変える。
+    // 大きなむら（数 mm の雲のような濃淡）は、遠くからも見える。細かいむらは、近くでだけ。
+    let cloud_fade = 1.0 - smoothstep(0.6, 3.0, footprint / 4.0);
+    let cloud = mix(0.5, value_noise(mm / 4.0) * 0.6 + value_noise(mm / 1.7 + vec2<f32>(7.0, 5.0)) * 0.4, cloud_fade);
+    if in.kind < 1.5 {
+        base = base * (1.0 + globals.grain.w * ((grain - 0.5) + 1.2 * (cloud - 0.5)));
+    }
+    let rough = clamp(paper.a + 0.12 * (grain - 0.5), 0.02, 1.0);
     let f_paper = env_brdf(vec3<f32>(0.04), rough, nv);
     var color = base * irradiance(n) * shade * (1.0 - f_paper) + radiance(r, rough) * f_paper * shade;
     // コート（表だけ）。紙の上の透明な膜の映り込み。膜で返したぶん、下の紙は暗くなる。
     if in.kind < 0.5 && globals.coat.x > 0.0 {
-        let fc = env_brdf(vec3<f32>(0.04), globals.coat.y, nv) * globals.coat.x;
-        color = color * (1.0 - fc) + radiance(r, globals.coat.y) * fc;
+        let fc = env_brdf(vec3<f32>(0.04), globals.coat.y, nv0) * globals.coat.x;
+        color = color * (1.0 - fc) + radiance(r0, globals.coat.y) * fc;
     }
     color = color * globals.env.z;
     return vec4<f32>(to_srgb(clamp(neutral(color), vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
@@ -194,6 +278,8 @@ struct Globals {
     paper_back: [f32; 4],
     paper_edge: [f32; 4],
     coat: [f32; 4],
+    grain: [f32; 4],
+    sheet: [f32; 4],
 }
 
 /// 箱の見た目のうち、視点のほかに描くたびに渡すもの。
@@ -204,6 +290,8 @@ pub struct Look {
     pub turn: f32,
     /// 明るさの倍率。
     pub exposure: f32,
+    /// 展開図の大きさ（mm）。紙のきめの大きさを mm で合わせるため。
+    pub sheet: [f32; 2],
 }
 
 fn linear(srgb: [u8; 3]) -> [f32; 3] {
@@ -228,6 +316,18 @@ fn paper_values(paper: Paper) -> [[f32; 4]; 3] {
         Paper::Corrugated => (([184, 146, 104], 0.85), ([170, 135, 96], 0.88), ([160, 125, 88], 0.95)),
     };
     [with(linear(front.0), front.1), with(linear(back.0), back.1), with(linear(edge.0), edge.1)]
+}
+
+/// 紙のきめ: 繊維の大きさ（mm）、表と裏の凹凸の高さ（mm）、色のむら。段ボールの段の間隔と高さ（mm）。
+fn grain_values(paper: Paper) -> ([f32; 4], [f32; 2]) {
+    match paper {
+        Paper::CoatedBoard => ([0.18, 0.004, 0.02, 0.02], [0.0, 0.0]),
+        Paper::Coated => ([0.15, 0.003, 0.003, 0.01], [0.0, 0.0]),
+        Paper::MatteCoated => ([0.15, 0.006, 0.006, 0.015], [0.0, 0.0]),
+        Paper::Uncoated => ([0.25, 0.015, 0.015, 0.03], [0.0, 0.0]),
+        Paper::Kraft => ([0.35, 0.03, 0.035, 0.12], [0.0, 0.0]),
+        Paper::Corrugated => ([0.35, 0.03, 0.035, 0.12], [4.0, 0.03]),
+    }
 }
 
 /// コートの、強さ、粗さ、色の深まり。
@@ -521,6 +621,7 @@ impl BoxRenderer {
 
     fn globals(&self, view_proj: Mat4, look: &Look, holes: [[f32; 4]; 2]) -> Globals {
         let [paper_front, paper_back, paper_edge] = paper_values(look.material.paper);
+        let (grain, flute) = grain_values(look.material.paper);
         Globals {
             view_proj,
             inv_view_proj: invert(&view_proj),
@@ -531,6 +632,8 @@ impl BoxRenderer {
             paper_back,
             paper_edge,
             coat: coat_values(look.material.coat),
+            grain,
+            sheet: [look.sheet[0].max(1.0), look.sheet[1].max(1.0), flute[0], flute[1]],
         }
     }
 

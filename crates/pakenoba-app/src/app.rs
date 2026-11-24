@@ -51,7 +51,7 @@ use pakenoba_core::project;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template, TuckFlaps};
 
-use crate::art::{SheetArt, compose, compose_back, make_sheet_art};
+use crate::art::{SheetArt, compose, compose_back, compose_split, make_sheet_art};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Canvas, Marks, Picture, Placed, paint};
 
@@ -1147,9 +1147,10 @@ impl App {
         };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.front_rgba = compose(&self.sheet, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
+            let (flat, solid) = compose_split(&self.sheet, false, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
+            self.front_rgba = flat;
             if let Some(rs) = rs {
-                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, &self.front_rgba);
+                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, solid.as_deref().unwrap_or(&self.front_rgba));
             }
             self.art_dirty = false;
             self.front_tex_dirty = true;
@@ -1161,9 +1162,10 @@ impl App {
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            self.back_rgba = compose_back(&self.sheet, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
+            let (flat, solid) = compose_split(&self.sheet, true, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
+            self.back_rgba = flat;
             if let Some(rs) = rs {
-                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, &self.back_rgba);
+                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, solid.as_deref().unwrap_or(&self.back_rgba));
             }
             self.back_has_decals = decals.iter().any(|decal| decal.back);
             self.back_dirty = false;

@@ -218,6 +218,30 @@ pub fn compose_back(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, 
     out
 }
 
+/// 表示用の画像と、立体に貼る画像を、柄を 1 回だけ描いて作る。
+///
+/// 読み込んだ絵柄（`custom`）がなければ、柄は透明な紙の上に描く。立体に貼る画像は、刷った所だけが色を持ち、
+/// 紙の色と、つや、きめは、描くときに紙の種類から付ける（紙の色が透けて見えるように）。
+/// 展開図の表示の画像は、その下に確認用の紙の色を敷いたもの。
+/// 読み込んだ絵柄があれば、それが紙ごと刷った絵なので、どちらも同じ画像にする（立体用は None）。
+pub fn compose_split(sheet: &SheetArt, back: bool, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> (Vec<u8>, Option<Vec<u8>>) {
+    let guides = if back { &sheet.lines } else { &sheet.guides };
+    if custom.is_some() {
+        let flat = if back { compose_back(sheet, custom, show_guides, decals) } else { compose(sheet, custom, show_guides, decals) };
+        return (flat, None);
+    }
+    let paper = if back { BACK_PAPER } else { PAPER };
+    let mut printed: Vec<u8> = [paper[0], paper[1], paper[2], 0].repeat(sheet.w * sheet.h);
+    decals(&mut printed);
+    let mut flat = if back { back_paper(sheet) } else { sheet.art.clone() };
+    alpha_over(&mut flat, &printed);
+    if show_guides {
+        alpha_over(&mut flat, guides);
+        alpha_over(&mut printed, guides);
+    }
+    (flat, Some(printed))
+}
+
 /// 箱に貼る画像を作る。`custom` があれば確認用の絵柄の代わりに使う。
 /// 立体の上で置いた柄は、絵柄の上、ガイド線の下に `decals` で描く。
 pub fn compose(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {

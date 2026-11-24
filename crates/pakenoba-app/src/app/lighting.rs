@@ -35,7 +35,8 @@ impl App {
     /// 描くときの、素材と照らし方。`yaw` は視点の左右の向き（景色は視点といっしょに回る）。
     pub(super) fn look(&self, yaw: f32) -> Look {
         let l = &self.settings.lighting;
-        Look { material: self.material, turn: yaw + l.turn.to_radians(), exposure: 2f32.powf(l.exposure) }
+        let t = &self.template;
+        Look { material: self.material, turn: yaw + l.turn.to_radians(), exposure: 2f32.powf(l.exposure), sheet: [t.max[0] - t.min[0], t.max[1] - t.min[1]] }
     }
 
     /// 選んだ景色を用意し、できていたら GPU へ送る。描く前に毎回呼ぶ。
