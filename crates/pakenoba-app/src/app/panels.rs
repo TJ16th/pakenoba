@@ -638,7 +638,7 @@ impl App {
     /// 左（型）: 型の一覧。
     pub(super) fn shape_list(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("shape-list").resizable(false).exact_size(180.0).frame(super::theme::side_frame()).show(ui, |ui| {
-            boxed(ui, t!("Box type"), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+            boxed(ui, t!("Box type"), false, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (sides, label) in SHAPES {
                     if ui.selectable_label(self.dims.sides == sides, pakenoba_i18n::tr(label)).clicked() && self.dims.sides != sides {
                         if self.decals.is_empty() {
@@ -646,15 +646,19 @@ impl App {
                         } else {
                             // 置いた柄が外れるので、先に確かめる。
                             self.pending_shape = Some(sides);
+                            self.pending_dims = None;
                         }
                     }
                 }
             }));
+            boxed(ui, t!("Your box types"), true, |ui| self.my_shapes(ui));
         });
     }
 
     /// 右（型）: 寸法、紙の厚み、型紙の検査。
     pub(super) fn shape_settings(&mut self, ui: &mut egui::Ui) {
+        // 寸法とフラップを変えたら、元に戻せるように変える前を覚える（つまみを動かしているあいだは 1 回だけ）。
+        let dims_before = self.dims;
         egui::Panel::right("shape-settings").resizable(false).exact_size(320.0).frame(super::theme::side_frame()).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -707,6 +711,7 @@ impl App {
                         // 元に戻すで、戻す前の寸法へ戻れるように。
                         self.history.record(self.snapshot());
                         self.dims = initial;
+                        self.editing = true;
                     }
                 });
                 if self.dims.sides == 0 {
@@ -728,6 +733,14 @@ impl App {
                 });
             });
         });
+        if self.dims != dims_before && self.dims.sides == dims_before.sides {
+            if !self.editing {
+                let mut earlier = self.snapshot();
+                earlier.dims = dims_before;
+                self.history.record(earlier);
+            }
+            self.editing = true;
+        }
     }
 
     /// 差し込み箱のフラップの長さ。寸法と同じく、つまみと数の欄で変える。
@@ -794,9 +807,12 @@ impl App {
         match picked {
             Some(0) => {
                 self.pending_shape = None;
-                self.set_shape(sides);
+                match self.pending_dims.take() {
+                    Some((dims, material)) => self.apply_dims(dims, material),
+                    None => self.set_shape(sides),
+                }
             }
-            Some(_) => self.pending_shape = None,
+            Some(_) => (self.pending_shape, self.pending_dims) = (None, None),
             None => {}
         }
     }

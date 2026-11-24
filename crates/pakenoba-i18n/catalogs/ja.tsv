@@ -1330,3 +1330,9 @@ blend	Color	カラー
 	Stop tiling	タイルをやめる
 	This layer is locked.	このレイヤーはロックされています。
 	Vector style	ベクターの見せ方
+	Deleted "{name}" from your box types.	自分の型から「{name}」を消しました。
+	Save the size and paper you use often, and pick them here next time.	よく使う寸法と紙を残しておくと、次からここで選べます。
+	Saved "{name}" to your box types. It can be used in any project.	自分の型に「{name}」を残しました。どの案件でも使えます。
+	Saves this box type, size and paper under the name. It can be used in any project.	いまの型と寸法と紙を、この名前で残します。どの案件でも使えます。
+	This box type is not available in this version.	この型は、この版では使えません。
+	Your box types	自分の型

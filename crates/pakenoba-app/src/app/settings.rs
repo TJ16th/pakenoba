@@ -69,6 +69,38 @@ struct Stored {
     /// 箱開け動画の動きのプリセット（どの案件でも使う）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     motion: Vec<MotionPreset>,
+    /// 自分の型（型と寸法と紙に名前を付けたもの。どの案件でも使う）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    shape: Vec<ShapePreset>,
+}
+
+/// 自分の型。組み込みの型に、寸法と紙を決めて名前を付けたもの。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ShapePreset {
+    pub name: String,
+    /// 型（`Dims::sides` と同じ番号）。
+    pub sides: usize,
+    /// 寸法（mm）。使わない型のものも、そのまま残す。
+    pub width: f32,
+    pub depth: f32,
+    pub height: f32,
+    pub thickness: f32,
+    #[serde(default)]
+    pub bulge: f32,
+    #[serde(default)]
+    pub roof: f32,
+    /// 差し込み箱のフラップの長さ（決めていないものは書かない）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glue_flap: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dust_flap: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tuck_flap: Option<f32>,
+    /// 紙とコート（`Paper::key`、`Coat::key`）。
+    #[serde(default)]
+    pub paper: String,
+    #[serde(default)]
+    pub coat: String,
 }
 
 /// 箱開け動画の動きのプリセット。デザインを変えても、同じ見せ方で書き出すため。
@@ -134,12 +166,13 @@ pub(super) struct Settings {
     pub lighting: Lighting,
     /// 箱開け動画の動きのプリセット。
     pub motions: Vec<MotionPreset>,
+    pub shapes: Vec<ShapePreset>,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new() }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new() }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -147,17 +180,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor, language: stored.language, record_log: stored.record_log, agent_folders: stored.agent_folders, lighting: stored.lighting, motions: stored.motion },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor, language: stored.language, record_log: stored.record_log, agent_folders: stored.agent_folders, lighting: stored.lighting, motions: stored.motion, shapes: stored.shape },
                 Err(e) => {
                     eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new() }
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new() }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new() },
             Err(e) => {
                 eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new() }
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new() }
             }
         }
     }
@@ -165,7 +198,7 @@ impl Settings {
     /// いまの設定を書く。書けなかったら、そのわけを返す。
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone(), record_log: self.record_log, agent_folders: self.agent_folders.clone(), lighting: self.lighting.clone(), motion: self.motions.clone() }).map_err(|e| e.to_string())?;
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone(), record_log: self.record_log, agent_folders: self.agent_folders.clone(), lighting: self.lighting.clone(), motion: self.motions.clone(), shape: self.shapes.clone() }).map_err(|e| e.to_string())?;
         write_text(file, &format!("# PAKENOBA settings. The app rewrites this file.\n{text}")).map_err(|e| t!("Could not save the settings: {e}"))
     }
 

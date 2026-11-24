@@ -23,6 +23,7 @@ mod select;
 pub(crate) mod settings;
 mod typing;
 mod shapes;
+mod my_shapes;
 pub(crate) mod adjust;
 mod vectorize;
 mod model3d;
@@ -183,7 +184,7 @@ pub fn is_pillow(sides: usize) -> bool {
     sides == PILLOW || sides == PLAIN_PILLOW
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Dims {
     /// 0 は差し込み箱、1 は丸みのある手提げ型、2 はゲーブル型、100 はピロー型、それ以外の 3 以上は正多角柱の角の数。
     sides: usize,
@@ -502,6 +503,10 @@ struct App {
     editing: bool,
     /// 型を変えようとして、確認を待っている型。
     pending_shape: Option<usize>,
+    /// 自分の型を選んで、型が変わるのを確かめているあいだの、寸法と紙。
+    pending_dims: Option<(Dims, pakenoba_core::material::Material)>,
+    /// 自分の型として残すときの名前の欄。
+    shape_preset_name: String,
     /// 次に型紙を作り直すとき、柄を外さない（元に戻すで型を戻すとき）。
     keep_decals: bool,
     /// 素材の欄から運んでいる素材を、いま放したら置かれる柄。箱の上に、仮に描いて見せる。
@@ -723,6 +728,8 @@ impl App {
             history: history::History::default(),
             editing: false,
             pending_shape: None,
+            pending_dims: None,
+            shape_preset_name: String::new(),
             keep_decals: false,
             preview: None,
             asset_selected: None,
@@ -912,6 +919,9 @@ impl App {
             self.dims = state.dims;
             self.keep_decals = true;
             self.rebuild_if_needed();
+        } else if state.dims != self.dims {
+            // 同じ型の中で寸法を変えた前へ戻す（柄はパネルの中の位置で持つので、付いてくる）。
+            self.dims = state.dims;
         }
         self.restore_library(state.library);
         if !(base::same_base(&state.bases[0], &self.bases[0]) && base::same_base(&state.bases[1], &self.bases[1])) {
