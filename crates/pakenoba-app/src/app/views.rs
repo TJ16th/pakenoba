@@ -186,6 +186,30 @@ pub(super) fn projection(ortho: bool, fov: f32, aspect: f32, dist: f32, radius: 
 }
 
 /// 立体の点を、表示 `rect` の上の点へ。視点の後ろなら `None`。
+/// 吸い付きの補助線の色（イラストレーターのスマートガイドに近い、目立つ桃色）。
+const SNAP_COLOR: Color32 = Color32::from_rgb(255, 64, 200);
+/// 吸い付く距離（画面の点）。
+const SNAP_REACH: f32 = 8.0;
+
+/// 柄を、置かれているパネルの中央と端に吸い付かせる。`ppm` は、画面での 1 mm の大きさ（点）。
+/// Ctrl（Mac では Command）を押している間は吸い付かない。吸い付いた先の補助線を `guides` に足す。
+fn snap(guides: &mut Vec<(usize, [f32; 2], [f32; 2])>, template: &pakenoba_core::template::Template, decal: Decal, ppm: f32, ui: &egui::Ui) -> Decal {
+    if ui.input(|i| i.modifiers.command) || !ppm.is_finite() || ppm <= 0.0 {
+        return decal;
+    }
+    let found = pakenoba_core::surface::snap_to_panel(template, &decal, (SNAP_REACH / ppm).min(10.0));
+    guides.extend(found.guides);
+    found.decal
+}
+
+/// 柄の置かれた面の上での、画面の 1 mm の大きさ（点）。
+fn px_per_mm(mvp: &Mat4, rect: Rect, frame: &pakenoba_core::math::Affine) -> f32 {
+    match (project(mvp, rect, frame.point([0.0, 0.0, 0.0])), project(mvp, rect, frame.point([10.0, 0.0, 0.0])), project(mvp, rect, frame.point([0.0, 10.0, 0.0]))) {
+        (Some(o), Some(x), Some(y)) => ((x - o).length().max((y - o).length())) / 10.0,
+        _ => 0.0,
+    }
+}
+
 fn project(mvp: &Mat4, rect: Rect, p: V3) -> Option<Pos2> {
     let v = [p[0], p[1], p[2], 1.0];
     let c: Vec<f32> = (0..4).map(|r| (0..4).map(|k| mvp[k][r] * v[k]).sum()).collect();
@@ -222,6 +246,12 @@ impl App {
             ui.ctx().request_repaint();
         }
         let mut candidate: Option<Placed> = None;
+        // 吸い付きの補助線は、ひとつ前の画面で見つけたものを出す。消えたあとにも一度描き直す。
+        let had_guides = !self.snap_shown.is_empty();
+        self.snap_shown = std::mem::take(&mut self.snap_guides);
+        if had_guides || !self.snap_shown.is_empty() {
+            ui.ctx().request_repaint();
+        }
         if let Some(rect) = solid {
             // 開け閉めと組み立ては、立体の表示に付く操作なので、立体の表示のすぐ下に置く。
             let rows = self.motion_rows(rect.width());
@@ -401,6 +431,8 @@ impl App {
                         // 立体の上では、向きを面ごとの「上」にそろえて保つ（同じ面に戻れば、同じ向きに戻る）。
                         let before = decal.center(template);
                         self.surface.drag_on_solid(template, decal, back, panel, at, grab);
+                        let ppm = px_per_mm(&mvp, rect, &frame_of(&decal.decal));
+                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, ppm, ui);
                         self.move_along(index, before);
                         self.art_dirty = true;
                     }
@@ -484,6 +516,11 @@ impl App {
             let angle = upward.map_or(0.0, |d| ((-d[0]).atan2(d[1]) / quarter).round() * quarter);
             self.asset_decal(asset, panel, at, back, angle)
         });
+        let candidate = candidate.map(|mut placed| {
+            let ppm = px_per_mm(&mvp, rect, &frame_of(&placed.decal));
+            placed.decal = snap(&mut self.snap_guides, template, placed.decal, ppm, ui);
+            placed
+        });
 
         let proj = projection(ortho, fov, aspect, dist, radius);
         let look = self.look(self.yaw);
@@ -503,6 +540,16 @@ impl App {
         // 大きさと回転のつまみ（動かしたあとの場所で）。
         if let Some(quad) = self.knob_target(None).and_then(|i| quad_of(&self.decals[i])) {
             transform::paint(&painter, quad, ui.visuals().selection.bg_fill);
+        }
+        // 吸い付いた先の補助線。丸めた面にも沿うよう、細かく分けて描く。
+        for &(panel, a, b) in &self.snap_shown {
+            let points: Vec<Pos2> = (0..=32)
+                .filter_map(|k| {
+                    let q = [a[0] + (b[0] - a[0]) * k as f32 / 32.0, a[1] + (b[1] - a[1]) * k as f32 / 32.0];
+                    project(&mvp, rect, world.then_after(&placements[panel].at(q)).point([q[0], q[1], 0.0]))
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, egui::Stroke::new(1.0, SNAP_COLOR)));
         }
 
         self.view_presets(ui, rect);
@@ -640,6 +687,7 @@ impl App {
                     if let Some(decal) = self.decals.get_mut(index) {
                         let before = decal.center(template);
                         self.surface.drag(template, decal, panel, at, grab);
+                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, scale, ui);
                         self.move_along(index, before);
                         self.art_dirty = true;
                     }
@@ -714,6 +762,10 @@ impl App {
             let (panel, at) = under(pos)?;
             self.asset_decal(asset, panel, at, back, 0.0)
         });
+        let candidate = candidate.map(|mut placed| {
+            placed.decal = snap(&mut self.snap_guides, template, placed.decal, scale, ui);
+            placed
+        });
 
         // 展開図の絵。裏は、左右を逆にして貼る。
         let texture = if back { &self.back_tex } else { &self.front_tex };
@@ -725,6 +777,10 @@ impl App {
         if let Some(i) = self.knob_target(back) {
             let quad = transform::corners(&self.decals[i], template).map(to_screen);
             transform::paint(&painter.with_clip_rect(area.intersect(rect)), quad, visuals.selection.bg_fill);
+        }
+        // 吸い付いた先の補助線。
+        for &(_, a, b) in &self.snap_shown {
+            painter.with_clip_rect(area.intersect(rect)).line_segment([to_screen(a), to_screen(b)], egui::Stroke::new(1.0, SNAP_COLOR));
         }
 
         // 定規（mm）。原点は、展開図の左上。

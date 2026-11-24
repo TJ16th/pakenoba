@@ -540,6 +540,48 @@ impl Surface {
     }
 }
 
+/// 柄をドラッグしているときの、吸い付き（スナップ）の結果。
+pub struct Snap {
+    /// 吸い付いたあとの柄。
+    pub decal: Decal,
+    /// 吸い付いた先を示す線（展開図の座標、パネルの番号つき）。画面に補助線として出す。
+    pub guides: Vec<(usize, P2, P2)>,
+}
+
+/// 柄を、置かれているパネルの中央と端に吸い付かせる。`reach` mm より近いものにだけ吸い付く。
+///
+/// 横と縦は別々に見る。柄の左端・中心・右端を、パネルの左端・中央・右端と比べ、いちばん近い組に合わせる（縦も同じ）。
+/// 柄が回っていれば、回った柄を囲む四角の端で比べる。パネルの形が四角でなければ、パネルを囲む四角の端と中央を使う。
+pub fn snap_to_panel(tpl: &Template, decal: &Decal, reach: f32) -> Snap {
+    let (lo, hi) = panel_box(tpl, decal.panel);
+    let place = decal.place(tpl);
+    let corners = [[-1.0f32, -1.0f32], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]].map(|s| place.point([s[0] * decal.size[0] * 0.5, s[1] * decal.size[1] * 0.5]));
+    let center = decal.center(tpl);
+    let mut shift = [0.0f32; 2];
+    let mut guides = Vec::new();
+    for axis in 0..2 {
+        let low = corners.iter().map(|c| c[axis]).fold(f32::INFINITY, f32::min);
+        let high = corners.iter().map(|c| c[axis]).fold(f32::NEG_INFINITY, f32::max);
+        let mid = 0.5 * (lo[axis] + hi[axis]);
+        // 中央を先に並べて、同じ近さなら中央を選ぶ。
+        let pairs = [(center[axis], mid), (low, lo[axis]), (high, hi[axis])];
+        let best = pairs.iter().map(|&(have, want)| (want - have, want)).filter(|(d, _)| d.abs() <= reach).min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()));
+        if let Some((d, at)) = best {
+            shift[axis] = d;
+            let other = 1 - axis;
+            let (mut a, mut b) = ([0.0f32; 2], [0.0f32; 2]);
+            a[axis] = at;
+            b[axis] = at;
+            a[other] = lo[other];
+            b[other] = hi[other];
+            guides.push((decal.panel, a, b));
+        }
+    }
+    let mut snapped = *decal;
+    snapped.set_center(tpl, [center[0] + shift[0], center[1] + shift[1]]);
+    Snap { decal: snapped, guides }
+}
+
 /// 線分が、原点を中心にした四角（半分の幅と高さが `half`）にかかるか。
 fn segment_hits_box(a: P2, b: P2, half: [f32; 2]) -> bool {
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
@@ -748,6 +790,32 @@ fn polygons_overlap(a: &[P2], b: &[P2]) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn 柄はパネルの中央と端に吸い付く() {
+        let tpl = Template::tuck_box(120.0, 60.0, 160.0, 0.5);
+        let front = tpl.panels.iter().position(|p| p.name == "正面").unwrap();
+        let (lo, hi) = panel_box(&tpl, front);
+        let mid = [0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1])];
+        let mut decal = Decal { panel: front, at: [0.5, 0.5], size: [40.0, 20.0], angle: 0.0 };
+        // 中央から少しずれた柄は、中央へ戻る。
+        decal.set_center(&tpl, [mid[0] + 1.5, mid[1] - 2.0]);
+        let snap = snap_to_panel(&tpl, &decal, 3.0);
+        let c = snap.decal.center(&tpl);
+        assert!((c[0] - mid[0]).abs() < 1e-3 && (c[1] - mid[1]).abs() < 1e-3, "{c:?}");
+        assert_eq!(snap.guides.len(), 2);
+        // 左端の近くの柄は、柄の左端がパネルの左端にそろう。縦は遠いので動かない。
+        decal.set_center(&tpl, [lo[0] + 20.0 + 2.0, mid[1] + 30.0]);
+        let snap = snap_to_panel(&tpl, &decal, 3.0);
+        let c = snap.decal.center(&tpl);
+        assert!((c[0] - 20.0 - lo[0]).abs() < 1e-3, "{c:?}");
+        assert!((c[1] - mid[1] - 30.0).abs() < 1e-3);
+        assert_eq!(snap.guides.len(), 1);
+        // 遠ければ、吸い付かない。
+        decal.set_center(&tpl, [mid[0] + 10.0, mid[1] + 10.0]);
+        assert!(snap_to_panel(&tpl, &decal, 3.0).guides.is_empty());
+    }
+
     use super::*;
 
     const W: f32 = 120.0;

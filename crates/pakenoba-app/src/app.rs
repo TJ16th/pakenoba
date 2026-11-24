@@ -519,6 +519,10 @@ struct App {
     hover_now: Option<usize>,
     /// つかんでいる柄の番号と、柄の座標でのつかんだ位置。
     grab: Option<(usize, P2)>,
+    /// 柄や素材をドラッグしていて、パネルの中央や端に吸い付いた先の補助線（この画面で見つけたもの）と、
+    /// 画面に出しているもの（ひとつ前の画面で見つけたもの。立体と展開図の両方に出すため）。
+    snap_guides: Vec<(usize, P2, P2)>,
+    snap_shown: Vec<(usize, P2, P2)>,
     /// 大きさや回転のつまみで、変形している途中。
     transforming: Option<transform::Transforming>,
     /// 柄の幅と高さの比率をそろえる（プロパティの鎖のボタン。角のつまみも、これに従う）。
@@ -708,6 +712,8 @@ impl App {
             hover_decal: None,
             hover_now: None,
             grab: None,
+            snap_guides: Vec::new(),
+            snap_shown: Vec::new(),
             transforming: None,
             ratio_lock: true,
             place_turn: 0,
