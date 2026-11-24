@@ -293,7 +293,7 @@ impl App {
         egui::Window::new(t!("About PAKENOBA")).collapsible(false).resizable(false).open(&mut open).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
             ui.set_max_width(380.0);
             ui.heading(t!("PAKENOBA"));
-            ui.label(t!("Version {}", env!("CARGO_PKG_VERSION")));
+            ui.label(t!("Version {}", crate::VERSION_LABEL));
             ui.add_space(6.0);
             ui.label(t!("Software for designing packages: choose a dieline, place artwork on the box, and export."));
             ui.add_space(6.0);

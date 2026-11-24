@@ -4,8 +4,10 @@
 
 .DESCRIPTION
   1. リリース用にビルドする（cargo build --release -p pakenoba-app）。
-  2. dist\pakenoba-<日付>-<コミット>-windows-x64\ に、pakenoba.exe、はじめに.txt、ライセンスの条文を集める。
-  3. そのフォルダを ZIP にする（dist\pakenoba-<日付>-<コミット>-windows-x64.zip）。
+  2. dist\pakenoba-v<版>-test<通し番号>-windows-x64\ に、pakenoba.exe、はじめに.txt、ライセンスの条文を集める。
+  3. そのフォルダを ZIP にする（dist\pakenoba-v<版>-test<通し番号>-windows-x64.zip）。
+  版の名前は「v0.0.0 test42」の形で自動で付ける（0.0.0 は Cargo.toml の version、42 はコミットの数）。
+  -SkipBuild のときは、前にビルドした exe の中の版の名前のまま（ZIP の名前だけ新しくなる）。
   見本パック（dist\pakenoba-samples-1.zip）があれば、-WithSamples で ZIP の横に写しを置く（本体の ZIP には入れない。大きいので別に渡す）。
 
 .EXAMPLE
@@ -23,18 +25,31 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# 名前に入れる日付とコミット（git がなければ日付だけ）。
-$date = Get-Date -Format 'yyyyMMdd'
+# 版の名前: Cargo.toml の version と、コミットの数から付ける通し番号（例: v0.0.0 test42）。
+# コミットが増えるたびに番号が上がるので、渡した版を区別できる。
+$version = '0.0.0'
+$toml = Get-Content (Join-Path $root 'Cargo.toml') -Raw -Encoding UTF8
+if ($toml -match '(?m)^version\s*=\s*"([^"]+)"') { $version = $Matches[1] }
+$count = ''
+try { $count = (git rev-list --count HEAD 2>$null).Trim() } catch { }
+if (-not $count) { $count = Get-Date -Format 'yyyyMMddHHmm' }
 $commit = ''
 try { $commit = (git rev-parse --short HEAD 2>$null).Trim() } catch { }
 $dirty = ''
-try { if ((git status --porcelain -- crates 2>$null)) { $dirty = '-dirty' } } catch { }
-$name = if ($commit) { "pakenoba-$date-$commit$dirty-windows-x64" } else { "pakenoba-$date-windows-x64" }
+try { if ((git status --porcelain -- crates 2>$null)) { $dirty = '+' } } catch { }
+$label = "v$version test$count$dirty"
+$date = Get-Date -Format 'yyyy-MM-dd'
+$name = "pakenoba-v$version-test$count-windows-x64"
+Write-Host "版: $label（$date、コミット $commit）"
 
 if (-not $SkipBuild) {
     Write-Host 'リリース用にビルドしています（初回は数分かかります）…'
+    # アプリの「パケノバについて」と起動画面に、この版の名前を出す。
+    $env:PAKENOBA_BUILD = $label
     cargo build --release -p pakenoba-app
-    if ($LASTEXITCODE -ne 0) { throw 'ビルドに失敗しました。' }
+    $code = $LASTEXITCODE
+    Remove-Item Env:PAKENOBA_BUILD
+    if ($code -ne 0) { throw 'ビルドに失敗しました。' }
 }
 
 $exe = Join-Path $root 'target\release\pakenoba.exe'
@@ -48,7 +63,7 @@ New-Item -ItemType Directory -Path $out | Out-Null
 Copy-Item $exe (Join-Path $out 'pakenoba.exe')
 # はじめに.txt は UTF-8（BOM つき。古いメモ帳でも文字化けしないように）。日付とコミットを差し込む。
 $readme = Get-Content (Join-Path $PSScriptRoot 'release\はじめに.txt') -Raw -Encoding UTF8
-$readme = $readme.Replace('{VERSION}', $name)
+$readme = $readme.Replace('{VERSION}', "$label（$date、コミット $commit）")
 [System.IO.File]::WriteAllText((Join-Path $out 'はじめに.txt'), $readme, (New-Object System.Text.UTF8Encoding $true))
 New-Item -ItemType Directory -Path (Join-Path $out 'licenses') | Out-Null
 foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'TRADEMARKS.md') {

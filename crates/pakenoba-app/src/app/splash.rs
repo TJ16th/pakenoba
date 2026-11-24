@@ -87,7 +87,7 @@ impl App {
             let weak = a(Color32::from_gray(140));
             let left = card.left() + 32.0;
             painter.text(pos2(left, card.bottom() - 92.0), Align2::LEFT_BOTTOM, t!("Package design, on the box"), FontId::proportional(15.0), text);
-            painter.text(pos2(left, card.bottom() - 68.0), Align2::LEFT_BOTTOM, t!("Version {}", env!("CARGO_PKG_VERSION")), FontId::proportional(12.0), weak);
+            painter.text(pos2(left, card.bottom() - 68.0), Align2::LEFT_BOTTOM, t!("Version {}", crate::VERSION_LABEL), FontId::proportional(12.0), weak);
             painter.text(pos2(left, card.bottom() - 26.0), Align2::LEFT_BOTTOM, t!("The PAKENOBA name and logo are not covered by the code license (MIT or Apache-2.0)."), FontId::proportional(12.0), weak);
             response.clicked()
         });

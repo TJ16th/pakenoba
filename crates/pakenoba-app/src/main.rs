@@ -7,6 +7,13 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+
+/// 画面に出す版の名前。配布用のビルド（tools/make_release.ps1）では「v0.0.0 test42」のように、
+/// 環境変数 PAKENOBA_BUILD で付ける。ふだんのビルドでは「v0.0.0 dev」。
+pub(crate) const VERSION_LABEL: &str = match option_env!("PAKENOBA_BUILD") {
+    Some(label) => label,
+    None => concat!("v", env!("CARGO_PKG_VERSION"), " dev"),
+};
 mod art;
 mod blend;
 mod effects;
