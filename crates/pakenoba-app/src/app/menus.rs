@@ -171,7 +171,7 @@ impl App {
         let index = self.selected.filter(|&i| design && i < self.decals.len());
         let count = if index.is_some() { self.selection().len() } else { 0 };
         let single = index.filter(|_| count == 1);
-        let locked = index.is_some_and(|i| self.decals[i].layer.locked);
+        let locked = index.is_some_and(|i| self.decals[i].layer.fixed());
         let why = t!("Select artwork in the Design step");
         ui.menu_button(t!("Object"), |ui| {
             ui.set_min_width(260.0);
@@ -281,7 +281,7 @@ impl App {
 
     /// 選んでいる柄を 90 度回す。
     pub(super) fn rotate_selected(&mut self) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len() && !self.decals[i].layer.locked && crate::paint::is_artwork(&self.decals[i].picture)) else { return };
+        let Some(index) = self.selected.filter(|&i| i < self.decals.len() && !self.decals[i].layer.fixed() && crate::paint::is_artwork(&self.decals[i].picture)) else { return };
         self.checkpoint();
         let decal = &mut self.decals[index];
         let turned = decal.angle + std::f32::consts::FRAC_PI_2;

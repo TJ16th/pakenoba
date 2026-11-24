@@ -98,23 +98,6 @@ pub(super) fn eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
     })
 }
 
-/// 柄をロックするかの、鍵のボタン。
-pub(super) fn lock_button(ui: &mut egui::Ui, locked: bool) -> egui::Response {
-    let tip = if locked { t!("Unlock") } else { t!("Lock (cannot be grabbed on the box or the dieline)") };
-    row_button(ui, locked, tip, |painter, c, stroke| {
-        // 錠の本体と、つる。外しているときは、つるを片側だけ浮かせる。
-        painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.2), vec2(9.0, 6.5)), 1.0, stroke, StrokeKind::Middle);
-        let lift = if locked { 0.0 } else { 2.0 };
-        let shackle: Vec<Pos2> = (0..=10).map(|k| { let a = std::f32::consts::PI * k as f32 / 10.0; pos2(c.x - 2.8 * a.cos(), c.y - 1.0 - lift - 3.3 * a.sin()) }).collect();
-        let (left, right) = (shackle[0], shackle[10]);
-        painter.add(Shape::line(shackle, stroke));
-        painter.line_segment([left, pos2(left.x, c.y - 1.0)], stroke);
-        if locked {
-            painter.line_segment([right, pos2(right.x, c.y - 1.0)], stroke);
-        }
-    })
-}
-
 /// 幅と高さの比率をそろえるボタン（Photoshop の鎖のボタン）。つないでいるあいだは、色を付けて鎖をつなげて描く。
 pub(super) fn link_button(ui: &mut egui::Ui, linked: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
@@ -135,4 +118,90 @@ pub(super) fn link_button(ui: &mut egui::Ui, linked: bool) -> egui::Response {
     painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, -3.5 - gap), vec2(6.0, 8.0)), 3.0, stroke, StrokeKind::Middle);
     painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 3.5 + gap), vec2(6.0, 8.0)), 3.0, stroke, StrokeKind::Middle);
     response.on_hover_text(if linked { t!("Width and height keep their ratio (click to change them separately)") } else { t!("Width and height change separately (click to keep their ratio)") })
+}
+
+/// レイヤーの欄の、アイコンだけの小さなボタン（ロックの段と、いちばん下の段）。`on` なら押した色、`enabled` でなければ薄く。
+pub(super) fn small_icon_button(ui: &mut egui::Ui, size: egui::Vec2, on: bool, enabled: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Pos2, Stroke)) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
+    let visuals = ui.visuals();
+    let (fill, color) = if !enabled {
+        (if on { visuals.selection.bg_fill.gamma_multiply(0.5) } else { Color32::TRANSPARENT }, visuals.weak_text_color().gamma_multiply(0.6))
+    } else if on {
+        (visuals.selection.bg_fill, Color32::WHITE)
+    } else if response.hovered() {
+        (visuals.widgets.hovered.bg_fill, visuals.strong_text_color())
+    } else {
+        (visuals.widgets.inactive.weak_bg_fill, visuals.text_color())
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+    icon(ui.painter(), rect.center(), Stroke::new(1.2, color));
+    response.on_hover_text(tip).on_disabled_hover_text(tip)
+}
+
+/// 筆（画像をロック）。16 × 16 の枠の中。
+pub(super) fn draw_brush(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.line_segment([c + vec2(-1.0, 1.0), c + vec2(5.0, -5.0)], Stroke::new(stroke.width + 0.6, stroke.color));
+    painter.add(Shape::convex_polygon(vec![c + vec2(-1.8, 0.2), c + vec2(0.2, 1.8), c + vec2(-2.5, 4.8), c + vec2(-5.2, 5.2), c + vec2(-4.8, 2.5)], stroke.color, Stroke::NONE));
+}
+
+/// 四方の矢印（位置をロック）。
+pub(super) fn draw_move(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.line_segment([c + vec2(-6.0, 0.0), c + vec2(6.0, 0.0)], stroke);
+    painter.line_segment([c + vec2(0.0, -6.0), c + vec2(0.0, 6.0)], stroke);
+    for (tip, a, b) in [((6.0, 0.0), (3.8, -2.2), (3.8, 2.2)), ((-6.0, 0.0), (-3.8, -2.2), (-3.8, 2.2)), ((0.0, 6.0), (-2.2, 3.8), (2.2, 3.8)), ((0.0, -6.0), (-2.2, -3.8), (2.2, -3.8))] {
+        painter.add(Shape::line(vec![c + vec2(a.0, a.1), c + vec2(tip.0, tip.1), c + vec2(b.0, b.1)], stroke));
+    }
+}
+
+/// 鍵（すべてをロック）。
+pub(super) fn draw_lock(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.2), vec2(9.0, 6.5)), 1.0, stroke, StrokeKind::Middle);
+    let shackle: Vec<Pos2> = (0..=10).map(|k| { let a = std::f32::consts::PI * k as f32 / 10.0; pos2(c.x - 2.8 * a.cos(), c.y - 1.0 - 3.3 * a.sin()) }).collect();
+    painter.add(Shape::line(shackle, stroke));
+}
+
+/// 四角に丸の穴（マスクを足す。Photoshop の下の段と同じ形）。
+pub(super) fn draw_mask(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.rect_stroke(Rect::from_center_size(c, vec2(14.0, 11.0)), 1.0, stroke, StrokeKind::Middle);
+    painter.circle_filled(c, 3.3, stroke.color);
+}
+
+/// 半分ぬった丸（調整）。
+pub(super) fn draw_adjust(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.circle_stroke(c, 6.0, stroke);
+    let half: Vec<Pos2> = (0..=16).map(|k| { let a = std::f32::consts::PI * (0.5 + k as f32 / 16.0); c + vec2(6.0 * a.cos(), -6.0 * a.sin()) }).collect();
+    painter.add(Shape::convex_polygon(half, stroke.color, Stroke::NONE));
+}
+
+/// フォルダ（グループ）。
+pub(super) fn draw_folder(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.add(Shape::closed_line(vec![p(-7.0, -4.5), p(-2.5, -4.5), p(-1.0, -3.0), p(7.0, -3.0), p(7.0, 5.0), p(-7.0, 5.0)], stroke));
+    painter.line_segment([p(-7.0, -1.0), p(7.0, -1.0)], stroke);
+}
+
+/// ごみ箱（削除）。
+pub(super) fn draw_trash(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.line_segment([p(-6.0, -4.0), p(6.0, -4.0)], stroke);
+    painter.add(Shape::line(vec![p(-2.0, -4.0), p(-2.0, -6.0), p(2.0, -6.0), p(2.0, -4.0)], stroke));
+    painter.add(Shape::line(vec![p(-4.5, -4.0), p(-3.8, 6.0), p(3.8, 6.0), p(4.5, -4.0)], stroke));
+    painter.line_segment([p(-1.2, -1.5), p(-1.2, 4.0)], stroke);
+    painter.line_segment([p(1.2, -1.5), p(1.2, 4.0)], stroke);
+}
+
+/// 行の右端の、ロックの印（押せない）。すべてをロックなら塗った鍵、一部なら線だけの鍵。
+pub(super) fn lock_mark(ui: &mut egui::Ui, all: bool, tip: &str) {
+    let (rect, response) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
+    let color = ui.visuals().text_color().gamma_multiply(if all { 1.0 } else { 0.6 });
+    let c = rect.center() + vec2(0.0, -1.0);
+    let body = Rect::from_center_size(c + vec2(0.0, 2.5), vec2(8.0, 6.0));
+    if all {
+        ui.painter().rect_filled(body, 1.0, color);
+    } else {
+        ui.painter().rect_stroke(body, 1.0, Stroke::new(1.1, color), StrokeKind::Middle);
+    }
+    let shackle: Vec<Pos2> = (0..=10).map(|k| { let a = std::f32::consts::PI * k as f32 / 10.0; pos2(c.x - 2.4 * a.cos(), c.y - 0.5 - 2.8 * a.sin()) }).collect();
+    ui.painter().add(Shape::line(shackle, Stroke::new(1.1, color)));
+    response.on_hover_text(tip);
 }

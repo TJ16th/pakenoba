@@ -200,8 +200,6 @@
 	Open or close the assets panel	素材の欄を開く、閉じる
 	Hide (not drawn on the box or the dieline)	隠す（箱にも、型紙にも描かない）
 	Show	見せる
-	Unlock	ロックを外す
-	Lock (cannot be grabbed on the box or the dieline)	ロックする（箱や展開図の上で、つかめなくする）
 # pakenoba-app/src/app/library.rs
 	Could not open: {e}	開けませんでした: {e}
 	Not an image	画像ではありません
@@ -725,7 +723,6 @@ blend	Color	カラー
 	Add an adjustment. You can change it, switch it off or remove it later	調整を足します。あとから数値を直す、切る、外すができます
 	Add to this adjustment layer	この調整レイヤーに足す
 	Added a mask. Paint black with the brush to hide parts, white to show them.	マスクを足しました。筆で黒を塗ると隠れ、白を塗ると見えます。
-	Adjust	調整
 	Adjustment layer (everything below)	調整レイヤー（下のすべてに）
 	Adjustment layer {number} cannot use "{}", so it was removed	調整レイヤー {number} では「{}」を使えないので、外しました
 	Adjustment layer	調整レイヤー
@@ -771,14 +768,12 @@ blend	Color	カラー
 	Image tools	画像の道具
 	Invert mask	マスクを反転
 	Invert	階調の反転
-	Layer mask. Click to paint on it with the brush. Right-click for more	レイヤーマスク。押すと筆で描けます。右クリックでほかの操作
 	Layer {number} is a kind this version does not know ("{other}"), so it was removed	レイヤー {number} は、この版が知らない種類（「{other}」）なので、外しました
 	Levels	レベル補正
 	Lightness	明度
 	Made a mask from the subject. Paint on it with the brush to fix the edges.	被写体からマスクを作りました。縁は、筆で塗って直せます。
 	Made a mask from the transparent parts.	透明な部分から、マスクを作りました。
 	Mask brush	マスクの筆
-	Mask	マスク
 	Midtones	中間の明るさ
 	Open the group	グループを開く
 	Paint on the mask	マスクに筆で描く
@@ -808,3 +803,16 @@ blend	Color	カラー
 	White point	白の点
 	"Pass Through" mixes the contents with what is below as if there were no group. Other blend modes mix the group as one picture.	「通過」は、グループがないかのように、中身を下の絵と重ねます。ほかの描画モードでは、グループを 1 枚の絵として重ねます。
 	{count} layer(s) in this group. Drag layers onto the group to add them.	このグループには {count} 個のレイヤーがあります。レイヤーをグループへドラッグすると入ります。
+# レイヤーのロックの段と、小さな絵
+	All locked	すべてロック
+	Has adjustments for this artwork only	この柄だけに効く調整がある
+	Image and position locked	画像と位置をロック
+	Image is locked. Unlock it in the Layers panel to change adjustments or the mask.	画像をロックしています。調整やマスクを変えるには、レイヤーの欄でロックを外してください。
+	Image locked	画像をロック
+	Layer mask. Click to paint on it with the brush, Shift+click to switch it off or on. Right-click for more	レイヤーマスク。押すと筆で描けます。Shift+クリックで使う・使わない。右クリックでほかの操作
+	Lock all: cannot be grabbed, changed or deleted	すべてをロック: つかむ、変える、消すができなくなります
+	Lock image: adjustments and the mask cannot be changed	画像をロック: 調整とマスクを変えられなくなります
+	Lock position: cannot be moved, resized or rotated	位置をロック: 動かす、大きさや向きを変えるができなくなります
+	Lock:	ロック:
+	Position is locked. Unlock it in the Layers panel to move it.	位置をロックしています。動かすには、レイヤーの欄でロックを外してください。
+	Position locked	位置をロック

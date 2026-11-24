@@ -93,7 +93,7 @@ impl App {
                                 self.reorder_selected(-1);
                             }
                             ui.separator();
-                            if ui.add_enabled(!self.decals[index].layer.locked, egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
+                            if ui.add_enabled(!self.decals[index].layer.fixed(), egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
                                 self.rotate_selected();
                             }
                             ui.separator();
@@ -184,8 +184,13 @@ impl App {
             ui.weak(t!("{others} more selected. They move together."));
         }
         let locked = self.decals[index].layer.locked;
+        let fixed = self.decals[index].layer.fixed();
         if locked {
             ui.weak(t!("Locked. To move it, unlock it in the Layers panel."));
+        } else if fixed {
+            ui.weak(t!("Position is locked. Unlock it in the Layers panel to move it."));
+        } else if self.decals[index].layer.lock_pixels {
+            ui.weak(t!("Image is locked. Unlock it in the Layers panel to change adjustments or the mask."));
         }
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
@@ -212,7 +217,7 @@ impl App {
         let mut height = decal.size[1];
         // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
         let mut degrees = decal.angle.to_degrees() * turn + 0.0;
-        ui.add_enabled_ui(!locked, |ui| egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.add_enabled_ui(!fixed, |ui| egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label(t!("Type"));
             ui.label(decal.picture.label());
             ui.end_row();

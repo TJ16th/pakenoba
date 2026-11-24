@@ -105,6 +105,56 @@ fn shrink(w: usize, h: usize, rgba: &[u8], mw: usize, mh: usize) -> Vec<u8> {
     out
 }
 
+/// 小さな絵の、画素の数と、画面での大きさ。
+const THUMB_PX: usize = 48;
+const THUMB_PT: f32 = 26.0;
+
+/// 小さな絵の中で、柄を置く四角（縦横比を保って収める）。左、上、幅、高さ（画素）。
+fn fit(size: [f32; 2]) -> [f32; 4] {
+    let s = THUMB_PX as f32;
+    let aspect = size[0] / size[1].max(1e-3);
+    let (w, h) = if aspect >= 1.0 { (s, s / aspect) } else { (s * aspect, s) };
+    [(s - w) * 0.5, (s - h) * 0.5, w, h]
+}
+
+/// 柄の小さな絵（透明な所は市松模様。柄だけの調整を効かせた絵）。
+fn picture_thumb(placed: &Placed) -> Vec<u8> {
+    let picture = crate::effects::shown(placed, false);
+    let size = placed.size;
+    let [x0, y0, w, h] = fit(size);
+    let mut out = vec![0u8; THUMB_PX * THUMB_PX * 4];
+    for y in 0..THUMB_PX {
+        for x in 0..THUMB_PX {
+            let checker = if ((x / 6) + (y / 6)) % 2 == 0 { 255.0 } else { 204.0 };
+            let (fx, fy) = ((x as f32 + 0.5 - x0) / w, (y as f32 + 0.5 - y0) / h);
+            let c = if (0.0..1.0).contains(&fx) && (0.0..1.0).contains(&fy) { picture.sample([(fx - 0.5) * size[0], (0.5 - fy) * size[1]], size) } else { [0.0; 4] };
+            let o = (y * THUMB_PX + x) * 4;
+            for i in 0..3 {
+                out[o + i] = (c[i] * c[3] + checker * (1.0 - c[3])).round() as u8;
+            }
+            out[o + 3] = 255;
+        }
+    }
+    out
+}
+
+/// マスクの小さな絵（白が見せる所。柄の外は暗い灰色）。
+fn mask_thumb_pixels(placed: &Placed) -> Vec<u8> {
+    let mut out = vec![0u8; THUMB_PX * THUMB_PX * 4];
+    let Some(mask) = placed.layer.mask.as_ref() else { return out };
+    let size = placed.size;
+    let [x0, y0, w, h] = fit(size);
+    for y in 0..THUMB_PX {
+        for x in 0..THUMB_PX {
+            let (fx, fy) = ((x as f32 + 0.5 - x0) / w, (y as f32 + 0.5 - y0) / h);
+            let v = if (0.0..1.0).contains(&fx) && (0.0..1.0).contains(&fy) { (crate::paint::mask_at(mask, [(fx - 0.5) * size[0], (0.5 - fy) * size[1]], size) * 255.0).round() as u8 } else { 60 };
+            let o = (y * THUMB_PX + x) * 4;
+            out[o..o + 4].copy_from_slice(&[v, v, v, 255]);
+        }
+    }
+    out
+}
+
 impl App {
     /// 毎回の描画のはじめに: 別のスレッドで調整した絵やマスクができていれば、取り込む。
     pub(super) fn layers_frame(&mut self) {
@@ -165,6 +215,7 @@ impl App {
     pub(super) fn layers(&mut self, ui: &mut egui::Ui) {
         ui.strong(t!("Layers"));
         self.blend_controls(ui);
+        self.lock_controls(ui);
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
             if ui.checkbox(&mut self.show_guides, t!("Guides (cut lines, fold lines, glue flaps)")).changed() {
                 self.art_dirty = true;
@@ -201,22 +252,18 @@ impl App {
     }
 
     /// レイヤーの行 1 つ。行の場所を返す（名前を変えている間は返さない）。
+    /// 並びは Photoshop と同じ: 目、（字下げ）、（グループなら開け閉め）、小さな絵、マスクの小さな絵、名前、fx、ロックの印。
     fn layer_row(&mut self, ui: &mut egui::Ui, index: usize) -> Option<egui::Rect> {
         let row = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().item_spacing.x = 3.0;
             let layer = self.decals[index].layer.clone();
             if icons::eye_button(ui, !layer.hidden).clicked() {
                 self.checkpoint();
                 self.decals[index].layer.hidden = !layer.hidden;
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
-            if icons::lock_button(ui, layer.locked).clicked() {
-                self.checkpoint();
-                self.decals[index].layer.locked = !layer.locked;
-                self.grab = None;
-            }
             if layer.in_group {
-                ui.add_space(14.0);
+                ui.add_space(16.0);
             }
             if let Picture::Group { open } = self.decals[index].picture {
                 let arrow = if open { "▾" } else { "▸" };
@@ -225,7 +272,31 @@ impl App {
                     self.decals[index].picture = Picture::Group { open: !open };
                 }
             }
-            ui.add_space(4.0);
+            let thumb = self.layer_thumb(ui, index);
+            let mut mask_click = None;
+            if layer.mask.is_some() {
+                let r = self.mask_thumb(ui, index);
+                if r.clicked() {
+                    mask_click = Some(ui.input(|i| i.modifiers.shift));
+                }
+                r.context_menu(|ui| self.mask_menu(ui, index));
+            }
+            if let Some(shift) = mask_click {
+                if shift {
+                    // Shift+クリックで、マスクを使う・使わない（Photoshop と同じ）。
+                    if !layer.sealed() {
+                        self.checkpoint();
+                        if let Some(m) = &mut self.decals[index].layer.mask {
+                            m.enabled = !m.enabled;
+                        }
+                        (self.art_dirty, self.back_dirty) = (true, true);
+                    }
+                } else {
+                    self.select_only(Some(index));
+                    self.toggle_brush();
+                }
+            }
+            ui.add_space(2.0);
             if let Some((renamed, text)) = &mut self.renaming
                 && *renamed == index
             {
@@ -247,22 +318,21 @@ impl App {
                 }
                 return None;
             }
-            // 右の端に、マスクの印と、調整の印（fx）。
-            let has_mask = layer.mask.is_some();
-            let mut mask_clicked = None;
+            // 右の端に、ロックの印と、調整の印（fx）。
             let right = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if has_mask {
-                    let painting = self.brush.is_some() && self.selected == Some(index);
-                    let enabled = layer.mask.as_ref().is_some_and(|m| m.enabled);
-                    let mark = egui::RichText::new(if enabled { "◐" } else { "◌" }).strong();
-                    let r = ui.add(egui::Button::new(mark).small().selected(painting)).on_hover_text(t!("Layer mask. Click to paint on it with the brush. Right-click for more"));
-                    if r.clicked() {
-                        mask_clicked = Some(true);
-                    }
-                    r.context_menu(|ui| self.mask_menu(ui, index));
+                ui.spacing_mut().item_spacing.x = 3.0;
+                if layer.locked {
+                    icons::lock_mark(ui, true, t!("All locked"));
+                } else if layer.lock_pixels || layer.lock_position {
+                    let tip = match (layer.lock_pixels, layer.lock_position) {
+                        (true, true) => t!("Image and position locked"),
+                        (true, false) => t!("Image locked"),
+                        _ => t!("Position locked"),
+                    };
+                    icons::lock_mark(ui, false, tip);
                 }
                 if !layer.adjust.is_empty() && is_artwork(&self.decals[index].picture) {
-                    ui.weak("fx");
+                    ui.weak("fx").on_hover_text(t!("Has adjustments for this artwork only"));
                 }
                 let mut label = self.layer_label(index);
                 if self.is_editing(&self.decals[index].picture) {
@@ -273,11 +343,8 @@ impl App {
                 let selected = self.is_selected(index);
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag())
             });
-            if mask_clicked.is_some() {
-                self.select_only(Some(index));
-                self.toggle_brush();
-            }
-            Some(right.inner)
+            // 小さな絵を押しても、行を押したのと同じ。
+            Some(if thumb.clicked() { thumb.union(right.inner) } else { right.inner })
         });
         let response = row.inner?;
         if response.hovered() {
@@ -365,13 +432,46 @@ impl App {
         }
     }
 
-    /// 欄のいちばん下の、マスク、調整、グループ、削除のボタン。
+    /// 欄のいちばん下の、アイコンのボタン（Photoshop と同じ並び: マスク、調整、グループ、削除）。
     fn layer_buttons(&mut self, ui: &mut egui::Ui) {
         let index = self.selected.filter(|&i| i < self.decals.len());
-        let artwork = index.filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.locked);
+        let artwork = index.filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.sealed());
+        let size = egui::vec2(30.0, 24.0);
         ui.horizontal(|ui| {
-            ui.add_enabled_ui(artwork.is_some_and(|i| self.decals[i].layer.mask.is_none()), |ui| {
-                ui.menu_button(t!("Mask"), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let deletable = index.is_some_and(|i| !self.decals[i].layer.locked);
+                if icons::small_icon_button(ui, size, false, deletable, t!("Delete the selected layers"), icons::draw_trash).clicked() {
+                    self.delete_selected();
+                }
+                if icons::small_icon_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
+                    self.group_selected();
+                }
+                let adjust = icons::small_icon_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
+                egui::Popup::menu(&adjust).show(|ui| {
+                    ui.set_min_width(240.0);
+                    ui.add_enabled_ui(artwork.is_some(), |ui| {
+                        ui.weak(t!("This artwork only"));
+                        for kind in ARTWORK_ADJUST {
+                            if ui.button(adjust_label(kind)).clicked() {
+                                self.add_adjustment(kind);
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.weak(t!("Adjustment layer (everything below)"));
+                    for kind in LAYER_ADJUST {
+                        if ui.button(adjust_label(kind)).clicked() {
+                            self.add_adjustment_layer(kind);
+                            ui.close();
+                        }
+                    }
+                });
+                let can_mask = artwork.is_some_and(|i| self.decals[i].layer.mask.is_none());
+                let mask = icons::small_icon_button(ui, size, false, can_mask, t!("Add a layer mask to the selected artwork"), icons::draw_mask);
+                egui::Popup::menu(&mask).show(|ui| {
                     ui.set_min_width(220.0);
                     if ui.button(t!("Reveal all")).on_hover_text(t!("A white mask that shows everything. Paint black with the brush to hide parts")).clicked() {
                         self.add_mask(MaskFrom::RevealAll);
@@ -385,39 +485,113 @@ impl App {
                         self.add_mask(MaskFrom::Transparency);
                         ui.close();
                     }
-                })
-                .response
-                .on_hover_text(t!("Add a layer mask to the selected artwork"));
-            });
-            ui.menu_button(t!("Adjust"), |ui| {
-                ui.set_min_width(240.0);
-                ui.add_enabled_ui(artwork.is_some(), |ui| {
-                    ui.weak(t!("This artwork only"));
-                    for kind in ARTWORK_ADJUST {
-                        if ui.button(adjust_label(kind)).clicked() {
-                            self.add_adjustment(kind);
-                            ui.close();
-                        }
-                    }
                 });
-                ui.separator();
-                ui.weak(t!("Adjustment layer (everything below)"));
-                for kind in LAYER_ADJUST {
-                    if ui.button(adjust_label(kind)).clicked() {
-                        self.add_adjustment_layer(kind);
-                        ui.close();
-                    }
-                }
-            })
-            .response
-            .on_hover_text(t!("Add an adjustment. You can change it, switch it off or remove it later"));
-            if ui.button(t!("Group")).on_hover_text(t!("Put the selected layers in a group (Ctrl+G)")).clicked() {
-                self.group_selected();
+            });
+        });
+    }
+
+    /// ロックの段（Photoshop の 2 段目と同じ）。画像、位置、すべて。選んでいるレイヤーすべてに効く。
+    fn lock_controls(&mut self, ui: &mut egui::Ui) {
+        let mut targets: Vec<usize> = self.selection();
+        if let Some(header) = self.selected.filter(|&i| matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. }))) {
+            targets.retain(|&i| i == header);
+        }
+        let first = targets.first().map(|&i| self.decals[i].layer.clone());
+        let enabled = first.is_some();
+        let layer = first.unwrap_or_default();
+        let mut change: Option<u8> = None;
+        ui.horizontal(|ui| {
+            ui.label(t!("Lock:"));
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let size = egui::vec2(24.0, 20.0);
+            let all = layer.locked;
+            if icons::small_icon_button(ui, size, layer.lock_pixels || all, enabled && !all, t!("Lock image: adjustments and the mask cannot be changed"), icons::draw_brush).clicked() {
+                change = Some(0);
             }
-            if ui.add_enabled(index.is_some(), egui::Button::new(t!("Delete"))).on_hover_text(t!("Delete the selected layers")).clicked() {
-                self.delete_selected();
+            if icons::small_icon_button(ui, size, layer.lock_position || all, enabled && !all, t!("Lock position: cannot be moved, resized or rotated"), icons::draw_move).clicked() {
+                change = Some(1);
+            }
+            if icons::small_icon_button(ui, size, all, enabled, t!("Lock all: cannot be grabbed, changed or deleted"), icons::draw_lock).clicked() {
+                change = Some(2);
             }
         });
+        let Some(which) = change else { return };
+        self.checkpoint();
+        for i in targets {
+            let l = &mut self.decals[i].layer;
+            match which {
+                0 => l.lock_pixels = !layer.lock_pixels,
+                1 => l.lock_position = !layer.lock_position,
+                _ => l.locked = !layer.locked,
+            }
+        }
+        self.grab = None;
+        if self.brush_target().is_none() {
+            self.brush = None;
+        }
+    }
+
+    /// 行の小さな絵（柄の絵。グループと調整レイヤーは印）。
+    fn layer_thumb(&mut self, ui: &mut egui::Ui, index: usize) -> egui::Response {
+        let side = egui::vec2(THUMB_PT, THUMB_PT);
+        match self.decals[index].picture {
+            Picture::Group { .. } => {
+                let r = ui.allocate_exact_size(side, egui::Sense::click()).1;
+                icons::draw_folder(ui.painter(), r.rect.center(), egui::Stroke::new(1.3, ui.visuals().text_color()));
+                r
+            }
+            Picture::Adjustment => {
+                let r = ui.allocate_exact_size(side, egui::Sense::click()).1;
+                ui.painter().rect_stroke(r.rect.shrink(1.0), 2.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()), egui::StrokeKind::Inside);
+                icons::draw_adjust(ui.painter(), r.rect.center(), egui::Stroke::new(1.2, ui.visuals().text_color()));
+                r
+            }
+            _ => {
+                let pixels = picture_thumb(&self.decals[index]);
+                let id = self.thumb_texture(ui.ctx(), (index, 0), pixels);
+                let r = ui.add(egui::Image::new((id, side)).sense(egui::Sense::click()));
+                ui.painter().rect_stroke(r.rect, 1.0, egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color), egui::StrokeKind::Outside);
+                r
+            }
+        }
+    }
+
+    /// 行のマスクの小さな絵。筆で描いている間は、白い枠で囲む（Photoshop と同じく、描く相手がマスクだと分かるように）。
+    fn mask_thumb(&mut self, ui: &mut egui::Ui, index: usize) -> egui::Response {
+        let side = egui::vec2(THUMB_PT, THUMB_PT);
+        let pixels = mask_thumb_pixels(&self.decals[index]);
+        let id = self.thumb_texture(ui.ctx(), (index, 1), pixels);
+        let r = ui.add(egui::Image::new((id, side)).sense(egui::Sense::click()));
+        let painting = self.brush.is_some() && self.selected == Some(index);
+        let frame = if painting { egui::Stroke::new(2.0, egui::Color32::WHITE) } else { egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color) };
+        ui.painter().rect_stroke(r.rect, 1.0, frame, egui::StrokeKind::Outside);
+        if self.decals[index].layer.mask.as_ref().is_some_and(|m| !m.enabled) {
+            // 使っていないマスクには、赤いばつ（Photoshop と同じ）。
+            let red = egui::Stroke::new(1.6, egui::Color32::from_rgb(220, 40, 40));
+            ui.painter().line_segment([r.rect.left_top(), r.rect.right_bottom()], red);
+            ui.painter().line_segment([r.rect.right_top(), r.rect.left_bottom()], red);
+        }
+        r.on_hover_text(t!("Layer mask. Click to paint on it with the brush, Shift+click to switch it off or on. Right-click for more"))
+    }
+
+    /// 小さな絵のテクスチャ。中身が変わったときだけ作り直す。
+    fn thumb_texture(&mut self, ctx: &egui::Context, key: (usize, u8), pixels: Vec<u8>) -> egui::TextureId {
+        let image = || egui::ColorImage::from_rgba_unmultiplied([THUMB_PX, THUMB_PX], &pixels);
+        match self.thumbs.get_mut(&key) {
+            Some((old, tex)) => {
+                if *old != pixels {
+                    tex.set(image(), egui::TextureOptions::LINEAR);
+                    *old = pixels.clone();
+                }
+                tex.id()
+            }
+            None => {
+                let tex = ctx.load_texture(format!("layer-thumb-{}-{}", key.0, key.1), image(), egui::TextureOptions::LINEAR);
+                let id = tex.id();
+                self.thumbs.insert(key, (pixels, tex));
+                id
+            }
+        }
     }
 
     /// レイヤーの行のドラッグ。運んでいる間は、落とす場所に線を出し、放したら、同じ面の中で重なり順を変える。
@@ -622,7 +796,7 @@ impl App {
 
     /// 選んでいる柄に、柄だけに効く調整を足す。
     pub(super) fn add_adjustment(&mut self, kind: AdjustKind) {
-        let targets: Vec<usize> = self.selection().into_iter().filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.locked).collect();
+        let targets: Vec<usize> = self.selection().into_iter().filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.sealed()).collect();
         if targets.is_empty() {
             return;
         }
@@ -659,6 +833,7 @@ impl App {
 
     /// プロパティの欄の、調整の一覧と数値。`index` は柄か、調整レイヤー。
     pub(super) fn adjust_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
+        let locked = locked || self.decals[index].layer.sealed();
         let layer_only = matches!(self.decals[index].picture, Picture::Adjustment);
         let mut list = self.decals[index].layer.adjust.clone();
         if list.is_empty() && !layer_only {
@@ -825,7 +1000,7 @@ impl App {
     /// マスクの右クリックの項目。
     fn mask_menu(&mut self, ui: &mut egui::Ui, index: usize) {
         let Some(mask) = self.decals[index].layer.mask.clone() else { return };
-        let locked = self.decals[index].layer.locked;
+        let locked = self.decals[index].layer.sealed();
         ui.set_min_width(220.0);
         ui.add_enabled_ui(!locked, |ui| {
             if ui.button(t!("Paint on the mask")).clicked() {
@@ -864,7 +1039,7 @@ impl App {
     pub(super) fn toggle_brush(&mut self) {
         if self.brush.is_some() {
             self.brush = None;
-        } else if self.selected.is_some_and(|i| self.decals.get(i).is_some_and(|d| d.layer.mask.is_some() && !d.layer.locked)) {
+        } else if self.selected.is_some_and(|i| self.decals.get(i).is_some_and(|d| d.layer.mask.is_some() && !d.layer.sealed())) {
             self.brush = Some(Brush::default());
             self.say(t!("Painting on the mask: drag on the box or the dieline. Black hides, white shows. X switches, [ and ] change the size, Esc ends."));
         }
@@ -873,7 +1048,7 @@ impl App {
     /// 筆で描く相手（選んでいる、マスクのある、ロックしていない柄）。
     pub(super) fn brush_target(&self) -> Option<usize> {
         self.brush.as_ref()?;
-        self.selected.filter(|&i| self.decals.get(i).is_some_and(|d| d.layer.mask.is_some() && !d.layer.locked && is_artwork(&d.picture)))
+        self.selected.filter(|&i| self.decals.get(i).is_some_and(|d| d.layer.mask.is_some() && !d.layer.sealed() && is_artwork(&d.picture)))
     }
 
     /// 筆で、展開図の点 `at`（パネル `panel`、`back` の面）に描く。`start` なら、ひと続きの線の始まり。
@@ -1203,5 +1378,27 @@ mod tests {
         let psd = crate::art::save_psd(&again.sheet, None, &layers, Some(&again.painted(false))).unwrap();
         let file = craft_psd::PsdFile::from_bytes(&psd).unwrap();
         assert!(file.iter_layers().count() >= 5);
+    }
+
+    #[test]
+    fn 画像のロックと位置のロックは_それぞれ別のものを止める() {
+        let mut app = app_with(&[[255, 0, 0]]);
+        app.select_only(Some(0));
+        // 画像をロック: 調整もマスクも足せない。つかんで動かすことはできる。
+        app.decals[0].layer.lock_pixels = true;
+        app.add_adjustment(AdjustKind::Invert);
+        assert!(app.decals[0].layer.adjust.is_empty());
+        assert_eq!(crate::paint::spots_on(&app.decals, false).0, vec![0]);
+        // 位置をロック: つかめないが、調整は足せる。
+        app.decals[0].layer.lock_pixels = false;
+        app.decals[0].layer.lock_position = true;
+        assert!(crate::paint::spots_on(&app.decals, false).0.is_empty());
+        app.add_adjustment(AdjustKind::Invert);
+        assert_eq!(app.decals[0].layer.adjust.len(), 1);
+        assert!(app.knob_target(None).is_none());
+        // 小さな絵は、柄の色（赤）を出す。
+        let thumb = picture_thumb(&app.decals[0]);
+        let mid = (THUMB_PX / 2 * THUMB_PX + THUMB_PX / 2) * 4;
+        assert!(thumb[mid] > 200 && thumb[mid + 1] < 60, "{:?}", &thumb[mid..mid + 4]);
     }
 }

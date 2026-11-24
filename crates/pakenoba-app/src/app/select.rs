@@ -89,7 +89,7 @@ impl App {
             return;
         }
         for index in self.selection() {
-            if index == moved || self.decals[index].layer.locked || !crate::paint::is_artwork(&self.decals[index].picture) {
+            if index == moved || self.decals[index].layer.fixed() || !crate::paint::is_artwork(&self.decals[index].picture) {
                 continue;
             }
             self.shift_decal(index, delta);
@@ -120,7 +120,7 @@ impl App {
     /// 選んでいる柄をそろえる。2 つ以上なら、選んだもの全体の四角に。1 つなら、置いているパネルに（面の中央に置く、など）。
     /// 裏の柄だけを選んでいるときは、「裏」の表示（左右が逆）で見た左右にする。
     pub(super) fn align(&mut self, how: Align) {
-        let chosen: Vec<usize> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.locked && crate::paint::is_artwork(&self.decals[i].picture)).collect();
+        let chosen: Vec<usize> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.fixed() && crate::paint::is_artwork(&self.decals[i].picture)).collect();
         if chosen.is_empty() {
             return;
         }
@@ -157,7 +157,7 @@ impl App {
     /// 選んでいる柄（3 つ以上）を、横（`horizontal`）か縦に、すき間が等しくなるように並べる。両端の柄は動かさない。
     pub(super) fn distribute(&mut self, horizontal: bool) {
         let axis = if horizontal { 0 } else { 1 };
-        let mut chosen: Vec<(usize, P2, P2)> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.locked).map(|i| {
+        let mut chosen: Vec<(usize, P2, P2)> = self.selection().into_iter().filter(|&i| !self.decals[i].layer.fixed() && crate::paint::is_artwork(&self.decals[i].picture)).map(|i| {
             let (a, b) = self.sheet_bounds(i);
             (i, a, b)
         }).collect();

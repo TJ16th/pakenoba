@@ -501,6 +501,8 @@ struct App {
     adjust_focus: Option<(usize, usize)>,
     /// 調整した絵ができた回数の、最後に見た値（変わったら描き直す）。
     effects_seen: u64,
+    /// レイヤーの欄の、小さな絵（行の番号と、柄か（0）マスクか（1））。
+    thumbs: std::collections::HashMap<(usize, u8), (Vec<u8>, egui::TextureHandle)>,
     /// 立体の表示を平行投影で見る（遠近を付けない）。
     ortho: bool,
     /// はじめの画面（ホーム）を出している。
@@ -654,6 +656,7 @@ impl App {
             mask_job: None,
             adjust_focus: None,
             effects_seen: 0,
+            thumbs: Default::default(),
             ortho: false,
             home: initial.home,
             home_shape: None,

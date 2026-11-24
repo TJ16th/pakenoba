@@ -52,7 +52,7 @@ impl DerefMut for Placed {
 /// 表か裏の、どちらかの面にある柄のうち、つかめるもの（隠していない、ロックしていない）の場所を取り出す（中核の関数に渡すため）。
 /// 返すのは、もとの番号の並びと、場所の並び。
 pub fn spots_on(decals: &[Placed], back: bool) -> (Vec<usize>, Vec<Decal>) {
-    decals.iter().enumerate().filter(|(i, p)| p.back == back && is_artwork(&p.picture) && !p.layer.locked && shown_in_group(decals, *i) && !group_of(decals, *i).is_some_and(|g| decals[g].layer.locked)).map(|(index, p)| (index, p.decal)).unzip()
+    decals.iter().enumerate().filter(|(i, p)| p.back == back && is_artwork(&p.picture) && !p.layer.fixed() && shown_in_group(decals, *i) && !group_of(decals, *i).is_some_and(|g| decals[g].layer.fixed())).map(|(index, p)| (index, p.decal)).unzip()
 }
 
 /// 柄の絵。
