@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="352mm" height="302mm" viewBox="-10 -10 352 302">
+<g stroke-width="0.25" stroke-linejoin="round">
+<path id="crease_base_front" data-type="crease" d="M63 219 L269 219" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_base_back" data-type="crease" d="M63 63 L269 63" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_base_side_a" data-type="crease" d="M269 219 L269 63" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_base_side_b" data-type="crease" d="M63 219 L63 63" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_corner_front_a" data-type="crease" d="M272 219 L332 219" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_corner_front_b" data-type="crease" d="M60 219 L0 219" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_corner_back_a" data-type="crease" d="M272 63 L332 63" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_corner_back_b" data-type="crease" d="M60 63 L0 63" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="cut_outline" data-type="cut" d="M0 282 L60 282 L60 219 L63 219 L63 282 L269 282 L269 219 L272 219 L272 282 L332 282 L332 219 L332 63 L332 0 L272 0 L272 63 L269 63 L269 0 L63 0 L63 63 L60 63 L60 0 L0 0 L0 63 L0 219 L0 282" fill="none" stroke="#d40000"/>
+</g>
+<g font-family="sans-serif">
+<text x="166" y="141" font-size="4" text-anchor="middle" fill="#888">base</text>
+<text x="166" y="250.5" font-size="4" text-anchor="middle" fill="#888">front</text>
+<text x="166" y="31.5" font-size="4" text-anchor="middle" fill="#888">back</text>
+<text x="300.5" y="141" font-size="4" text-anchor="middle" fill="#888">side_a</text>
+<text x="31.5" y="141" font-size="4" text-anchor="middle" fill="#888">side_b</text>
+<text x="302" y="250.5" font-size="4" text-anchor="middle" fill="#888">corner_front_a</text>
+<text x="30" y="250.5" font-size="4" text-anchor="middle" fill="#888">corner_front_b</text>
+<text x="302" y="31.5" font-size="4" text-anchor="middle" fill="#888">corner_back_a</text>
+<text x="30" y="31.5" font-size="4" text-anchor="middle" fill="#888">corner_back_b</text>
+</g>
+</svg>

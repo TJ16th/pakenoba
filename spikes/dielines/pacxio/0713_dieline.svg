@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="464mm" height="292mm" viewBox="-10 -10 464 292">
+<g stroke-width="0.25" stroke-linejoin="round">
+<path id="crease_glue_back" data-type="crease" d="M35 205 L35 108" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_side_a" data-type="crease" d="M158 208 L158 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_front" data-type="crease" d="M241 208 L241 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_front_side_b" data-type="crease" d="M364 208 L364 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_top_lid" data-type="crease" d="M35 105 L158 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_top_lid_tuck" data-type="crease" d="M36.5 22 L156.5 22" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_top_dust_a" data-type="crease" d="M161 105 L238 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_b_top_dust_b" data-type="crease" d="M367 105 L441 105" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_btm_back" data-type="crease" d="M37 208 L158 208" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_btm_back_btm_glue_back" data-type="crease" d="M153.024 212.976 L116.5 249.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_btm_sa" data-type="crease" d="M158 208 L241 208" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_front_btm_front" data-type="crease" d="M243 208 L364 208" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_btm_front_btm_glue_front" data-type="crease" d="M359.024 212.976 L322.5 249.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_b_btm_sb" data-type="crease" d="M364 208 L444 208" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="cut_outline" data-type="cut" d="M0 195.6218 L35 205 L35 208 L37 208 L42.5993 272 L78 272 L96.5 253.5 L96.5 249.5 L116.5 249.5 L139 272 L155 272 L155 214.952 L153.024 212.976 L158 208 L173.1048 249.5 L199.5 249.5 L241 208 L243 208 L248.5993 272 L284 272 L302.5 253.5 L302.5 249.5 L322.5 249.5 L345 272 L361 272 L361 214.952 L359.024 212.976 L364 208 L379.1048 249.5 L402.5 249.5 L444 208 L444 105 L441 105 L438.88 102.88 L438.88 57 L384.552 57 A6.4756 6.4756 0 0 0 378.287 61.8373 L367 105 L238 105 L226.1845 61.8227 A6.5521 6.5521 0 0 0 219.8648 57 L163.12 57 L163.12 102.88 L161 105 L158 105 L158 22 L156.5 22 L156.5 5 A5 5 0 0 0 151.5 0 L41.5 0 A5 5 0 0 0 36.5 5 L36.5 22 L35 22 L35 105 L35 108 L0 117.3782 L0 195.6218" fill="none" stroke="#d40000"/>
+</g>
+<g font-family="sans-serif">
+<text x="17.5" y="156.5" font-size="4" text-anchor="middle" fill="#888">glue</text>
+<text x="96.5" y="156.5" font-size="4" text-anchor="middle" fill="#888">back</text>
+<text x="199.5" y="156.5" font-size="4" text-anchor="middle" fill="#888">side_a</text>
+<text x="302.5" y="156.5" font-size="4" text-anchor="middle" fill="#888">front</text>
+<text x="404" y="156.5" font-size="4" text-anchor="middle" fill="#888">side_b</text>
+<text x="96.5" y="63.5" font-size="4" text-anchor="middle" fill="#888">top_lid</text>
+<text x="96.5" y="11" font-size="4" text-anchor="middle" fill="#888">top_tuck</text>
+<text x="199.5" y="81" font-size="4" text-anchor="middle" fill="#888">top_dust_a</text>
+<text x="404" y="81" font-size="4" text-anchor="middle" fill="#888">top_dust_b</text>
+<text x="97.5" y="240" font-size="4" text-anchor="middle" fill="#888">btm_back</text>
+<text x="135.75" y="242.488" font-size="4" text-anchor="middle" fill="#888">btm_glue_back</text>
+<text x="199.5" y="228.75" font-size="4" text-anchor="middle" fill="#888">btm_sa</text>
+<text x="303.5" y="240" font-size="4" text-anchor="middle" fill="#888">btm_front</text>
+<text x="341.75" y="242.488" font-size="4" text-anchor="middle" fill="#888">btm_glue_front</text>
+<text x="404" y="228.75" font-size="4" text-anchor="middle" fill="#888">btm_sb</text>
+</g>
+</svg>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="704mm" height="381.5mm" viewBox="-10 -10 704 381.5">
+<g stroke-width="0.25" stroke-linejoin="round">
+<path id="crease_glue_back" data-type="crease" d="M35 268.5 L35 121.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_side_a" data-type="crease" d="M238 271.5 L238 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_front" data-type="crease" d="M361 271.5 L361 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_front_side_b" data-type="crease" d="M564 271.5 L564 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_roof_back" data-type="crease" d="M38 118.5 L235 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_roof_back_handle_back" data-type="crease" d="M38 60 L235 60" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_front_roof_front" data-type="crease" d="M364 118.5 L561 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_roof_front_handle_front" data-type="crease" d="M364 60 L561 60" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_end_a" data-type="crease" d="M238 118.5 L361 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_b_end_b" data-type="crease" d="M564 118.5 L684 118.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_back_btm_back" data-type="crease" d="M37 271.5 L236 271.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_a_btm_sa" data-type="crease" d="M238 271.5 L359 271.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_front_btm_front" data-type="crease" d="M363 271.5 L562 271.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="crease_side_b_btm_sb" data-type="crease" d="M566 271.5 L684 271.5" fill="none" stroke="#00a000" stroke-dasharray="4 2"/>
+<path id="cut_outline" data-type="cut" d="M0 259.1218 L35 268.5 L35 271.5 L37 271.5 L37 361.5 L91.5 361.5 L91.5 334.5 L181.5 334.5 L181.5 361.5 L236 361.5 L236 271.5 L238 271.5 L293.35 316.5 L290.35 331.5 L359 331.5 L359 271.5 L361 271.5 L363 271.5 L420.5 332.7 L420.5 358.5 A3 3 0 0 0 423.5 361.5 L501.5 361.5 A3 3 0 0 0 504.5 358.5 L504.5 332.7 L562 271.5 L564 271.5 L566 271.5 L566 331.5 L631.65 331.5 L628.65 316.5 L684 271.5 L684 118.5 L636 53.4632 L612 53.4632 L564 118.5 L561 118.5 L561 60 L561 22.2 A10 10 0 0 0 541 22.2 L537.5 22.2 L523.9921 0 L401.0079 0 L387.5 22.2 L384 22.2 A10 10 0 0 0 364 22.2 L364 60 L364 118.5 L361 118.5 L311.5 53.4632 L287.5 53.4632 L238 118.5 L235 118.5 L235 60 L235 22.2 A10 10 0 0 0 215 22.2 L211.5 22.2 L197.9921 0 L75.0079 0 L61.5 22.2 L58 22.2 A10 10 0 0 0 38 22.2 L38 60 L38 118.5 L35 118.5 L35 121.5 L0 130.8782 L0 259.1218" fill="none" stroke="#d40000"/>
+<path id="cut_hole_back" data-type="cut" d="M116 42.5 L157 42.5 A12.5 12.5 0 0 0 169.5 30 A12.5 12.5 0 0 0 157 17.5 L116 17.5 A12.5 12.5 0 0 0 103.5 30 A12.5 12.5 0 0 0 116 42.5" fill="none" stroke="#d40000"/>
+<path id="cut_hole_front" data-type="cut" d="M442 42.5 L483 42.5 A12.5 12.5 0 0 0 495.5 30 A12.5 12.5 0 0 0 483 17.5 L442 17.5 A12.5 12.5 0 0 0 429.5 30 A12.5 12.5 0 0 0 442 42.5" fill="none" stroke="#d40000"/>
+<path id="cut_slit_end_a" data-type="cut" d="M299.5 117.5 A4 4 0 0 0 303.5 113.5 L303.5 78.2525 A4 4 0 0 0 299.5 74.2525 A4 4 0 0 0 295.5 78.2525 L295.5 113.5 A4 4 0 0 0 299.5 117.5" fill="none" stroke="#d40000"/>
+<path id="cut_slit_end_b" data-type="cut" d="M624 117.5 A4 4 0 0 0 628 113.5 L628 78.2525 A4 4 0 0 0 624 74.2525 A4 4 0 0 0 620 78.2525 L620 113.5 A4 4 0 0 0 624 117.5" fill="none" stroke="#d40000"/>
+</g>
+<g font-family="sans-serif">
+<text x="17.5" y="195" font-size="4" text-anchor="middle" fill="#888">glue</text>
+<text x="136.5" y="195" font-size="4" text-anchor="middle" fill="#888">back</text>
+<text x="299.5" y="195" font-size="4" text-anchor="middle" fill="#888">side_a</text>
+<text x="462.5" y="195" font-size="4" text-anchor="middle" fill="#888">front</text>
+<text x="624" y="195" font-size="4" text-anchor="middle" fill="#888">side_b</text>
+<text x="136.5" y="89.25" font-size="4" text-anchor="middle" fill="#888">roof_back</text>
+<text x="136.5" y="30" font-size="4" text-anchor="middle" fill="#888">handle_back</text>
+<text x="462.5" y="89.25" font-size="4" text-anchor="middle" fill="#888">roof_front</text>
+<text x="462.5" y="30" font-size="4" text-anchor="middle" fill="#888">handle_front</text>
+<text x="299.5" y="85.9816" font-size="4" text-anchor="middle" fill="#888">end_a</text>
+<text x="624" y="85.9816" font-size="4" text-anchor="middle" fill="#888">end_b</text>
+<text x="136.5" y="316.5" font-size="4" text-anchor="middle" fill="#888">btm_back</text>
+<text x="298.5" y="301.5" font-size="4" text-anchor="middle" fill="#888">btm_sa</text>
+<text x="462.5" y="316.5" font-size="4" text-anchor="middle" fill="#888">btm_front</text>
+<text x="625" y="301.5" font-size="4" text-anchor="middle" fill="#888">btm_sb</text>
+</g>
+</svg>
