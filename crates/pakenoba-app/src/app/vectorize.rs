@@ -70,6 +70,23 @@ pub(super) struct TraceSession {
     error: Option<String>,
     /// 元の画像の名前（新しい素材と、レイヤーの名前に使う）。
     stem: String,
+    /// 欄の中のプレビューの絵（元の画像、結果、アウトライン、アウトラインと元の画像）。結果は、どの依頼のものか。
+    textures: Option<(u64, [egui::TextureHandle; 3])>,
+    original_texture: Option<egui::TextureHandle>,
+    /// 欄の中のプレビューの拡大率（1 で、枠に収まる大きさ）と、ずらし（点）。
+    zoom: f32,
+    pan: egui::Vec2,
+}
+
+/// 欄の中のプレビューの絵の、長いほうの上限（画面に出す絵として十分な細かさ）。
+const PREVIEW_LONG: usize = 2048;
+
+/// 絵を、欄のプレビューに出す絵にする。
+fn preview_texture(ctx: &egui::Context, name: &str, picture: &Picture) -> Option<egui::TextureHandle> {
+    let Picture::Image { w, h, rgba, .. } = picture else { return None };
+    let (w, h, rgba) = shrink(*w, *h, rgba, PREVIEW_LONG);
+    let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+    Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
 }
 
 /// 長いほうが `long` px 以下になるように、画素を平均して縮める。
@@ -122,7 +139,7 @@ impl App {
         let picture = self.decals[source].picture.clone();
         let base = self.asset_of(&picture).map_or_else(|| self.layer_label(source), |i| self.assets[i].name.clone());
         let stem = base.rsplit_once('.').map_or(base.as_str(), |(stem, _)| stem).to_owned();
-        self.trace_session = Some(TraceSession { source, picture, target, settings, view: TraceView::Result, done: None, job: None, asked: 0, changed: Some(Instant::now() - SETTLE), error: None, stem });
+        self.trace_session = Some(TraceSession { source, picture, target, settings, view: TraceView::Result, done: None, job: None, asked: 0, changed: Some(Instant::now() - SETTLE), error: None, stem, textures: None, original_texture: None, zoom: 1.0, pan: egui::Vec2::ZERO });
         self.select_only(Some(target.unwrap_or(source)));
     }
 
@@ -187,11 +204,10 @@ impl App {
         if let Some(target) = session.target {
             decals[target].layer.hidden = true;
         }
+        // 箱の上には、トレース結果を出す（アウトラインは、欄の中のプレビューだけで見せる）。「元の画像」なら元の画像。
         let picture = match (session.view, &session.done) {
             (TraceView::Original, _) | (_, None) => session.picture.clone(),
-            (TraceView::Result, Some(done)) => done.result.clone(),
-            (TraceView::Outline, Some(done)) => done.outline.clone(),
-            (TraceView::OutlineOverOriginal, Some(done)) => done.overlay.clone(),
+            (_, Some(done)) => done.result.clone(),
         };
         let source = &mut decals[session.source];
         source.picture = picture;
@@ -253,6 +269,16 @@ impl App {
     /// 画像トレースの欄。
     pub(super) fn trace_window(&mut self, ctx: &egui::Context) {
         let Some(session) = &mut self.trace_session else { return };
+        // 欄の中のプレビューの絵を用意する（結果が新しくなったら作り直す）。
+        if session.original_texture.is_none() {
+            session.original_texture = preview_texture(ctx, "trace-original", &session.picture);
+        }
+        if let Some(done) = &session.done
+            && session.textures.as_ref().is_none_or(|(n, _)| *n != session.asked)
+            && let (Some(a), Some(b), Some(c)) = (preview_texture(ctx, "trace-result", &done.result), preview_texture(ctx, "trace-outline", &done.outline), preview_texture(ctx, "trace-overlay", &done.overlay))
+        {
+            session.textures = Some((session.asked, [a, b, c]));
+        }
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
         let mut changed = false;
@@ -262,18 +288,70 @@ impl App {
         egui::Window::new(t!("Image Trace"))
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
-            .default_width(300.0)
-            .default_pos(egui::pos2((right - 660.0).max(60.0), 160.0))
+            .resizable(true)
+            .default_size([460.0, 760.0])
+            .default_pos(egui::pos2((right - 820.0).max(60.0), 100.0))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.weak(t!("Source: {}", session.stem));
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new(t!("View")).color(super::theme::MUTED));
-                    for (view, label) in [(TraceView::Result, t!("Result")), (TraceView::Original, t!("Original")), (TraceView::Outline, t!("Outlines")), (TraceView::OutlineOverOriginal, t!("Outlines with source"))] {
+                    for (view, label) in [(TraceView::Result, t!("Result")), (TraceView::Outline, t!("Outlines")), (TraceView::OutlineOverOriginal, t!("Outlines with source")), (TraceView::Original, t!("Original"))] {
                         ui.selectable_value(&mut session.view, view, label);
                     }
                 });
+                // プレビュー。ホイールで拡大縮小、ドラッグで動かす、ダブルクリックで枠に収める。
+                let texture = match (session.view, &session.textures) {
+                    (TraceView::Original, _) | (_, None) => session.original_texture.as_ref(),
+                    (TraceView::Result, Some((_, t))) => Some(&t[0]),
+                    (TraceView::Outline, Some((_, t))) => Some(&t[1]),
+                    (TraceView::OutlineOverOriginal, Some((_, t))) => Some(&t[2]),
+                };
+                let side = ui.available_width().max(200.0);
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(side, (side * 0.8).clamp(220.0, 520.0)), egui::Sense::click_and_drag());
+                let painter = ui.painter().with_clip_rect(rect);
+                // 透明な所が分かるように、市松模様の上に置く（アウトラインは白地の方が見やすいので、明るい市松）。
+                painter.rect_filled(rect, 2.0, egui::Color32::from_gray(236));
+                let cell = 10.0;
+                for row in 0..(rect.height() / cell).ceil() as i32 {
+                    for col in 0..(rect.width() / cell).ceil() as i32 {
+                        if (row + col) % 2 == 0 {
+                            let min = rect.min + egui::vec2(col as f32 * cell, row as f32 * cell);
+                            painter.rect_filled(egui::Rect::from_min_size(min, egui::vec2(cell, cell)), 0.0, egui::Color32::from_gray(214));
+                        }
+                    }
+                }
+                if response.hovered() {
+                    let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+                    if scroll != 0.0 {
+                        let before = session.zoom;
+                        session.zoom = (session.zoom * (scroll * 0.0025).exp()).clamp(0.5, 8.0);
+                        // カーソルの所を中心に拡大する。
+                        if let Some(p) = response.hover_pos() {
+                            let from_center = p - rect.center() - session.pan;
+                            session.pan -= from_center * (session.zoom / before - 1.0);
+                        }
+                    }
+                }
+                if response.dragged() {
+                    session.pan += response.drag_delta();
+                }
+                if response.double_clicked() {
+                    (session.zoom, session.pan) = (1.0, egui::Vec2::ZERO);
+                }
+                if let Some(texture) = texture {
+                    let size = texture.size_vec2();
+                    let fit = (rect.width() / size.x).min(rect.height() / size.y) * 0.94;
+                    let shown = egui::Rect::from_center_size(rect.center() + session.pan, size * fit * session.zoom);
+                    painter.image(texture.id(), shown, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                }
+                if session.job.is_some() || session.changed.is_some() {
+                    // トレースし直している間は、右上に小さく出す。
+                    let at = rect.right_top() + egui::vec2(-22.0, 22.0);
+                    painter.circle_filled(at, 13.0, egui::Color32::from_black_alpha(140));
+                    ui.put(egui::Rect::from_center_size(at, egui::vec2(16.0, 16.0)), egui::Spinner::new().size(14.0).color(egui::Color32::WHITE));
+                }
+                painter.text(rect.left_bottom() + egui::vec2(6.0, -6.0), egui::Align2::LEFT_BOTTOM, format!("{:.0}%", session.zoom * 100.0), egui::FontId::proportional(11.0), egui::Color32::from_gray(90));
+                response.on_hover_text(t!("Scroll to zoom, drag to move, double-click to fit"));
                 ui.separator();
                 let settings = &mut session.settings;
                 egui::Grid::new("trace-grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

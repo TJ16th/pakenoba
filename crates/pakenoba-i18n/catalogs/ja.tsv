@@ -1276,3 +1276,4 @@ blend	Color	カラー
 	Add a stroke	線を足す
 	{} more colors are not listed.	ほかに {} 色あります（一覧には出していません）。
 	Stroke width	線の太さ
+	Scroll to zoom, drag to move, double-click to fit	ホイールで拡大・縮小、ドラッグで移動、ダブルクリックで全体を表示
