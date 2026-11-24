@@ -171,8 +171,14 @@ fn setup_style(ctx: &egui::Context) {
     });
 }
 
-/// ピロー型を表す番号。角柱の角の数（3〜12）と重ならない値にしてある。
+/// ピロー型を表す番号。角柱の角の数（3〜12）と重ならない値にしてある。100 が持ち手つき、101 が持ち手なし。
 pub const PILLOW: usize = 100;
+pub const PLAIN_PILLOW: usize = 101;
+
+/// ピロー型（持ち手のあるなしを問わない）か。
+pub fn is_pillow(sides: usize) -> bool {
+    sides == PILLOW || sides == PLAIN_PILLOW
+}
 
 #[derive(Clone, Copy, PartialEq)]
 struct Dims {
@@ -198,10 +204,11 @@ impl Dims {
         let (w, d, h) = match sides {
             2 => (160.0, 100.0, 110.0),
             PILLOW => (180.0, 60.0, 110.0),
+            PLAIN_PILLOW => (160.0, 60.0, 80.0),
             n if n >= 3 => (70.0, 60.0, 160.0),
             _ => (200.0, 160.0, 85.0),
         };
-        Dims { sides, w, d, h, t, bulge: if sides == PILLOW { 70.0 } else { 40.0 }, roof: 45.0, flaps: TuckFlaps::default() }
+        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default() }
     }
 
     /// 案件のファイルに書く形の、型と寸法。
@@ -209,6 +216,7 @@ impl Dims {
         let kind = match self.sides {
             2 => project::Kind::Gable,
             PILLOW => project::Kind::Pillow,
+            PLAIN_PILLOW => project::Kind::PlainPillow,
             n if n >= 3 => project::Kind::Prism(n),
             _ => project::Kind::TuckBox,
         };
@@ -220,6 +228,7 @@ impl Dims {
             project::Kind::TuckBox => 0,
             project::Kind::Gable => 2,
             project::Kind::Pillow => PILLOW,
+            project::Kind::PlainPillow => PLAIN_PILLOW,
             project::Kind::Prism(n) => n,
         };
         Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps }
@@ -246,7 +255,7 @@ impl Dims {
         let around = match self.sides {
             0 => 2.0 * (self.w + self.d),
             2 => 2.0 * (self.w + self.d.min(self.w)),
-            PILLOW => self.w,
+            PILLOW | PLAIN_PILLOW => self.w,
             n => n as f32 * self.w,
         };
         (front, around)
@@ -322,7 +331,7 @@ fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
 }
 
 /// 選べる型。検査を通ったものだけを並べる。
-const SHAPES: [(usize, &str); 7] = [(0, "Tuck-end box"), (2, "Gable box"), (PILLOW, "Pillow box"), (3, "Triangular prism"), (5, "Pentagonal prism"), (6, "Hexagonal prism"), (8, "Octagonal prism")];
+const SHAPES: [(usize, &str); 8] = [(0, "Tuck-end box"), (2, "Gable box"), (PILLOW, "Pillow box with handle"), (PLAIN_PILLOW, "Pillow box"), (3, "Triangular prism"), (5, "Pentagonal prism"), (6, "Hexagonal prism"), (8, "Octagonal prism")];
 
 /// ワークスペース。左から順に進めば完成する。
 #[derive(Clone, Copy, PartialEq)]
@@ -1142,7 +1151,7 @@ impl App {
         let d = self.dims;
         let name = SHAPES.iter().find(|(sides, _)| *sides == d.sides).map_or(t!("Structure"), |(_, name)| pakenoba_i18n::tr(name));
         match d.sides {
-            PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
+            PILLOW | PLAIN_PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
             n if n >= 3 => t!("{name}  side {:.0} × height {:.0} mm", d.w, d.h),
             _ => format!("{name}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h),
         }

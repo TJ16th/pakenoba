@@ -120,6 +120,9 @@ pub struct Bend {
     /// 巻きはじめの線（展開図上の 2 点）。None なら、親との折り線から巻きはじめる。
     /// 根のパネルのように、折り線を持たないパネルを丸めるときに使う。
     pub line: Option<(P2, P2)>,
+    /// 途中で曲がり具合が変わるとき、その場所（巻きはじめからの距離、mm）と、その先の曲がり具合。
+    /// 鳩サブレーの箱のように、上の口の近くで逆向きに反って、まっすぐ立ち上がる面に使う。
+    pub neck: Option<(f32, f32)>,
 }
 
 /// 曲線の折り。親パネルの端にある曲線の折り線で、親の丸みに連動して折れる。
@@ -322,6 +325,27 @@ struct BendNow {
     /// 巻く軸の向き（折り線と平行）。
     axis: V3,
     kappa: f32,
+    /// 曲がり具合が変わる場所と、その先の曲がり具合（組み立ての進み具合を掛けたもの）。
+    neck: Option<(f32, f32)>,
+}
+
+impl BendNow {
+    /// いちばん強い曲がり具合（細片の数を決めるのに使う）。
+    fn steepest(&self) -> f32 {
+        self.kappa.abs().max(self.neck.map_or(0.0, |(_, k)| k.abs()))
+    }
+}
+
+/// 巻きはじめの線 `origin` から距離 `s` の線のあたりを、曲がり具合 `kappa` で巻いた位置へ運ぶ変換。
+fn roll(origin: V3, s_dir: V3, axis: V3, kappa: f32, s: f32) -> Affine {
+    if s.abs() < 1e-6 || kappa.abs() < 1e-7 {
+        return Affine::IDENTITY;
+    }
+    // 巻きの中心は、内側の面から半径ぶん内側。そこを軸に回してから、折り線の位置まで戻す。
+    let pivot = add(add(origin, scale(s_dir, s)), [0.0, 0.0, 1.0 / kappa]);
+    let mut frame = Affine::rotation_about(pivot, axis, kappa * s);
+    frame.t = sub(frame.t, scale(s_dir, s));
+    frame
 }
 
 /// 曲面を平らな細片に分けるときの、1 片あたりの角度（約 4 度）。
@@ -329,7 +353,7 @@ const STRIP_ANGLE: f32 = 0.07;
 
 impl Placement {
     fn active_bend(&self) -> Option<&BendNow> {
-        self.bend.as_ref().filter(|b| b.kappa.abs() > 1e-6)
+        self.bend.as_ref().filter(|b| b.steepest() > 1e-6)
     }
 
     /// 巻きはじめの線からの距離。丸めの設定を持たないパネルでは None。
@@ -350,13 +374,14 @@ impl Placement {
     fn at_unmirrored(&self, p: P2) -> Affine {
         let Some(b) = self.active_bend() else { return self.base };
         let s = dot(sub([p[0], p[1], b.origin[2]], b.origin), b.s_dir);
-        if s.abs() < 1e-6 {
-            return self.base;
-        }
-        // 巻きの中心は、内側の面から半径ぶん内側。そこを軸に回してから、折り線の位置まで戻す。
-        let pivot = add(add(b.origin, scale(b.s_dir, s)), [0.0, 0.0, 1.0 / b.kappa]);
-        let mut frame = Affine::rotation_about(pivot, b.axis, b.kappa * s);
-        frame.t = sub(frame.t, scale(b.s_dir, s));
+        let frame = match b.neck {
+            // 曲がり具合が変わる線より先は、その線までを巻いた位置に、その線から先を巻いたものを重ねる。
+            Some((at, after)) if s > at => {
+                let first = roll(b.origin, b.s_dir, b.axis, b.kappa, at);
+                first.then_after(&roll(add(b.origin, scale(b.s_dir, at)), b.s_dir, b.axis, after, s - at))
+            }
+            _ => roll(b.origin, b.s_dir, b.axis, b.kappa, s),
+        };
         self.base.then_after(&frame)
     }
 
@@ -457,7 +482,7 @@ impl Template {
     fn bend_now(&self, panel: &Panel, bend: &Bend, hinge_line: Option<(P2, P2)>, fold: f32) -> Option<BendNow> {
         let (a, b) = bend.line.or(hinge_line)?;
         let (origin, dir) = self.axis_towards(panel, a, b, self.thickness);
-        Some(BendNow { origin, s_dir: cross([0.0, 0.0, 1.0], dir), axis: dir, kappa: bend.curvature * progress(bend.window, fold) })
+        Some(BendNow { origin, s_dir: cross([0.0, 0.0, 1.0], dir), axis: dir, kappa: bend.curvature * progress(bend.window, fold), neck: bend.neck.map(|(at, k)| (at, k * progress(bend.window, fold))) })
     }
 
     /// 折り線の今の角度。組み立てで折るぶんと、開け閉めで動くぶんの合計。
@@ -598,7 +623,7 @@ impl Template {
         for (panel, place) in self.panels.iter().zip(&placements) {
             let pts = &panel.outline;
             // 丸めたパネルは、折り線に平行な細片に分けてから面を張る。
-            let kappa = place.active_bend().map(|b| b.kappa.abs());
+            let kappa = place.active_bend().map(|b| b.steepest());
             let pieces: Vec<Vec<P2>> = match (place.distance(pts[0]), kappa, panel.slices) {
                 (None, _, _) | (Some(_), None, 0) => vec![pts.clone()],
                 (Some(_), kappa, slices) => {
@@ -631,7 +656,7 @@ impl Template {
                 let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
                 let normal = normalize([q[1] - p[1], p[0] - q[0], 0.0]);
                 let count = match (place.active_bend(), place.distance(p), place.distance(q)) {
-                    (Some(b), Some(sp), Some(sq)) => ((b.kappa.abs() * (sq - sp).abs() / STRIP_ANGLE).ceil() as usize).clamp(1, 64),
+                    (Some(b), Some(sp), Some(sq)) => ((b.steepest() * (sq - sp).abs() / STRIP_ANGLE).ceil() as usize).clamp(1, 64),
                     _ => 1,
                 };
                 for k in 0..count {
@@ -1226,6 +1251,58 @@ mod tests {
                 // フラップは、折り線から奥行き方向へまっすぐ倒れ込む。折り線から 5 mm 先の点は、奥へ 5 mm。
                 let beyond = m[flap].point([depth(v) - 5.0, v, t]);
                 close(beyond, [on_crease[0] + 5.0 * inward[0], on_crease[1] + 5.0 * inward[1], on_crease[2] + 5.0 * inward[2]]);
+            }
+        }
+    }
+
+    #[test]
+    fn necked_and_plain_pillows_close() {
+        let (len, height, t) = (180.0f32, 110.0f32, 0.5f32);
+        for (handle, neck) in [(true, true), (false, false), (false, true)] {
+            for bulge in [0.6f32, 1.2, 1.5] {
+                let tpl = Template::pillow_with(len, height, t, bulge, handle, neck);
+                for p in &tpl.panels {
+                    assert!(signed_area(&p.outline) > 0.0, "{} が時計回り", p.name);
+                }
+                let profile = library::PillowProfile::new(height, bulge, neck);
+                assert!(profile.depth(height).abs() < 0.01, "上の端が合わさらない: {}", profile.depth(height));
+                if neck {
+                    assert!(profile.end().abs() < 1e-4, "首の先がまっすぐでない");
+                }
+                let m = tpl.transforms(1.0, 1.0);
+                let (front, back) = (index(&tpl, "正面"), index(&tpl, "背面"));
+                close(m[front].point([len * 0.5, height, t]), m[back].point([len * 0.5, -height, t]));
+                // 丸めても、紙の上での高さは変わらない。
+                let mut length = 0.0;
+                let mut prev = m[front].point([len * 0.5, 0.0, t]);
+                for i in 1..=300 {
+                    let next = m[front].point([len * 0.5, height * i as f32 / 300.0, t]);
+                    length += crate::math::length(sub(next, prev));
+                    prev = next;
+                }
+                assert!((length - height).abs() < 0.05, "高さ {length} が {height} と違う");
+                if handle {
+                    let a = m[index(&tpl, "正面の持ち手")].point([len * 0.5, height + 10.0, t]);
+                    let b = m[index(&tpl, "背面の持ち手")].point([len * 0.5, -height - 10.0, t]);
+                    assert!(crate::math::length(sub(a, b)) < 2.0 * t, "持ち手が離れている");
+                } else {
+                    // のりしろは、正面の裏に紙の厚みの範囲で重なる。
+                    let tab = index(&tpl, "のりしろ");
+                    let on_tab = m[tab].point([len * 0.5, -height - 5.0, 0.0]);
+                    let near = (0..=200).map(|k| crate::math::length(sub(m[front].point([len * 0.5, height - 10.0 * k as f32 / 200.0, t]), on_tab))).fold(f32::INFINITY, f32::min);
+                    assert!(near < 2.5 * t, "ふくらみ {bulge}: のりしろが正面から {near} mm 離れている");
+                }
+                // 曲線の折り線の上で、フラップが面とつながる（組み立ての途中も）。
+                let flap = tpl.panels.iter().position(|p| p.name == "正面のフラップ").unwrap();
+                for fold in [0.3f32, 0.7, 1.0] {
+                    let m = tpl.transforms(fold, 1.0);
+                    for k in 0..=40 {
+                        let v = height * k as f32 / 40.0;
+                        let d = profile.depth(v);
+                        let gap = crate::math::length(sub(m[flap].point([d, v, t]), m[front].point([d, v, t])));
+                        assert!(gap < 0.3, "持ち手 {handle} 首 {neck} ふくらみ {bulge} 組み立て {fold}: {gap} mm 離れている");
+                    }
+                }
             }
         }
     }

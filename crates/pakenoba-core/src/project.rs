@@ -64,8 +64,10 @@ pub enum Kind {
     TuckBox,
     /// ゲーブル型。
     Gable,
-    /// ピロー型。
+    /// 持ち手つきピロー型（鳩サブレーの箱のように、下が広く、上がすぼまって持ち手へまっすぐ立ち上がる）。
     Pillow,
+    /// 持ち手のないピロー型（上下が対称で、上の縁はのりしろで貼る）。
+    PlainPillow,
     /// 正多角柱。値は角の数。
     Prism(usize),
 }
@@ -96,7 +98,8 @@ impl Shape {
         match self.kind {
             Kind::TuckBox => Template::tuck_box_with(self.w, self.d, self.h, self.t, self.flaps),
             Kind::Gable => Template::gable(self.w, self.d, self.h, self.roof, self.t),
-            Kind::Pillow => Template::pillow(self.w, self.h, self.t, self.bulge.to_radians()),
+            Kind::Pillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), true, true),
+            Kind::PlainPillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), false, false),
             Kind::Prism(n) => Template::prism(n, self.w, self.h, self.t),
         }
     }
@@ -1221,6 +1224,7 @@ impl Project {
             Kind::TuckBox => ("tuck_box", None),
             Kind::Gable => ("gable", None),
             Kind::Pillow => ("pillow", None),
+            Kind::PlainPillow => ("plain_pillow", None),
             Kind::Prism(n) => ("prism", Some(n)),
         };
         Manifest {
@@ -1483,6 +1487,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         ("tuck_box", _) => Kind::TuckBox,
         ("gable", _) => Kind::Gable,
         ("pillow", _) => Kind::Pillow,
+        ("plain_pillow", _) => Kind::PlainPillow,
         ("prism", Some(n)) if SIDES.contains(&n) => Kind::Prism(n),
         ("prism", _) => return Err(Error::Broken(t!("The number of sides of the prism is not valid").to_owned())),
         (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
@@ -1834,6 +1839,7 @@ mod tests {
             Kind::TuckBox => (200.0, 160.0, 85.0),
             Kind::Gable => (160.0, 100.0, 110.0),
             Kind::Pillow => (180.0, 60.0, 110.0),
+            Kind::PlainPillow => (160.0, 60.0, 80.0),
             Kind::Prism(_) => (70.0, 60.0, 160.0),
         };
         Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() } }
@@ -1983,7 +1989,7 @@ mod tests {
         out.finish().unwrap().into_inner()
     }
 
-    const KINDS: [Kind; 6] = [Kind::TuckBox, Kind::Gable, Kind::Pillow, Kind::Prism(3), Kind::Prism(6), Kind::Prism(8)];
+    const KINDS: [Kind; 7] = [Kind::TuckBox, Kind::Gable, Kind::Pillow, Kind::PlainPillow, Kind::Prism(3), Kind::Prism(6), Kind::Prism(8)];
 
     #[test]
     fn 保存して開くと_同じ状態に戻る() {

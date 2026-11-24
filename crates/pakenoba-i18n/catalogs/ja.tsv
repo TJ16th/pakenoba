@@ -15,6 +15,7 @@
 	Tuck-end box	差し込み箱
 	Gable box	ゲーブル型
 	Pillow box	ピロー型
+	Pillow box with handle	持ち手つきピロー型
 	Triangular prism	三角柱
 	Pentagonal prism	五角柱
 	Hexagonal prism	六角柱
@@ -983,7 +984,7 @@ blend	Color	カラー
 	The text is empty	文字が空です
 	There is no asset with that index (see asset.list)	その番号の素材はありません（asset.list で確かめてください）
 	There is no panel named "{p}"	「{p}」という面はありません
-	Unknown box type "{other}" (tuck_box, gable, pillow, prism)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、prism）
+	Unknown box type "{other}" (tuck_box, gable, pillow, plain_pillow, prism)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、plain_pillow、prism）
 	{} already exists. AI does not overwrite files; choose another name.	{} はすでにあります。AI はファイルを上書きしません。別の名前にしてください。
 	{} is outside the folders allowed for AI	{} は、AI が使えるフォルダの外です
 	  Agent  	  エージェント  

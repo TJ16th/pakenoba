@@ -275,7 +275,7 @@ impl Template {
         }
         let rise = std::f32::consts::PI - theta0;
         let handle_fold = -(std::f32::consts::FRAC_PI_2 - theta_end);
-        let bend = || if kappa > 1e-6 { Some(Bend { curvature: kappa, window: MAIN, line: None }) } else { None };
+        let bend = || if kappa > 1e-6 { Some(Bend { curvature: kappa, window: MAIN, line: None, neck: None }) } else { None };
 
         let c = w * 0.5;
         let half_handle = w * 0.28;
@@ -466,23 +466,33 @@ impl Template {
         }
     }
 
-    /// 持ち手つきピロー型。2 枚の面が下の折り線でつながり、丸くふくらんで上で合わさり、その先が持ち手になる。
+    /// 持ち手つきピロー型（上下が対称なもの）。[`Template::pillow_with`] の、持ち手あり・首なし。
+    pub fn pillow(len: f32, height: f32, t: f32, bulge: f32) -> Template {
+        Template::pillow_with(len, height, t, bulge, true, false)
+    }
+
+    /// ピロー型。2 枚の面が下の折り線でつながり、丸くふくらんで上で合わさる。
     /// 左右の端は、曲線の折り線でフラップを内側へ折り込んで閉じる。
     ///
     /// `len` は横の長さ、`height` は 1 枚の面の高さ（丸みに沿って測る。mm）。
-    /// `bulge` はふくらみで、1 枚の面が下から上までに向きを変える角度（ラジアン）。
+    /// `bulge` はふくらみで、1 枚の面のふくらんだ部分が、下から上までに向きを変える角度（ラジアン）。
+    /// `handle` が真なら、上で合わさった縁を立てて貼り、その先を持ち手にする。偽なら、背面の上の縁ののりしろを正面の裏に貼る。
+    /// `neck` が真なら、上の口の近くで面が逆向きに反って、まっすぐ立ち上がる（鳩サブレーの箱のような、下が広く上がすぼまる形）。
     ///
     /// 曲線の折り線の形は、ふくらみから自動で決まる。面を丸めたときに、折り線が 45 度に傾いた平面に乗る形にしてあり、
     /// フラップはその平面で映した位置（奥行き方向へまっすぐ倒れ込んだ形）に来る。
-    pub fn pillow(len: f32, height: f32, t: f32, bulge: f32) -> Template {
+    pub fn pillow_with(len: f32, height: f32, t: f32, bulge: f32, handle: bool, neck: bool) -> Template {
         const MAIN: (f32, f32) = (0.0, 1.0);
         const SLICES: usize = 24;
         let psi = bulge.clamp(0.2, 1.6);
-        let kappa = psi / height;
-        let half_turn = psi * 0.5;
-        // 面の上のある高さ v での、ふくらみの深さ（2 枚が合わさる平面からの距離）。端で 0、中央で最大。
-        let depth = |v: f32| ((kappa * (v - height * 0.5)).cos() - half_turn.cos()) / kappa;
-        let deepest = depth(height * 0.5);
+        let profile = PillowProfile::new(height, psi, neck);
+        let depth = |v: f32| profile.depth(v);
+        let deepest = (0..=64).map(|k| depth(height * k as f32 / 64.0)).fold(0.0f32, f32::max);
+        let v_deepest = (0..=64).map(|k| height * k as f32 / 64.0).max_by(|a, b| depth(*a).total_cmp(&depth(*b))).unwrap_or(height * 0.5);
+        let kappa = profile.kappa;
+        let neck_bend = profile.neck;
+        // 下の折り線での、1 枚の面の立ち上がりの傾き（2 枚が合わさる平面から外へ）と、上の端での傾き。
+        let (start_tilt, end_tilt) = (profile.start, profile.end());
         // フラップの長さ（折り線から先）。深さの 1.8 倍にして、向かいの面の近くまで届かせる。
         const REACH: f32 = 1.8;
         // 背面のフラップは、正面のフラップの下に入る。そのぶん折り線を少し内側へずらす。
@@ -502,14 +512,14 @@ impl Template {
             let line: Vec<P2> = (0..=SLICES).map(|k| [crease(v_at(k)), sign * v_at(k)]).collect();
             let mut outline = line.clone();
             outline.extend((0..=SLICES).rev().map(|k| [crease(v_at(k)) + side * REACH * depth(v_at(k)), sign * v_at(k)]));
-            (ccw(outline), [[crease(0.0), 0.0], [crease(height * 0.5), sign * height * 0.5], [crease(height), sign * height]], line)
+            (ccw(outline), [[crease(0.0), 0.0], [crease(v_deepest), sign * v_deepest], [crease(height), sign * height]], line)
         };
 
         let mut panels = vec![Panel {
             name: "正面",
             outline: face(1.0, 0.0),
             hinge: None,
-            bend: Some(Bend { curvature: kappa, window: MAIN, line: Some(([0.0, 0.0], [len, 0.0])) }),
+            bend: Some(Bend { curvature: kappa, window: MAIN, line: Some(([0.0, 0.0], [len, 0.0])), neck: neck_bend }),
             curved: None,
             slices: SLICES,
             role: Role::Face,
@@ -518,8 +528,8 @@ impl Template {
         panels.push(Panel {
             name: "背面",
             outline: face(-1.0, under),
-            hinge: Some(Hinge { parent: 0, a: [0.0, 0.0], b: [len, 0.0], angle: std::f32::consts::PI - psi, window: MAIN, motion: Motion::Fixed }),
-            bend: Some(Bend { curvature: kappa, window: MAIN, line: None }),
+            hinge: Some(Hinge { parent: 0, a: [0.0, 0.0], b: [len, 0.0], angle: std::f32::consts::PI - 2.0 * start_tilt, window: MAIN, motion: Motion::Fixed }),
+            bend: Some(Bend { curvature: kappa, window: MAIN, line: None, neck: neck_bend }),
             curved: None,
             slices: SLICES,
             role: Role::Face,
@@ -532,21 +542,36 @@ impl Template {
         let handle_height = (0.35 * height).clamp(25.0, 50.0);
         let (h0, h1) = (len * 0.27, len * 0.73);
         let inset = (h1 - h0) * 0.09;
-        for (fin_name, name, parent, sign, shift) in [("正面の貼りしろ", "正面の持ち手", 0usize, 1.0f32, 0.0f32), ("背面の貼りしろ", "背面の持ち手", 1usize, -1.0f32, under)] {
-            let edge = sign * height;
-            let base = edge + sign * fin;
-            let fin_index = panels.len();
+        if handle {
+            for (fin_name, name, parent, sign, shift) in [("正面の貼りしろ", "正面の持ち手", 0usize, 1.0f32, 0.0f32), ("背面の貼りしろ", "背面の持ち手", 1usize, -1.0f32, under)] {
+                let edge = sign * height;
+                let base = edge + sign * fin;
+                let fin_index = panels.len();
+                panels.push(Panel::flat(
+                    fin_name,
+                    ccw(vec![[shift, edge], [len - shift, edge], [len - shift, base], [shift, base]]),
+                    Some(Hinge { parent, a: [shift, edge], b: [len - shift, edge], angle: end_tilt, window: MAIN, motion: Motion::Fixed }),
+                    Role::Fin,
+                ));
+                panels.push(Panel::flat(
+                    name,
+                    ccw(vec![[h0, base], [h1, base], [h1 - inset, base + sign * handle_height], [h0 + inset, base + sign * handle_height]]),
+                    Some(Hinge { parent: fin_index, a: [h0, base], b: [h1, base], angle: 0.0, window: MAIN, motion: Motion::Fixed }),
+                    Role::Face,
+                ));
+            }
+        } else {
+            // 背面の上の縁から、のりしろを内側へ折り返して、正面の裏に貼る。両端は、フラップの折り線に掛からないよう斜めに落とす。
+            let tab = (0.12 * height).clamp(8.0, 14.0);
+            let (edge, base) = (-height, -height - tab);
+            let slant = tab * 0.8;
+            // 平らなのりしろが丸い正面を突き抜けて見えないよう、ほんの少しだけ内側へ倒しておく。
+            const TUCKED_IN: f32 = 0.2;
             panels.push(Panel::flat(
-                fin_name,
-                ccw(vec![[shift, edge], [len - shift, edge], [len - shift, base], [shift, base]]),
-                Some(Hinge { parent, a: [shift, edge], b: [len - shift, edge], angle: -half_turn, window: MAIN, motion: Motion::Fixed }),
+                "のりしろ",
+                ccw(vec![[under, edge], [len - under, edge], [len - under - slant, base], [under + slant, base]]),
+                Some(Hinge { parent: 1, a: [under, edge], b: [len - under, edge], angle: std::f32::consts::PI + 2.0 * end_tilt + TUCKED_IN, window: MAIN, motion: Motion::Fixed }),
                 Role::Fin,
-            ));
-            panels.push(Panel::flat(
-                name,
-                ccw(vec![[h0, base], [h1, base], [h1 - inset, base + sign * handle_height], [h0 + inset, base + sign * handle_height]]),
-                Some(Hinge { parent: fin_index, a: [h0, base], b: [h1, base], angle: 0.0, window: MAIN, motion: Motion::Fixed }),
-                Role::Face,
             ));
         }
 
@@ -561,26 +586,94 @@ impl Template {
 
         let (min, max) = bounds(&panels);
         let r = len.min(height) * 0.26;
-        let marks = vec![([len * 0.5, height * 0.5], r), ([deepest, height * 0.5], r * 0.55)];
+        let marks = vec![([len * 0.5, height * 0.5], r), ([deepest, v_deepest], r * 0.55)];
         let hole = |sign: f32| [len * 0.5, sign * (height + fin + handle_height * 0.5), (h1 - h0) * 0.3, handle_height * 0.22];
+        let holes = if handle { vec![hole(1.0), hole(-1.0)] } else { Vec::new() };
         // 端のフラップは、紙の張りで閉じた状態を保つ。
         let openings = openings(&panels, &[("正面のフラップ", None, Hold::Tension)]);
-        let glued = glued(&panels, &[("正面の貼りしろ", "背面の貼りしろ"), ("正面の持ち手", "背面の持ち手")]);
-        // 根の面は下の折り線から巻きはじめるので、そのままだと全体が後ろへ傾く。ふくらみの半分だけ手前へ起こして、まっすぐ立てる。
+        let glued = if handle { glued(&panels, &[("正面の貼りしろ", "背面の貼りしろ"), ("正面の持ち手", "背面の持ち手")]) } else { glued(&panels, &[("のりしろ", "正面")]) };
+        // 根の面は下の折り線から巻きはじめるので、そのままだと全体が後ろへ傾く。立ち上がりの傾きぶん手前へ起こして、まっすぐ立てる。
         Template {
             panels,
             thickness: t,
             min,
             max,
             world: upright_world([len * 0.5, height * 0.5], deepest * 2.0, t),
-            tilt: half_turn,
+            tilt: start_tilt,
             tilt_window: MAIN,
             marks,
-            holes: vec![hole(1.0), hole(-1.0)],
+            holes,
             open_angle: 0.0,
             openings,
             glued,
         }
     }
+}
 
+/// ピロー型の 1 枚の面の、横から見た形。下の折り線から上の端まで、丸みに沿った距離 v で表す。
+/// 傾きは、2 枚が合わさる平面から外へ向かう角度。曲がり具合が正なら、上へ行くほど内側へ向く。
+pub(super) struct PillowProfile {
+    height: f32,
+    /// 下の折り線での傾き。
+    pub(super) start: f32,
+    /// ふくらんだ部分の曲がり具合。
+    pub(super) kappa: f32,
+    /// 首（上の口の近くで逆に反る部分）のはじまりと、その曲がり具合。
+    pub(super) neck: Option<(f32, f32)>,
+}
+
+/// 首のはじまる高さ（面の高さに対する割合）。
+const NECK_AT: f32 = 0.72;
+
+impl PillowProfile {
+    pub(super) fn new(height: f32, psi: f32, neck: bool) -> PillowProfile {
+        if !neck {
+            // 上下が対称。下で外へ psi/2 傾いて立ち上がり、上で内へ psi/2 傾いて合わさる。
+            return PillowProfile { height, start: psi * 0.5, kappa: psi / height, neck: None };
+        }
+        // ふくらんだ部分で psi だけ向きを変え、首で逆に反って、上の端でまっすぐ（傾き 0）になる。
+        // そのうえで上の端がちょうど合わさる（深さ 0 になる）ように、立ち上がりの傾きを二分法で決める。
+        let at = height * NECK_AT;
+        let kappa = psi / at;
+        let make = |start: f32| {
+            let turned = start - psi;
+            PillowProfile { height, start, kappa, neck: Some((at, turned / (height - at))) }
+        };
+        let (mut lo, mut hi) = (0.0f32, psi);
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if make(mid).depth(height) > 0.0 {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        make(0.5 * (lo + hi))
+    }
+
+    /// 一定の曲がり具合 `k` の区間を、傾き `tilt` から長さ `u` だけ進んだときの、外への張り出し。
+    fn stretch(tilt: f32, k: f32, u: f32) -> f32 {
+        if k.abs() < 1e-7 {
+            u * tilt.sin()
+        } else {
+            ((tilt - k * u).cos() - tilt.cos()) / k
+        }
+    }
+
+    /// 高さ v での、ふくらみの深さ（2 枚が合わさる平面からの距離）。
+    pub(super) fn depth(&self, v: f32) -> f32 {
+        let v = v.clamp(0.0, self.height);
+        match self.neck {
+            Some((at, k)) if v > at => Self::stretch(self.start, self.kappa, at) + Self::stretch(self.start - self.kappa * at, k, v - at),
+            _ => Self::stretch(self.start, self.kappa, v),
+        }
+    }
+
+    /// 上の端での傾き。
+    pub(super) fn end(&self) -> f32 {
+        match self.neck {
+            Some((at, k)) => self.start - self.kappa * at - k * (self.height - at),
+            None => self.start - self.kappa * self.height,
+        }
+    }
 }

@@ -6,7 +6,7 @@ use pakenoba_i18n::t;
 
 use eframe::egui;
 
-use super::{App, PILLOW, SHAPES, Tool, View, Workspace, icons};
+use super::{App, SHAPES, Tool, View, Workspace, icons};
 use pakenoba_core::template::TuckFlaps;
 
 
@@ -411,7 +411,7 @@ impl App {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let gable = self.dims.sides == 2;
-                let pillow = self.dims.sides == PILLOW;
+                let pillow = super::is_pillow(self.dims.sides);
                 let prism = self.dims.sides >= 3 && !pillow;
                 boxed(ui, t!("Dimensions (inside)"), false, |ui| {
                     let dims = &mut self.dims;
@@ -621,7 +621,7 @@ impl App {
         let can_open = self.template.can_open_at(which);
         ui.add_enabled_ui(can_open, |ui| {
             // ピロー型には上と底の区別がないので、左右の口と呼ぶ。
-            let pillow = self.dims.sides == super::PILLOW;
+            let pillow = super::is_pillow(self.dims.sides);
             ui.strong(match (which, pillow) {
                 (0, false) => t!("Open / close"),
                 (_, false) => t!("Base"),

@@ -9,7 +9,7 @@ use pakenoba_i18n::t;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-use super::{App, PILLOW, Picture, Placed, SHAPES};
+use super::{App, PILLOW, PLAIN_PILLOW, Picture, Placed, SHAPES};
 
 /// 「#rrggbb」を色に。
 fn color(value: &Value) -> Result<Option<[u8; 3]>, String> {
@@ -263,6 +263,7 @@ impl App {
                     "tuck_box" => 0,
                     "gable" => 2,
                     "pillow" => PILLOW,
+                    "plain_pillow" => PLAIN_PILLOW,
                     "prism" => {
                         let n = args.get("sides").and_then(Value::as_u64).unwrap_or(6) as usize;
                         if !SHAPES.iter().any(|(s, _)| *s == n) {
@@ -270,7 +271,7 @@ impl App {
                         }
                         n
                     }
-                    other => return Err(t!("Unknown box type \"{other}\" (tuck_box, gable, pillow, prism)")),
+                    other => return Err(t!("Unknown box type \"{other}\" (tuck_box, gable, pillow, plain_pillow, prism)")),
                 };
                 let removed = if sides == self.dims.sides { 0 } else { self.decals.len() };
                 self.set_shape(sides);
