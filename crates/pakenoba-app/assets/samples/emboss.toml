@@ -1,0 +1,161 @@
+format = "pakenoba-project"
+version = 1
+
+[shape]
+kind = "tuck_box"
+width = 200.0
+depth = 160.0
+height = 85.0
+thickness = 0.5
+bulge = 40.0
+roof = 45.0
+
+[material]
+paper = "uncoated"
+coat = "none"
+
+[[decal]]
+id = 1
+panel = "正面"
+at = [0.15, 0.35]
+size = [24.0, 24.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "ellipse"
+fill = "#000000"
+stroke_width = 1.0
+
+[[decal]]
+id = 2
+panel = "正面"
+at = [0.32, 0.35]
+size = [24.0, 24.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "ellipse"
+fill = "#000000"
+stroke_width = 1.0
+
+[[decal]]
+id = 3
+panel = "正面"
+at = [0.49, 0.35]
+size = [24.0, 24.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "ellipse"
+fill = "#000000"
+stroke_width = 1.0
+
+[[decal]]
+id = 4
+panel = "正面"
+at = [0.75, 0.35]
+size = [50.0, 24.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 4.0
+
+[[decal]]
+id = 5
+panel = "正面"
+at = [0.3, 0.75]
+size = [70.0, 18.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 9.0
+
+[[decal]]
+id = 6
+panel = "正面"
+at = [0.75, 0.75]
+size = [44.0, 18.0]
+angle = 0.0
+back = false
+
+[decal.shape]
+kind = "rect"
+fill = "#b23a48"
+stroke_width = 1.0
+radius = 2.0
+
+[[decal]]
+id = 7
+panel = "上のフタ"
+at = [0.5, 0.5]
+size = [60.0, 36.0]
+angle = 0.0
+back = false
+builtin = "logo"
+
+[[finish]]
+id = 20
+kind = "emboss"
+link = 1
+height = 0.2
+
+[[finish]]
+id = 21
+kind = "emboss"
+link = 2
+height = 0.5
+
+[[finish]]
+id = 22
+kind = "emboss"
+link = 3
+height = 1.0
+
+[[finish]]
+id = 23
+kind = "emboss"
+link = 4
+height = 0.5
+deboss = true
+edge = 0.4
+
+[[finish]]
+id = 24
+kind = "foil"
+foil = "gold"
+link = 5
+
+[[finish]]
+id = 25
+kind = "emboss"
+link = 5
+height = 0.6
+
+[[finish]]
+id = 26
+kind = "emboss"
+link = 6
+height = 0.4
+edge = 1.5
+
+[[finish]]
+id = 27
+kind = "emboss"
+link = 7
+height = 0.4

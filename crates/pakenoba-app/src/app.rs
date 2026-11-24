@@ -16,6 +16,7 @@ mod library;
 mod lighting;
 mod outputs;
 mod panels;
+mod samples;
 mod recovery;
 mod select;
 pub(crate) mod settings;
@@ -451,8 +452,8 @@ struct App {
     finishes: Vec<pakenoba_core::material::Finish>,
     /// 選んでいる加工（選んでいる間は、柄は選ばない）。
     finish_selected: Option<usize>,
-    /// 箔のうねりのつまみを引き始めたときの値（離したときに、1 回の操作として記録する）。
-    wave_before: Option<u8>,
+    /// 加工の数値のつまみを引き始めたときの値（離したときに、1 回の操作として記録する）。
+    slider_before: Option<f32>,
     /// 型紙。共有して持つ（表示の中で、App を書き換えながら読むため）。
     template: Rc<Template>,
     /// 柄がたどれる面のつながり（折り線と合わせ目）。
@@ -658,7 +659,7 @@ impl App {
             env: Default::default(),
             finishes: Vec::new(),
             finish_selected: None,
-            wave_before: None,
+            slider_before: None,
             template,
             surface,
             problems,

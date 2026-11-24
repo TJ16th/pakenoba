@@ -13,6 +13,7 @@ impl App {
     pub(super) fn home_screen(&mut self, ui: &mut egui::Ui) {
         let mut open: Option<Option<PathBuf>> = None;
         let mut new_shape: Option<usize> = None;
+        let mut sample: Option<usize> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(24.0);
@@ -43,6 +44,15 @@ impl App {
                         for (sides, label) in SHAPES {
                             if ui.add_sized([260.0, 26.0], egui::Button::new(pakenoba_i18n::tr(label))).clicked() {
                                 new_shape = Some(sides);
+                            }
+                        }
+                        ui.add_space(18.0);
+                        ui.strong(t!("Open a sample"));
+                        ui.add_space(4.0);
+                        for (index, (name, _)) in super::samples::SAMPLES.iter().enumerate() {
+                            let button = egui::Button::new(egui::RichText::new(pakenoba_i18n::tr(name)).size(12.0)).wrap();
+                            if ui.add_sized([260.0, 30.0], button).clicked() {
+                                sample = Some(index);
                             }
                         }
                     });
@@ -80,6 +90,9 @@ impl App {
         });
         if let Some(path) = open {
             self.request_open(path);
+        }
+        if let Some(index) = sample {
+            self.open_sample(index);
         }
         if let Some(sides) = new_shape {
             self.home_shape = Some(sides);

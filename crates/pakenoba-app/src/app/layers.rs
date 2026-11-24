@@ -366,7 +366,8 @@ impl App {
             let cy = rect.center().y;
             let x = eye.right() + 6.0;
             // 小さな絵のかわりに、箔の色の四角と光の印。
-            let swatch = super::finishes::foil_swatch(finish.foil);
+            let emboss = finish.kind == pakenoba_core::material::FinishKind::Emboss;
+            let swatch = if emboss { [150, 150, 150] } else { super::finishes::foil_swatch(finish.foil) };
             let thumb = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
             painter.rect_filled(thumb, 2.0, egui::Color32::from_rgb(swatch[0], swatch[1], swatch[2]));
             icons::draw_foil(&painter, thumb.center(), egui::Stroke::new(1.3, egui::Color32::from_gray(40)));
@@ -376,14 +377,18 @@ impl App {
             ui.scope_builder(egui::UiBuilder::new().max_rect(name_rect).layout(egui::Layout::top_down(egui::Align::LEFT)), |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.add(egui::Label::new(egui::RichText::new(label).color(super::theme::TEXT)).truncate().selectable(false));
-                let kind = if missing { t!("Foil (the linked artwork is gone)") } else { t!("Foil stamping") };
+                let kind = match (missing, emboss) {
+                    (true, _) => t!("Finish (the linked artwork is gone)"),
+                    (false, true) => t!("Embossing"),
+                    (false, false) => t!("Foil stamping"),
+                };
                 ui.add(egui::Label::new(egui::RichText::new(kind).small().color(super::theme::MUTED)).truncate().selectable(false));
             });
             if response.clicked() {
                 self.select_finish(Some(index));
             }
             response.context_menu(|ui| {
-                if ui.button(t!("Remove the foil")).clicked() {
+                if ui.button(if emboss { t!("Remove the embossing") } else { t!("Remove the foil") }).clicked() {
                     self.person("finish.delete", serde_json::json!({ "id": finish.id }));
                     ui.close();
                 }
@@ -838,7 +843,7 @@ impl App {
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
                     self.cmd_group();
                 }
-                let foil = icons::bare_button(ui, size, false, artwork.is_some(), t!("Add foil stamping in the shape of the selected artwork"), icons::draw_foil);
+                let foil = icons::bare_button(ui, size, false, artwork.is_some(), t!("Add foil stamping or embossing in the shape of the selected artwork"), icons::draw_foil);
                 egui::Popup::menu(&foil).show(|ui| {
                     ui.set_min_width(200.0);
                     ui.weak(t!("Foil stamping"));
@@ -847,6 +852,16 @@ impl App {
                             self.add_foil(f);
                             ui.close();
                         }
+                    }
+                    ui.separator();
+                    ui.weak(t!("Embossing"));
+                    if ui.button(t!("Emboss (raise)")).clicked() {
+                        self.add_emboss(false);
+                        ui.close();
+                    }
+                    if ui.button(t!("Deboss (press in)")).clicked() {
+                        self.add_emboss(true);
+                        ui.close();
                     }
                 });
                 let adjust = icons::bare_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);

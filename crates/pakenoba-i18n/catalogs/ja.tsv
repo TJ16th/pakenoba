@@ -1113,12 +1113,33 @@ blend	Color	カラー
 	The artwork it was linked to is gone	つないでいた柄がありません
 	The foil takes the shape of the linked artwork and moves with it. Hide the artwork's layer to stamp foil without ink.	箔は、つないだ柄の形になり、柄と一緒に動きます。インキを刷らずに箔だけを押すときは、柄のレイヤーを隠します。
 	Remove the foil	箔を外す
-	Foil (the linked artwork is gone)	箔（つないでいた柄がありません）
-	Add foil stamping in the shape of the selected artwork	選んでいる柄の形で、箔を押す
-	Added foil	箔を押した
-	Changed the foil	箔を変えた
-	Removed the foil	箔を外した
 	"id" is missing	「id」がありません
 	Waviness	うねり
 	Small waves in the pressed foil. 0 is flat like a mirror. More waves make the reflection break up and glitter	押した箔の小さなうねり。0 は鏡のように平ら。大きいほど映り込みが乱れて、きらめく
 	"wave" is a number from 0 to 100	「wave」は 0〜100 の数です
+	Open a sample	見本を開く
+	Foil sampler (7 foils on navy, matte PP)	箔押しの見本（紺にマット PP、7 種の箔）
+	Embossing sampler (heights, deboss, raised foil)	エンボスの見本（高さ違い、デボス、浮き出し箔）
+	Kraft with hologram band and copper foil	クラフト紙にホログラムの帯と銅箔
+	Black gloss PP with raised gold foil	黒にグロス PP、浮き出しの金箔
+	Opened the sample "{}". Save it to keep your changes.	見本「{}」を開きました。変えたものを残すときは保存してください。
+	Could not open the sample: {e}	見本を開けませんでした: {e}
+	Emboss	エンボス
+	Deboss	デボス
+	Embossing	エンボス加工
+	Direction	向き
+	Raise (emboss)	浮かせる（エンボス）
+	Press in (deboss)	へこませる（デボス）
+	How high the pattern is raised (or how deep it is pressed). Usually 0.2 to 1 mm	浮き出しの高さ（へこみの深さ）。ふつうは 0.2〜1 mm
+	Edge width	縁の幅
+	Width of the slope at the edge. Smaller makes a sharp step, larger a soft rounded rise	縁の坂の幅。小さいほど切り立った段、大きいほど丸くなだらかな盛り上がり
+	The relief takes the shape of the linked artwork and moves with it. Hide the artwork's layer for blind embossing (no ink). Add foil to the same artwork for raised foil.	浮き出しは、つないだ柄の形になり、柄と一緒に動きます。インキを刷らない空押しは、柄のレイヤーを隠します。同じ柄に箔も押すと、浮き出し箔になります。
+	Remove the embossing	エンボスを外す
+	Add foil stamping or embossing in the shape of the selected artwork	選んでいる柄の形で、箔押しやエンボスを付ける
+	Emboss (raise)	エンボス（浮かせる）
+	Deboss (press in)	デボス（へこませる）
+	Finish (the linked artwork is gone)	加工（つないでいた柄がありません）
+	Unknown finish "{key}" (foil, emboss)	知らない加工です（{key}）。foil か emboss
+	Added a finish (foil or embossing)	加工を付けた（箔かエンボス）
+	Changed a finish	加工を変えた
+	Removed a finish	加工を外した

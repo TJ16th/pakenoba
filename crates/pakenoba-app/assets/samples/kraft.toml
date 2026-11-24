@@ -1,0 +1,99 @@
+format = "pakenoba-project"
+version = 1
+
+[shape]
+kind = "tuck_box"
+width = 160.0
+depth = 100.0
+height = 110.0
+thickness = 0.5
+bulge = 40.0
+roof = 45.0
+
+[material]
+paper = "kraft"
+coat = "none"
+
+[[decal]]
+id = 1
+panel = "正面"
+at = [0.5, 0.55]
+size = [70.0, 42.0]
+angle = 0.0
+back = false
+builtin = "logo"
+
+[[decal]]
+id = 2
+panel = "正面"
+at = [0.5, 0.15]
+size = [520.0, 10.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+
+[[decal]]
+id = 3
+panel = "上のフタ"
+at = [0.5, 0.5]
+size = [50.0, 50.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "ellipse"
+fill = "#000000"
+stroke_width = 1.0
+
+[[decal]]
+id = 4
+panel = "右側面"
+at = [0.5, 0.5]
+size = [60.0, 60.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 8.0
+
+[[finish]]
+id = 20
+kind = "foil"
+foil = "hologram"
+link = 2
+
+[[finish]]
+id = 21
+kind = "foil"
+foil = "copper"
+link = 3
+
+[[finish]]
+id = 22
+kind = "emboss"
+link = 3
+height = 0.5
+
+[[finish]]
+id = 23
+kind = "emboss"
+link = 4
+height = 0.6
+deboss = true
+edge = 0.8
+
+[[finish]]
+id = 24
+kind = "emboss"
+link = 1
+height = 0.3

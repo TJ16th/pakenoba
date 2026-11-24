@@ -158,22 +158,73 @@ impl Foil {
     }
 }
 
-/// 加工のレイヤー（特殊版）。いまは箔押しだけ。
+/// 加工の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub enum FinishKind {
+    /// 箔押し。
+    #[default]
+    Foil,
+    /// エンボス（浮き出し）かデボス（へこみ）。
+    Emboss,
+}
+
+impl FinishKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            FinishKind::Foil => "foil",
+            FinishKind::Emboss => "emboss",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<FinishKind> {
+        [FinishKind::Foil, FinishKind::Emboss].into_iter().find(|k| k.key() == key)
+    }
+}
+
+/// エンボスの高さ（mm）の範囲と、はじめの値。
+pub const EMBOSS_HEIGHT: std::ops::RangeInclusive<f32> = 0.05..=2.0;
+pub const DEFAULT_EMBOSS_HEIGHT: f32 = 0.4;
+/// エンボスの縁の坂の幅（mm）の範囲と、はじめの値。
+pub const EMBOSS_EDGE: std::ops::RangeInclusive<f32> = 0.1..=3.0;
+pub const DEFAULT_EMBOSS_EDGE: f32 = 0.6;
+
+/// 加工のレイヤー（特殊版）。箔押しと、エンボス・デボス。
 ///
 /// 形は、つないだ柄（`link` のレイヤー）の形をそのまま使う。柄を動かすと、加工も付いてくる。
-/// 柄を隠しても、加工の形には使う（インキを刷らずに箔だけを押す、を表すため）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 柄を隠しても、加工の形には使う（インキを刷らずに箔だけを押す、空押しする、を表すため）。
+/// 同じ柄に箔とエンボスをつなぐと、浮き出し箔になる。
+#[derive(Clone, Debug, PartialEq)]
 pub struct Finish {
     /// 加工ごとの決まった印（柄のレイヤーの印と同じ数の並びから付ける）。0 はまだ付けていない。
     pub id: u32,
+    pub kind: FinishKind,
+    /// 箔の種類（箔押しのとき）。
     pub foil: Foil,
     /// 形を借りる柄のレイヤーの印。
     pub link: u32,
     /// 使う人が付けた名前。
     pub name: Option<String>,
     pub hidden: bool,
-    /// 押した箔の小さなうねり（0〜100%）。0 は鏡のように平ら。
+    /// 押した箔の小さなうねり（0〜100%）。0 は鏡のように平ら（箔押しのとき）。
     pub wave: u8,
+    /// 浮き出しの高さ（mm。エンボスのとき）。
+    pub height: f32,
+    /// 真ならへこませる（デボス）。
+    pub deboss: bool,
+    /// 縁の坂の幅（mm）。小さいほど、縁が切り立つ。
+    pub edge: f32,
+}
+
+impl Finish {
+    /// 柄 `link` に押す箔。
+    pub fn foil(foil: Foil, link: u32) -> Finish {
+        Finish { id: 0, kind: FinishKind::Foil, foil, link, name: None, hidden: false, wave: DEFAULT_WAVE, height: DEFAULT_EMBOSS_HEIGHT, deboss: false, edge: DEFAULT_EMBOSS_EDGE }
+    }
+
+    /// 柄 `link` の形のエンボス（`deboss` が真ならデボス）。
+    pub fn emboss(link: u32, deboss: bool) -> Finish {
+        Finish { kind: FinishKind::Emboss, deboss, ..Finish::foil(Foil::Gold, link) }
+    }
 }
 
 /// 箔のうねりの、はじめの値（%）。

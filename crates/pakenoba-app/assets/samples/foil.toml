@@ -1,0 +1,191 @@
+format = "pakenoba-project"
+version = 1
+
+[shape]
+kind = "tuck_box"
+width = 110.0
+depth = 60.0
+height = 160.0
+thickness = 0.5
+bulge = 40.0
+roof = 45.0
+
+[material]
+paper = "coated_board"
+coat = "matte_pp"
+
+[[decal]]
+id = 1
+panel = "正面"
+at = [0.5, 0.5]
+size = [110.0, 160.0]
+angle = 0.0
+back = false
+
+[decal.shape]
+kind = "rect"
+fill = "#14213d"
+stroke_width = 1.0
+
+[[decal]]
+id = 2
+panel = "正面"
+at = [0.5, 0.9]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 3
+panel = "正面"
+at = [0.5, 0.767]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 4
+panel = "正面"
+at = [0.5, 0.633]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 5
+panel = "正面"
+at = [0.5, 0.5]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 6
+panel = "正面"
+at = [0.5, 0.367]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 7
+panel = "正面"
+at = [0.5, 0.233]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 8
+panel = "正面"
+at = [0.5, 0.1]
+size = [78.0, 13.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "rect"
+fill = "#000000"
+stroke_width = 1.0
+radius = 3.0
+
+[[decal]]
+id = 9
+panel = "上のフタ"
+at = [0.5, 0.5]
+size = [40.0, 24.0]
+angle = 0.0
+back = false
+hidden = true
+builtin = "logo"
+
+[[finish]]
+id = 20
+kind = "foil"
+foil = "gold"
+link = 2
+
+[[finish]]
+id = 21
+kind = "foil"
+foil = "silver"
+link = 3
+
+[[finish]]
+id = 22
+kind = "foil"
+foil = "copper"
+link = 4
+
+[[finish]]
+id = 23
+kind = "foil"
+foil = "red_gold"
+link = 5
+
+[[finish]]
+id = 24
+kind = "foil"
+foil = "matte_gold"
+link = 6
+
+[[finish]]
+id = 25
+kind = "foil"
+foil = "matte_silver"
+link = 7
+
+[[finish]]
+id = 26
+kind = "foil"
+foil = "hologram"
+link = 8
+
+[[finish]]
+id = 30
+kind = "foil"
+foil = "gold"
+link = 9

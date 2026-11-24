@@ -324,7 +324,7 @@ X（フォルダ）をやめる理由: 利点は「素材を外のアプリで�
 - 同じ日に、操作の記録を `history/log.jsonl` として入れるようにした。1 行 1 件の JSON で、`time`（その土地の時刻）、`actor`（`person`、`agent:<名前>`、`mcp:<名前>`）、`command`（コマンドの名前）、`args`（引数の要点。絵は入れない）。新しい 2000 件だけ書く。記録がなければ、ファイルも作らない。読めない行は外して知らせる。「記録を外して保存」では書かない。
 - 同じ日に、残した版を `versions/` に入れるようにした。版ごとの設定のテキストを `versions/001.toml` のように（中身は `project.toml` と同じ形で、記録と版は持たない）、一覧を `versions/index.json`（`file`、`name`、`time`、`auto`）に書く。素材とマスクは中身の印で入るので、いまの案件と同じ中身なら増えない。読めない版は外して知らせる。版がなければ、`versions/` も作らない。
 - 同じ日に、紙とコートを `project.toml` の `[material]`（`paper`、`coat`）に書くようにした。はじめの「コートボール、コートなし」のときは書かない。知らない名前は、はじめのものにして知らせる（[紙・コート・加工の検討](finishes.md)）。
-- 同じ日に、加工のレイヤー（箔押し）を `[[finish]]`（`id`、`kind = "foil"`、`foil`、`link`（形を借りる柄のレイヤーの印）、`name`、`hidden`）に書くようにした。知らない種類は外して知らせる。
+- 同じ日に、加工のレイヤー（箔押し）を `[[finish]]`（`id`、`kind = "foil"`、`foil`、`link`（形を借りる柄のレイヤーの印）、`name`、`hidden`）に書くようにした。知らない種類は外して知らせる。同じ日に、エンボス（`kind = "emboss"`、`height`、`deboss`、`edge`）と、箔のうねり（`wave`）を足した。
 - 同じ日に、調整の種類 `curves`（`points` に入力と出力の組）、`exposure`（`exposure` 100 倍、`offset` 1000 倍、`gamma` 100 倍）、`vibrance`（`vibrance`、`saturation`）、`color_balance`（`shadows`、`midtones`、`highlights` に 3 つずつ、`preserve`）、`black_white`（`weights` に 6 つ）、`photo_filter`（`color`、`density`、`preserve`）、`posterize`（`levels`）、`threshold`（`level`）、`gradient_map`（`from`、`to`、`reverse`）を足した。
 
 ### 設定のテキストの例

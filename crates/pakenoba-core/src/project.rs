@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::material::{Coat, DEFAULT_WAVE, Finish, Foil, Material, Paper};
+use crate::material::{Coat, DEFAULT_EMBOSS_EDGE, DEFAULT_EMBOSS_HEIGHT, DEFAULT_WAVE, EMBOSS_EDGE, EMBOSS_HEIGHT, Finish, FinishKind, Foil, Material, Paper};
 use crate::surface::Decal;
 use crate::template::{P2, Template, TuckFlaps};
 
@@ -775,8 +775,10 @@ struct Manifest {
 #[derive(Serialize, Deserialize)]
 struct FinishEntry {
     id: u32,
-    /// `foil` だけ（あとで、部分 UV ニス、エンボスなどを足す）。
+    /// `foil` か `emboss`（あとで、部分 UV ニスなどを足す）。
     kind: String,
+    /// 箔の種類（箔押しのとき）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     foil: String,
     /// 形を借りる柄のレイヤーの印。
     link: u32,
@@ -787,6 +789,13 @@ struct FinishEntry {
     /// 箔のうねり（%）。書いていなければ、はじめの値。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wave: Option<u8>,
+    /// エンボスの高さと縁の幅（mm）。書いていなければ、はじめの値。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    deboss: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edge: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1252,7 +1261,25 @@ impl Project {
                     DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
-            finishes: self.finishes.iter().map(|f| FinishEntry { id: f.id, kind: "foil".to_owned(), foil: f.foil.key().to_owned(), link: f.link, name: f.name.clone(), hidden: f.hidden, wave: (f.wave != DEFAULT_WAVE).then_some(f.wave) }).collect(),
+            finishes: self
+                .finishes
+                .iter()
+                .map(|f| {
+                    let foil = f.kind == FinishKind::Foil;
+                    FinishEntry {
+                        id: f.id,
+                        kind: f.kind.key().to_owned(),
+                        foil: if foil { f.foil.key().to_owned() } else { String::new() },
+                        link: f.link,
+                        name: f.name.clone(),
+                        hidden: f.hidden,
+                        wave: (foil && f.wave != DEFAULT_WAVE).then_some(f.wave),
+                        height: (!foil && f.height != DEFAULT_EMBOSS_HEIGHT).then(|| tidy(f.height)),
+                        deboss: !foil && f.deboss,
+                        edge: (!foil && f.edge != DEFAULT_EMBOSS_EDGE).then(|| tidy(f.edge)),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -1333,6 +1360,15 @@ impl Project {
     /// 案件を、ファイルに保存する。別の名前で書ききってから入れ替えるので、途中で止まっても、前のファイルが残る。
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         replace_file(path, |file| self.write(BufWriter::with_capacity(1 << 20, file)))
+    }
+
+    /// 設定のテキスト（`project.toml` の中身）だけから読む。素材とマスクを使わない案件（付属の見本など）のため。
+    pub fn from_text(text: &str) -> Result<Opened, Error> {
+        let mut zip = ZipWriter::new(io::Cursor::new(Vec::new()));
+        zip.start_file(MANIFEST, SimpleFileOptions::default()).map_err(|e| Error::Io(io::Error::other(e)))?;
+        zip.write_all(text.as_bytes())?;
+        let bytes = zip.finish().map_err(|e| Error::Io(io::Error::other(e)))?.into_inner();
+        Project::read(io::Cursor::new(bytes))
     }
 
     /// 案件のファイルを開く。
@@ -1677,8 +1713,18 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     let mut finishes = Vec::new();
     for (i, entry) in manifest.finishes.iter().enumerate() {
         let number = i + 1;
-        match (entry.kind.as_str(), Foil::from_key(&entry.foil)) {
-            ("foil", Some(foil)) => finishes.push(Finish { id: entry.id, foil, link: entry.link, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, wave: entry.wave.unwrap_or(DEFAULT_WAVE).min(100) }),
+        let base = |mut f: Finish| {
+            f.id = entry.id;
+            f.name = entry.name.clone().filter(|n| !n.trim().is_empty());
+            f.hidden = entry.hidden;
+            f
+        };
+        match (FinishKind::from_key(&entry.kind), Foil::from_key(&entry.foil)) {
+            (Some(FinishKind::Foil), Some(foil)) => finishes.push(base(Finish { wave: entry.wave.unwrap_or(DEFAULT_WAVE).min(100), ..Finish::foil(foil, entry.link) })),
+            (Some(FinishKind::Emboss), _) => {
+                let clamp = |v: Option<f64>, range: &std::ops::RangeInclusive<f32>, default: f32| v.filter(|v| v.is_finite()).map_or(default, |v| (v as f32).clamp(*range.start(), *range.end()));
+                finishes.push(base(Finish { height: clamp(entry.height, &EMBOSS_HEIGHT, DEFAULT_EMBOSS_HEIGHT), edge: clamp(entry.edge, &EMBOSS_EDGE, DEFAULT_EMBOSS_EDGE), ..Finish::emboss(entry.link, entry.deboss) }))
+            }
             _ => problems.push(t!("Finish layer {number} ({kind}, {foil}) is not known to this version of PAKENOBA, so it was removed", kind = entry.kind, foil = entry.foil)),
         }
     }
@@ -1885,7 +1931,7 @@ mod tests {
             LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
             LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
         ];
-        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, finishes: vec![Finish { id: 900, foil: Foil::Hologram, link: 1, name: Some("箔".to_owned()), hidden: true, wave: 0 }], assets, decals, base, back_base, log, versions: Vec::new() }
+        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, finishes: vec![Finish { id: 900, name: Some("箔".to_owned()), hidden: true, wave: 0, ..Finish::foil(Foil::Hologram, 1) }, Finish { id: 901, height: 0.8, edge: 1.5, ..Finish::emboss(1, true) }], assets, decals, base, back_base, log, versions: Vec::new() }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {

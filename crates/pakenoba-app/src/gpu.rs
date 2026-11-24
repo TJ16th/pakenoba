@@ -158,6 +158,16 @@ fn fibers(p: vec2<f32>) -> f32 {
     return v;
 }
 
+// 浮き出しの高さ（mm。見ている側へ出ているほど正）。加工の版の A に入れてある（128 が 0）。
+// 紙の表から押した浮き出しは、裏（箱の内側）から見るとへこみになる。
+const MAX_RELIEF: f32 = 2.0;
+
+fn relief_at(uv: vec2<f32>, inside: bool) -> f32 {
+    let f = (textureSampleLevel(finish_front, art_sampler, uv, 0.0).a * 255.0 - 128.0) / 127.0 * MAX_RELIEF;
+    let b = (textureSampleLevel(finish_back, art_sampler, uv, 0.0).a * 255.0 - 128.0) / 127.0 * MAX_RELIEF;
+    return select(f - b, b - f, inside);
+}
+
 // 押した箔の、小さなうねりの高さ（mm）。
 fn foil_height(mm: vec2<f32>) -> f32 {
     // 格子の目が見えないよう、向きを変えた 2 つを重ねる。
@@ -193,6 +203,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let dpy = dpdy(in.world);
     let dmx = dpdx(mm);
     let dmy = dpdy(mm);
+    let footprint = max(length(dmx), length(dmy));
+    let det = dmx.x * dmy.y - dmy.x * dmx.y;
+    var t_mm = vec3<f32>(0.0);
+    var b_mm = vec3<f32>(0.0);
+    if abs(det) > 1e-12 {
+        t_mm = normalize((dpx * dmy.y - dpy * dmx.y) / det);
+        b_mm = normalize((dpy * dmx.x - dpx * dmy.x) / det);
+    }
     // 抜き穴の中は描かない。角の丸い四角として判定する。
     for (var i = 0; i < 2; i++) {
         let hole = globals.holes[i];
@@ -212,6 +230,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if dot(n0, v) < 0.0 {
         n0 = -n0;
     }
+    // エンボス: 浮き出しの高さの坂で、面の向きを傾ける（コートも箔も、この向きに従う）。
+    if in.kind < 1.5 && dot(t_mm, t_mm) > 0.5 {
+        let dims = vec2<f32>(max(textureDimensions(finish_front), textureDimensions(finish_back)));
+        let du = vec2<f32>(1.0 / dims.x, 0.0);
+        let dv = vec2<f32>(0.0, 1.0 / dims.y);
+        let inside = in.kind > 0.5;
+        let gx = (relief_at(in.uv + du, inside) - relief_at(in.uv - du, inside)) / (2.0 * du.x * globals.sheet.x);
+        let gy = (relief_at(in.uv + dv, inside) - relief_at(in.uv - dv, inside)) / (2.0 * dv.y * globals.sheet.y);
+        if abs(gx) + abs(gy) > 1e-4 {
+            let bent = normalize(n0 - gx * t_mm - gy * b_mm);
+            if dot(bent, v) > 0.02 {
+                n0 = bent;
+            }
+        }
+    }
     // 紙のきめで、面の向きを少しずらす（コートの膜は平らなので、膜の映り込みには使わない）。
     // 1 画素が繊維より大きく見えるほど遠いときは、ちらつかないよう、きめを薄くする。
     var amp = globals.grain.y;
@@ -221,14 +254,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var n = n0;
     var grain = 0.5;
 
-    let footprint = max(length(dmx), length(dmy));
-    let det = dmx.x * dmy.y - dmy.x * dmx.y;
-    var t_mm = vec3<f32>(0.0);
-    var b_mm = vec3<f32>(0.0);
-    if abs(det) > 1e-12 {
-        t_mm = normalize((dpx * dmy.y - dpy * dmx.y) / det);
-        b_mm = normalize((dpy * dmx.x - dpx * dmy.x) / det);
-    }
     let fade = 1.0 - smoothstep(0.35, 1.2, footprint / globals.grain.x);
     if in.kind < 1.5 && abs(det) > 1e-12 && fade > 0.0 {
         let e = globals.grain.x * 0.25;
@@ -605,7 +630,7 @@ impl BoxRenderer {
         });
         let front = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let back = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
-        let finish = [Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0])];
+        let finish = [Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128])];
         let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &[&front, &back, &finish[0], &finish[1]]);
         // 景色は、左右はつながっているので繰り返し、上下は端で止める。
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -738,7 +763,7 @@ impl BoxRenderer {
     pub fn set_finish(&mut self, rs: &egui_wgpu::RenderState, back: bool, w: usize, h: usize, rgba: Option<&[u8]>) {
         let view = match rgba {
             Some(rgba) if w > 0 && h > 0 && rgba.len() == w * h * 4 && w <= rs.device.limits().max_texture_dimension_2d as usize && h <= rs.device.limits().max_texture_dimension_2d as usize => Self::upload_plain(rs, w as u32, h as u32, rgba),
-            _ => Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0]),
+            _ => Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128]),
         };
         self.finish[back as usize] = view;
         self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1]]);
