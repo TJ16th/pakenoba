@@ -558,6 +558,8 @@ pub struct LoadedPsd {
     pub layer_names: Vec<String>,
     pub has_real_merged: Option<bool>,
     pub guides: GuideHandling,
+    /// 解像度（dpi。PSD に書いてあれば）。
+    pub dpi: Option<f32>,
 }
 
 /// ガイド以外のレイヤーを下から順に重ねる。
@@ -626,7 +628,8 @@ pub fn load_psd(bytes: &[u8]) -> Result<LoadedPsd, String> {
         (true, Some(clean)) => (clean, GuideHandling::Removed),
         (true, None) => (image.data, GuideHandling::Baked),
     };
-    Ok(LoadedPsd { source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides })
+    let dpi = file.resolution().map(|r| r.h_res_fixed as f32 / 65536.0).filter(|&d| d > 1.0);
+    Ok(LoadedPsd { source, source_size: [sw, sh], layer_names, has_real_merged: file.has_real_merged_data(), guides, dpi })
 }
 
 /// 柄の素材にする PSD の、統合した絵（RGBA）と大きさ。
@@ -653,6 +656,154 @@ pub fn tests_psd(w: usize, h: usize, dieline: bool) -> Vec<u8> {
     build_psd(w, h, 101.6, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4]), None).unwrap()
 }
 
+/// 画像（`source`、大きさ `size`）が展開図のまわり `pad` mm まで覆っているとして、`frame` の画像に合わせる。
+/// 近い画素を拾うだけ。画像の外は透明。
+pub fn fit_frame(source: &[u8], size: [usize; 2], tpl: &Template, pad: f32, frame: Frame) -> Vec<u8> {
+    let (left, top) = (tpl.min[0] - pad, tpl.max[1] + pad);
+    let (w_mm, h_mm) = (tpl.max[0] - tpl.min[0] + 2.0 * pad, tpl.max[1] - tpl.min[1] + 2.0 * pad);
+    let mut rgba = vec![0u8; frame.w * frame.h * 4];
+    for y in 0..frame.h {
+        for x in 0..frame.w {
+            let p = frame.at(x, y);
+            let (fx, fy) = ((p[0] - left) / w_mm, (top - p[1]) / h_mm);
+            if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+                continue;
+            }
+            let (sx, sy) = (((fx * size[0] as f32) as usize).min(size[0] - 1), ((fy * size[1] as f32) as usize).min(size[1] - 1));
+            let (o, from) = ((y * frame.w + x) * 4, (sy * size[0] + sx) * 4);
+            rgba[o..o + 4].copy_from_slice(&source[from..from + 4]);
+        }
+    }
+    rgba
+}
+
+/// 塗り足しの範囲。紙の外で、切り線から `bleed` mm 以内の画素ごとに、いちばん近いパネルと、そのパネルの輪郭の上のいちばん近い点。
+pub struct BleedZone {
+    pub bleed: f32,
+    pub map: std::collections::HashMap<u32, (u16, P2)>,
+}
+
+impl BleedZone {
+    /// 画素（番号。展開図の点 `at`）が、パネル `panel` の塗り足しで、柄がその近くの紙の端まで来ているか（`covers` で調べる）。
+    /// 端まで来ていない柄は、伸ばさない（立体の上で隣の面から回り込んで見える柄を、こちらの塗り足しに描かないため）。
+    pub fn reaches(&self, pixel: usize, panel: usize, at: P2, covers: impl Fn(P2) -> bool) -> bool {
+        let Some(&(owner, c)) = self.map.get(&(pixel as u32)) else { return false };
+        if owner as usize != panel {
+            return false;
+        }
+        let (dx, dy) = (at[0] - c[0], at[1] - c[1]);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        // 紙の端から 0.1 mm 内側。
+        covers([c[0] - dx / len * 0.1, c[1] - dy / len * 0.1])
+    }
+}
+
+/// 線分 `a`-`b` の上で、`p` にいちばん近い点。
+fn nearest_on_segment(p: P2, a: P2, b: P2) -> P2 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 <= 1e-12 { 0.0 } else { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0) };
+    [a[0] + t * dx, a[1] + t * dy]
+}
+
+/// 塗り足しの範囲を求める。`sheet` は同じ `frame` で作った紙（アルファが 0 の所が紙の外）。
+pub fn bleed_zone(tpl: &Template, sheet: &SheetArt, bleed: f32) -> BleedZone {
+    let frame = sheet.frame;
+    let mut map: std::collections::HashMap<u32, (u16, P2, f32)> = std::collections::HashMap::new();
+    if bleed > 0.0 {
+        let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
+        for (index, panel) in tpl.panels.iter().enumerate() {
+            let n = panel.outline.len();
+            for i in 0..n {
+                let (a, b) = (panel.outline[i], panel.outline[(i + 1) % n]);
+                // 隣のパネルと共有している辺は折り線（紙がつながっている）。塗り足しは切り線の外だけ。
+                let shared = tpl.panels.iter().enumerate().any(|(j, other)| j != index && (0..other.outline.len()).any(|k| same(a, other.outline[(k + 1) % other.outline.len()]) && same(b, other.outline[k])));
+                if shared {
+                    continue;
+                }
+                let lo = [a[0].min(b[0]) - bleed, a[1].min(b[1]) - bleed];
+                let hi = [a[0].max(b[0]) + bleed, a[1].max(b[1]) + bleed];
+                let (x0, x1, y0, y1) = frame.span(lo, hi);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let o = y * frame.w + x;
+                        if sheet.art[o * 4 + 3] != 0 {
+                            continue;
+                        }
+                        let p = frame.at(x, y);
+                        let c = nearest_on_segment(p, a, b);
+                        let d = ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt();
+                        if d > bleed || tpl.panels.iter().any(|q| inside(&q.outline, p)) {
+                            continue;
+                        }
+                        let entry = map.entry(o as u32).or_insert((index as u16, c, d));
+                        if d < entry.2 {
+                            *entry = (index as u16, c, d);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    BleedZone { bleed, map: map.into_iter().map(|(k, (panel, c, _))| (k, (panel, c))).collect() }
+}
+
+/// 塗り足しのうち、まだ塗られていない所を、いちばん近い紙の端の色で埋める（端を外へ伸ばす）。
+/// 塗られた所は、その下に敷く。`out` があれば、伸ばした色だけをそこへ描く（`rgba` は変えない）。
+pub fn extend_edges(rgba: &mut [u8], frame: Frame, zone: &BleedZone, mut out: Option<&mut [u8]>) {
+    let step = 0.75 / frame.ppm;
+    let mut fills = Vec::new();
+    for (&pixel, &(_, c)) in &zone.map {
+        let o = pixel as usize * 4;
+        if rgba[o + 3] == 255 {
+            continue;
+        }
+        let (x, y) = (pixel as usize % frame.w, pixel as usize / frame.w);
+        let p = frame.at(x, y);
+        let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= 1e-6 {
+            continue;
+        }
+        // 紙の端から、少し内側の画素の色。
+        let src = frame.to_px([c[0] - dx / len * step, c[1] - dy / len * step]);
+        let (sx, sy) = (src[0].floor().clamp(0.0, (frame.w - 1) as f32) as usize, src[1].floor().clamp(0.0, (frame.h - 1) as f32) as usize);
+        let s = (sy * frame.w + sx) * 4;
+        if rgba[s + 3] == 0 {
+            continue;
+        }
+        fills.push((o, [rgba[s], rgba[s + 1], rgba[s + 2], rgba[s + 3]]));
+    }
+    for (o, color) in fills {
+        match out.as_deref_mut() {
+            Some(out) => out[o..o + 4].copy_from_slice(&color),
+            None => {
+                // 塗られた色の下に敷く。
+                let mut under = color;
+                alpha_over(std::slice::from_mut(&mut under).as_flattened_mut(), &rgba[o..o + 4]);
+                rgba[o..o + 4].copy_from_slice(&under);
+            }
+        }
+    }
+}
+
+/// 塗り足しの外側の境目に、細い赤の線を描く（型紙のガイド用）。`paper` は同じ大きさの紙（アルファが 0 の所が紙の外）。
+pub fn draw_bleed_line(lines: &mut [u8], paper: &[u8], frame: Frame, zone: &BleedZone) {
+    const RED: [u8; 4] = [230, 40, 60, 255];
+    let (w, h) = (frame.w, frame.h);
+    for &pixel in zone.map.keys() {
+        let (x, y) = (pixel as usize % w, pixel as usize / w);
+        let outer = [(x.wrapping_sub(1), y), (x + 1, y), (x, y.wrapping_sub(1)), (x, y + 1)]
+            .iter()
+            .any(|&(nx, ny)| nx >= w || ny >= h || (!zone.map.contains_key(&((ny * w + nx) as u32)) && paper[(ny * w + nx) * 4 + 3] == 0));
+        if outer {
+            let o = pixel as usize * 4;
+            lines[o..o + 4].copy_from_slice(&RED);
+        }
+    }
+}
+
+#[cfg(test)]
 /// 画像を、展開図の大きさ（`w` x `h`）に合わせる。近い画素を拾うだけの単純な拡大縮小。
 pub fn fit(source: &[u8], [sw, sh]: [usize; 2], w: usize, h: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; w * h * 4];

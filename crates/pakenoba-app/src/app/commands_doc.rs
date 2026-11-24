@@ -151,6 +151,24 @@ fn shrink(w: usize, h: usize, rgba: &[u8], max: usize) -> (usize, usize, Vec<u8>
 }
 
 impl App {
+    /// 書き出しの命令の、解像度（`dpi`）と塗り足し（`bleed` mm）。渡されたら、出力の設定を変える。
+    fn export_args(&mut self, args: &Value) -> Result<(), String> {
+        if let Some(dpi) = args.get("dpi").and_then(Value::as_u64) {
+            let dpi = dpi as u32;
+            if !super::export::EXPORT_DPI.contains(&dpi) {
+                return Err(t!("\"dpi\" must be one of 100, 300, 350, 600").to_owned());
+            }
+            self.output.dpi = dpi;
+        }
+        if let Some(bleed) = args.get("bleed").and_then(Value::as_f64) {
+            if !(0.0..=5.0).contains(&bleed) {
+                return Err(t!("\"bleed\" must be between 0 and 5 mm").to_owned());
+            }
+            self.output.bleed = bleed as f32;
+        }
+        Ok(())
+    }
+
     /// 人以外がファイルを扱ってよいフォルダ（設定と、起動のときに渡したもの）。
     fn allowed_folders(&self) -> Vec<PathBuf> {
         self.settings.agent_folders.iter().chain(&self.allowed).filter_map(|p| std::fs::canonicalize(p).ok()).collect()
@@ -315,6 +333,7 @@ impl App {
             }
             "export.psd" => {
                 let path = self.checked_path(args, true)?;
+                self.export_args(args)?;
                 if self.actor != "person" && self.has_back_decals() && super::export::back_path(&path).exists() {
                     return Err(t!("{} already exists. AI does not overwrite files; choose another name.", super::export::back_path(&path).display()));
                 }
@@ -331,6 +350,7 @@ impl App {
             }
             "export.print_ready" => {
                 let path = self.checked_path(args, true)?;
+                self.export_args(args)?;
                 let pages = self.with_sharp_text(|app| app.ready_file(&path))?;
                 let coarse: Vec<Value> = self.coarse_images().into_iter().map(|(name, dpi)| json!({ "layer": name, "dpi": dpi })).collect();
                 Ok(json!({ "path": path.display().to_string(), "pages": pages, "dpi": self.export_frame().dpi_value().round(), "coarse_images": coarse }))

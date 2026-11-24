@@ -48,11 +48,13 @@ pub(super) struct OutputSettings {
     pub print: PrintSettings,
     /// 型紙の PSD と入稿用の PDF の細かさ（dpi。100 は画面と同じ）。
     pub dpi: u32,
+    /// 塗り足しの幅（mm。0 なら付けない）。型紙の PSD と入稿用の PDF。
+    pub bleed: f32,
 }
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350 }
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0 }
     }
 }
 
@@ -304,10 +306,15 @@ impl App {
     }
 
     /// 入稿用に刷る絵（紙の色は入れない。読み込んだ絵柄があれば、それごと）。展開図の表の向き。
-    fn ready_art(&self, out: &super::export::OutSheet, back: bool) -> Vec<u8> {
+    pub(super) fn ready_art(&self, out: &super::export::OutSheet, back: bool) -> Vec<u8> {
         let frame = out.sheet.frame;
-        let (flat, printed) = compose_split(&out.sheet, back, out.custom()[usize::from(back)], false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::at(frame, rgba)));
-        printed.unwrap_or(flat)
+        let zone = out.zone.as_ref();
+        let (flat, printed) = compose_split(&out.sheet, back, out.custom()[usize::from(back)], false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::bled(frame, zone, rgba)));
+        let mut art = printed.unwrap_or(flat);
+        if let Some(zone) = zone {
+            crate::art::extend_edges(&mut art, frame, zone, None);
+        }
+        art
     }
 
     /// 入稿用の PDF を書き、ページの数を返す。表と、裏に柄があれば裏（裏から見た向き、左右を裏返す）。最後に指示のページ。
@@ -335,6 +342,11 @@ impl App {
 
     /// 書き出しの細かさを選ぶ（型紙の PSD と入稿用の PDF で共通）。画素の数と、細かさの足りない画像も出す。
     fn resolution_choice(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(t!("Bleed"));
+            ui.add(egui::DragValue::new(&mut self.output.bleed).range(0.0..=5.0).speed(0.1).max_decimals(1).suffix(" mm"));
+        });
+        ui.small(t!("Artwork that crosses a cut line continues past it in the plane of its panel. Where nothing reaches, the edge colour is stretched. Finish plates get no bleed."));
         let label = |dpi: u32| if dpi <= 100 { t!("Same as the screen (about 100 dpi)").to_owned() } else { format!("{dpi} dpi") };
         ui.horizontal(|ui| {
             ui.label(t!("Resolution"));
@@ -527,6 +539,42 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pakenoba_core::template::P2;
+
+    #[test]
+    fn 塗り足しは_切り線の外を_柄か端の色で埋める() {
+        let mut app = App::new(&super::super::Initial::default());
+        let (_, text) = super::super::samples::SAMPLES[3];
+        let opened = pakenoba_core::project::Project::from_text(text).unwrap();
+        assert!(app.apply_project(opened.project).is_empty());
+        app.output.dpi = 100;
+        app.output.bleed = 3.0;
+        let out = app.out_sheet();
+        let zone = out.zone.as_ref().unwrap();
+        assert!(!zone.map.is_empty());
+        let art = app.ready_art(&out, false);
+        let frame = out.sheet.frame;
+        // 余白のぶん、画像が大きい。
+        assert_eq!(frame.w, crate::art::Frame::of(&app.template, crate::art::PX_PER_MM, 3.0).w);
+        // 塗り足しの画素は、どれも紙の外。黒の見本は全面に柄があるので、ほとんどが塗られる。
+        assert!(zone.map.keys().all(|&p| out.sheet.art[p as usize * 4 + 3] == 0));
+        let alpha_at = |p: P2| {
+            let [x, y] = frame.to_px(p);
+            art[(y as usize * frame.w + x as usize) * 4 + 3]
+        };
+        let (min, max) = (app.template.min, app.template.max);
+        // 右端の側面（黒）の切り線の外 1.5 mm は、黒が続く。
+        assert_eq!(alpha_at([max[0] + 1.5, (min[1] + max[1]) * 0.5 + 20.0]), 255);
+        // 柄のない底（白）の横の塗り足しには、隣の側面の柄を回り込ませない。
+        let top_of = |p: &&pakenoba_core::template::Panel| p.outline.iter().map(|q| q[1]).fold(f32::MIN, f32::max);
+        let bottom = app.template.panels.iter().filter(|p| p.role == pakenoba_core::template::Role::Face).min_by(|a, b| top_of(a).total_cmp(&top_of(b))).unwrap();
+        let (lo, hi) = bottom.outline.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), q| ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])]));
+        assert_eq!(alpha_at([lo[0] - 1.5, (lo[1] + hi[1]) * 0.5]), 0);
+        assert_eq!(alpha_at([hi[0] + 1.5, (lo[1] + hi[1]) * 0.5]), 0);
+        // 塗り足しの外（紙から 3 mm より遠い所）は塗らない。
+        let far = (0..frame.w * frame.h).filter(|&p| out.sheet.art[p * 4 + 3] == 0 && !zone.map.contains_key(&(p as u32)) && art[p * 4 + 3] > 0).count();
+        assert!(far < zone.map.len() / 50, "{far}");
+    }
 
     #[test]
     fn 入稿用の_pdf_には_見本の加工がすべて特色で入る() {

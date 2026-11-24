@@ -446,7 +446,7 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
             content.stroke();
         }
         content.restore_state();
-        let label = format!("PAKENOBA print-ready  {}  {}  actual size  ({:.1} x {:.1} mm)  plates: {}", ascii(title), ascii(side.label), size[0], size[1], side.plates.iter().map(|p| ascii(&p.name)).collect::<Vec<_>>().join(", "));
+        let label = format!("PAKENOBA print-ready  {}  {}  actual size  ({:.1} x {:.1} mm, bleed {:.1} mm, {:.0} dpi)  plates: {}", ascii(title), ascii(side.label), size[0], size[1], (min[0] - frame.left).max(0.0), frame.dpi_value(), side.plates.iter().map(|p| ascii(&p.name)).collect::<Vec<_>>().join(", "));
         content.begin_text();
         content.set_font(Name(b"F1"), 7.0);
         content.set_fill_gray(0.35);
@@ -457,6 +457,11 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
         let mut page = pdf.page(page_id);
         page.media_box(Rect::new(0.0, 0.0, pw * k, ph * k));
         page.trim_box(Rect::new(m * k, m * k, (pw - m) * k, (ph - m) * k));
+        // 塗り足しの範囲（画像の余白のぶん）。
+        let bleed = (min[0] - frame.left).max(0.0);
+        if bleed > 0.0 {
+            page.bleed_box(Rect::new((m - bleed) * k, (m - bleed) * k, (pw - m + bleed) * k, (ph - m + bleed) * k));
+        }
         page.parent(tree);
         page.contents(content_id);
         let mut resources = page.resources();

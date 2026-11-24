@@ -1000,11 +1000,11 @@ impl App {
     /// 調整レイヤーは、下の絵に調整を効かせた絵を、同じ不透明度と描画モードのレイヤーとして入れる（Photoshop で開いても同じ見た目）。
     #[cfg(test)]
     fn decal_layers(&self, back: bool) -> Vec<crate::art::DecalLayer> {
-        self.decal_layers_in(&self.sheet, [self.custom[0].as_deref(), self.custom[1].as_deref()], back)
+        self.decal_layers_in(&self.sheet, [self.custom[0].as_deref(), self.custom[1].as_deref()], None, back)
     }
 
     /// `decal_layers` と同じ。`sheet` の細かさで描く（書き出し用）。`custom` は、その大きさに合わせた展開図の絵。
-    fn decal_layers_in(&self, sheet: &SheetArt, custom: [Option<&[u8]>; 2], back: bool) -> Vec<crate::art::DecalLayer> {
+    fn decal_layers_in(&self, sheet: &SheetArt, custom: [Option<&[u8]>; 2], zone: Option<&crate::art::BleedZone>, back: bool) -> Vec<crate::art::DecalLayer> {
         use crate::art::{DecalLayer, PsdGroup};
         let (w, h, frame) = (sheet.w, sheet.h, sheet.frame);
         let items: Vec<usize> = (0..self.decals.len()).filter(|&i| self.decals[i].back == back).collect();
@@ -1052,7 +1052,7 @@ impl App {
                         Some(g) => crate::paint::members_of(&self.decals, g).into_iter().filter(|&i| i < index).map(|i| self.decals[i].clone()).collect(),
                         None => self.decals[..index].to_vec(),
                     };
-                    let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &below, Marks::default(), back, Canvas::at(frame, art));
+                    let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &below, Marks::default(), back, Canvas::bled(frame, zone, art));
                     let mut image = match (header, back) {
                         (Some(_), _) => {
                             let mut image = vec![0u8; w * h * 4];
@@ -1072,7 +1072,7 @@ impl App {
                     let mut shown = decal.clone();
                     // レイヤーの絵は、不透明度、描画モード、マスク、クリップを効かせずに描き、PSD のレイヤーの設定として入れる。
                     (shown.layer.hidden, shown.layer.opacity, shown.layer.fill, shown.layer.blend, shown.layer.depth, shown.layer.clipped, shown.layer.mask) = (false, 100, 100, Default::default(), 0, false, None);
-                    paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas::at(frame, &mut image));
+                    paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas::bled(frame, zone, &mut image));
                     let mask = decal.layer.mask.as_ref().filter(|m| m.enabled).and_then(|_| crate::paint::paint_mask(&self.surface, &self.template, decal, back, frame));
                     DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None, clipped: decal.layer.clipped, fill: decal.layer.fill }
                 }
@@ -1087,13 +1087,13 @@ impl App {
 
     /// 型紙の PSD の統合した絵（柄まで重ね、ガイドなし。表の展開図の向き）。
     fn painted(&self, back: bool) -> Vec<u8> {
-        self.painted_in(&self.sheet, [self.custom[0].as_deref(), self.custom[1].as_deref()], back)
+        self.painted_in(&self.sheet, [self.custom[0].as_deref(), self.custom[1].as_deref()], None, back)
     }
 
     /// `painted` と同じ。`sheet` の細かさで描く（書き出し用）。
-    fn painted_in(&self, sheet: &SheetArt, custom: [Option<&[u8]>; 2], back: bool) -> Vec<u8> {
+    fn painted_in(&self, sheet: &SheetArt, custom: [Option<&[u8]>; 2], zone: Option<&crate::art::BleedZone>, back: bool) -> Vec<u8> {
         let frame = sheet.frame;
-        let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::at(frame, art));
+        let draw = |art: &mut [u8]| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::bled(frame, zone, art));
         if back { compose_back(sheet, custom[1], false, draw) } else { compose(sheet, custom[0], false, draw) }
     }
 

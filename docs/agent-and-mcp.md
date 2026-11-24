@@ -35,7 +35,7 @@ PhotoCraft と VectorCraft は、すべての操作を約 700 個の名前つき
 | 調整 | `adjust.add`、`adjust.set`、`adjust.toggle`、`adjust.move`、`adjust.remove`、`adjustment_layer.add` |
 | マスク | `mask.add`（すべて表示、被写体から、透明な部分から）、`mask.invert`、`mask.enable`、`mask.delete`、`mask.paint`（筆の線を点の並びで） |
 | 表示 | `view.camera`（見る向き、平行投影）、`view.fold`（組み立て）、`view.open`（開け閉め） |
-| 書き出し | `export.image`、`export.psd`（加工があれば、版のスポットカラーチャンネルと指示書も）、`export.pdf`、`export.print_ready`（入稿用 PDF）、`export.gif` |
+| 書き出し | `export.image`、`export.psd`（加工があれば、版のスポットカラーチャンネルと指示書も。`dpi`、`bleed`）、`export.pdf`、`export.print_ready`（入稿用 PDF。`dpi`、`bleed`）、`export.gif` |
 | 見る | `doc.inspect`（案件の状態を文字で）、`render.preview`（立体か展開図の絵を PNG で） |
 
 作り方は段階を分ける。いまの操作は、画面の中の関数として書いてある。まずコマンドの入口（登録、引数の検査、元に戻す、記録）を作り、操作を 1 つずつその入口の下へ移す。移したものから、MCP とエージェントで使えるようになる。

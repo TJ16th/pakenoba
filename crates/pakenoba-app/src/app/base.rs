@@ -12,7 +12,7 @@ use eframe::egui;
 use pakenoba_core::project;
 
 use super::{App, file};
-use crate::art::{GuideHandling, fit, load_psd, mirror};
+use crate::art::{GuideHandling, fit_frame, load_psd, mirror};
 
 /// 展開図まるごとの絵 1 枚。元に戻すための記録にも入れるので、重いものは共有する。
 #[derive(Clone)]
@@ -22,6 +22,8 @@ pub(super) struct BaseArt {
     /// 読んだ絵（表の展開図の向き。裏の絵も、ここでは表の向きに直して持つ）。
     pub source: Arc<Vec<u8>>,
     pub size: [usize; 2],
+    /// 絵が覆っている、展開図のまわりの幅（mm。塗り足しつきで書き出した型紙に描いた絵）。
+    pub pad: f32,
     /// 読んだときの説明（大きさ、レイヤー、注意）。
     pub info: String,
 }
@@ -31,8 +33,15 @@ impl BaseArt {
     pub fn read(file: project::Asset, back: bool, sheet: [usize; 2]) -> Result<BaseArt, String> {
         let loaded = load_psd(file.bytes())?;
         let merged = if loaded.has_real_merged == Some(false) { t!("\nNote: this PSD has no merged image.") } else { "" };
+        // 解像度が書いてあれば、絵の実寸から、展開図のまわりの余白（塗り足し）を求める。縦と横で合わなければ、余白なしとして引き伸ばす。
+        let mm = [sheet[0] as f32 / crate::art::PX_PER_MM, sheet[1] as f32 / crate::art::PX_PER_MM];
+        let pad = loaded.dpi.map_or(0.0, |dpi| {
+            let pads = [0, 1].map(|i| (loaded.source_size[i] as f32 / dpi * 25.4 - mm[i]) * 0.5);
+            if (pads[0] - pads[1]).abs() < 0.6 && (-0.6..=10.0).contains(&pads[0]) { ((pads[0] + pads[1]) * 0.5).max(0.0) } else { 0.0 }
+        });
+        let pad = if pad < 0.3 { 0.0 } else { pad };
         let ratio_src = loaded.source_size[0] as f32 / loaded.source_size[1] as f32;
-        let ratio_sheet = sheet[0] as f32 / sheet[1] as f32;
+        let ratio_sheet = (mm[0] + 2.0 * pad) / (mm[1] + 2.0 * pad);
         let stretch = if (ratio_src / ratio_sheet - 1.0).abs() > 0.01 { t!("\nNote: the aspect ratio differs from the current dieline, so the picture is stretched to fit.") } else { "" };
         let guides = match loaded.guides {
             GuideHandling::NotPresent => "",
@@ -41,16 +50,17 @@ impl BaseArt {
         };
         let side = if back { t!("back of the sheet") } else { t!("front of the sheet") };
         let layers = if loaded.layer_names.is_empty() { t!("none").to_owned() } else { loaded.layer_names.join(pakenoba_i18n::tr(", ")) };
-        let info = t!("{} ({side})\nSize: {} x {} px\nLayers: {layers}{merged}{stretch}{guides}", file.name, loaded.source_size[0], loaded.source_size[1]);
+        let bleed = if pad > 0.0 { t!("\nBleed: {pad:.1} mm around the dieline (cut off when shown, kept when exported)") } else { String::new() };
+        let info = t!("{} ({side})\nSize: {} x {} px\nLayers: {layers}{merged}{stretch}{guides}", file.name, loaded.source_size[0], loaded.source_size[1]) + &bleed;
         let [w, h] = loaded.source_size;
         // 裏の型紙は裏から見た向きなので、表の向きに直す（柄と同じ座標で重ねるため）。
         let source = if back { mirror(&loaded.source, w, h) } else { loaded.source };
-        Ok(BaseArt { file, source: Arc::new(source), size: [w, h], info })
+        Ok(BaseArt { file, source: Arc::new(source), size: [w, h], pad, info })
     }
 
-    /// 展開図の大きさに合わせた絵。
-    pub fn fitted(&self, sheet: [usize; 2]) -> Vec<u8> {
-        fit(&self.source, self.size, sheet[0], sheet[1])
+    /// `frame` の画像に合わせた絵（塗り足しのぶんは、`frame` に余白があれば入る）。
+    pub fn fitted(&self, tpl: &pakenoba_core::template::Template, frame: crate::art::Frame) -> Vec<u8> {
+        fit_frame(&self.source, self.size, tpl, self.pad, frame)
     }
 }
 
@@ -66,8 +76,8 @@ pub(super) fn same_base(a: &Option<BaseArt>, b: &Option<BaseArt>) -> bool {
 impl App {
     /// 展開図の大きさに合わせ直す（寸法を変えたとき、絵を替えたとき）。
     pub(super) fn refit_bases(&mut self) {
-        let sheet = [self.sheet.w, self.sheet.h];
-        self.custom = [0, 1].map(|side| self.bases[side].as_ref().map(|base| base.fitted(sheet)));
+        let frame = crate::art::Frame::screen(&self.template);
+        self.custom = [0, 1].map(|side| self.bases[side].as_ref().map(|base| base.fitted(&self.template, frame)));
         (self.art_dirty, self.back_dirty) = (true, true);
     }
 

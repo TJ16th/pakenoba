@@ -285,7 +285,7 @@ impl App {
 
     /// 入稿用の PDF の指示のページに刷る行（英数字だけ。柄の名前は刷らない）。
     pub(crate) fn finish_notes_ascii(&self) -> Vec<String> {
-        let mut lines = vec![format!("Resolution: {:.0} dpi (artwork and plates). The artwork is RGB.", self.export_frame().dpi_value()), String::new()];
+        let mut lines = vec![format!("Resolution: {:.0} dpi (artwork and plates). The artwork is RGB. Bleed: {:.1} mm outside the cut lines (no bleed on the finish plates).", self.export_frame().dpi_value(), self.output.bleed.max(0.0)), String::new()];
         for index in 0..self.finishes.len() {
             let finish = &self.finishes[index];
             let Some(link) = self.finish_link(index).filter(|_| !finish.hidden) else { continue };

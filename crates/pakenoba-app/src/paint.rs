@@ -10,7 +10,7 @@ use std::sync::Arc;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template, inside};
 
-use crate::art::{Frame, PX_PER_MM};
+use crate::art::{BleedZone, Frame, PX_PER_MM};
 use pakenoba_core::project::Blend;
 
 /// 柄に重ねて描く印。選んでいる柄には点線の枠、カーソルの下の柄には色の枠。
@@ -198,22 +198,29 @@ pub struct Canvas<'a> {
     pub wait: bool,
     /// 画素と mm の対応。None なら画面の細かさ（展開図の範囲ちょうど、1 mm 4 画素）。
     pub frame: Option<Frame>,
+    /// 塗り足し。あれば、柄をパネルの面のまま、切り線の外へ伸ばして描く。
+    pub zone: Option<&'a BleedZone>,
 }
 
 impl<'a> Canvas<'a> {
     /// 画面に出すための描き込み先（調整した絵を待たない）。
     pub fn screen(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
-        Canvas { w, h, rgba, wait: false, frame: None }
+        Canvas { w, h, rgba, wait: false, frame: None, zone: None }
     }
 
     /// 書き出すための描き込み先（調整した絵ができるまで待つ）。
     pub fn output(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
-        Canvas { w, h, rgba, wait: true, frame: None }
+        Canvas { w, h, rgba, wait: true, frame: None, zone: None }
     }
 
     /// 書き出すための描き込み先で、細かさと余白を決めたもの。
     pub fn at(frame: Frame, rgba: &'a mut [u8]) -> Canvas<'a> {
-        Canvas { w: frame.w, h: frame.h, rgba, wait: true, frame: Some(frame) }
+        Canvas { w: frame.w, h: frame.h, rgba, wait: true, frame: Some(frame), zone: None }
+    }
+
+    /// `at` と同じ。塗り足しまで描く。
+    pub fn bled(frame: Frame, zone: Option<&'a BleedZone>, rgba: &'a mut [u8]) -> Canvas<'a> {
+        Canvas { w: frame.w, h: frame.h, rgba, wait: true, frame: Some(frame), zone }
     }
 }
 
@@ -293,6 +300,7 @@ struct Painter<'a> {
     w: usize,
     frame: Frame,
     wait: bool,
+    zone: Option<&'a BleedZone>,
 }
 
 impl Painter<'_> {
@@ -309,6 +317,9 @@ impl Painter<'_> {
             let span = |points: &mut dyn Iterator<Item = P2>| points.fold(([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
             let (lo_d, hi_d) = span(&mut corners.iter().copied());
             let (lo_p, hi_p) = span(&mut outline.iter().copied());
+            // 塗り足しがあれば、パネルの外へ、その幅まで描く。
+            let grow = self.zone.map_or(0.0, |z| z.bleed);
+            let (lo_p, hi_p) = ([lo_p[0] - grow, lo_p[1] - grow], [hi_p[0] + grow, hi_p[1] + grow]);
             let (lo, hi) = ([lo_d[0].max(lo_p[0]), lo_d[1].max(lo_p[1])], [hi_d[0].min(hi_p[0]), hi_d[1].min(hi_p[1])]);
             if lo[0] >= hi[0] || lo[1] >= hi[1] {
                 continue;
@@ -318,7 +329,18 @@ impl Painter<'_> {
                 for x in x0..x1 {
                     let at = frame.at(x, y);
                     let q = to_decal.point(at);
-                    if q[0].abs() > half[0] || q[1].abs() > half[1] || !inside(outline, at) || tpl.in_hole(at[0], at[1]) {
+                    if q[0].abs() > half[0] || q[1].abs() > half[1] {
+                        continue;
+                    }
+                    let shown = match self.zone {
+                        // 塗り足しのあるとき: 抜き穴の中も描く（抜いて捨てる所なので）。紙の外は、いちばん近いパネルの柄だけ。
+                        Some(zone) => inside(outline, at) || zone.reaches(y * w + x, piece.panel, at, |p| {
+                            let q = to_decal.point(p);
+                            q[0].abs() <= half[0] && q[1].abs() <= half[1]
+                        }),
+                        None => inside(outline, at) && !tpl.in_hole(at[0], at[1]),
+                    };
+                    if !shown {
                         continue;
                     }
                     let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
@@ -490,10 +512,10 @@ pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32, clip: Option
 /// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
 /// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。グループと調整レイヤーも、ここで効かせる。
 pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks, back: bool, canvas: Canvas) {
-    let Canvas { w, h, rgba, wait, frame } = canvas;
+    let Canvas { w, h, rgba, wait, frame, zone } = canvas;
     let frame = frame.unwrap_or_else(|| Frame::screen(tpl));
     debug_assert_eq!((frame.w, frame.h), (w, h));
-    let painter = Painter { surface, tpl, decals, back, w, frame, wait };
+    let painter = Painter { surface, tpl, decals, back, w, frame, wait, zone };
     let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
     painter.stack(&items, rgba, 1.0, 0);
     for &index in &items {
@@ -509,7 +531,7 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
 pub fn paint_mask(surface: &Surface, tpl: &Template, decal: &Placed, back: bool, frame: Frame) -> Option<Vec<u8>> {
     let (w, h) = (frame.w, frame.h);
     let mask = decal.layer.mask.as_ref()?;
-    let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, frame, wait: true };
+    let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, frame, wait: true, zone: None };
     let mut out = vec![0u8; w * h];
     painter.each_pixel(decal, |o, q, _| out[o / 4] = (mask_at(mask, q, decal.size) * 255.0).round() as u8);
     Some(out)

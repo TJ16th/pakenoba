@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use super::App;
 use crate::paint::Picture;
-use crate::art::{Frame, Plate, SheetArt, add_spot_channels, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
+use crate::art::{BleedZone, DecalLayer, Frame, Plate, SheetArt, add_spot_channels, alpha_over, bleed_zone, draw_bleed_line, extend_edges, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
+use crate::paint::{Canvas, Marks, paint};
 
 /// 書き出しの細かさ（dpi）の選択肢。100 は画面と同じ（1 mm 4 画素）。
 pub(super) const EXPORT_DPI: [u32; 4] = [100, 300, 350, 600];
@@ -14,6 +15,8 @@ pub(super) const EXPORT_DPI: [u32; 4] = [100, 300, 350, 600];
 pub(super) struct OutSheet {
     pub sheet: SheetArt,
     pub custom: [Option<Vec<u8>>; 2],
+    /// 塗り足し（幅が 0 なら None）。
+    pub zone: Option<BleedZone>,
 }
 
 impl OutSheet {
@@ -46,19 +49,55 @@ fn with_psd(path: PathBuf) -> PathBuf {
 
 impl App {
     /// 書き出しの細かさ（出力の設定の dpi）。
+    /// 塗り足しの幅（mm）のぶん、まわりに余白を足す。
     pub(super) fn export_frame(&self) -> Frame {
+        let pad = self.output.bleed.max(0.0);
         match self.output.dpi {
-            0..=100 => Frame::screen(&self.template),
-            dpi => Frame::dpi(&self.template, dpi as f32, 0.0),
+            0..=100 => Frame::of(&self.template, crate::art::PX_PER_MM, pad),
+            dpi => Frame::dpi(&self.template, dpi as f32, pad),
         }
     }
 
     /// 書き出しの細かさで、展開図を作り直す（画面の細かさなら、そのまま写す）。
     pub(super) fn out_sheet(&self) -> OutSheet {
         let frame = self.export_frame();
-        let sheet = make_sheet_art_at(&self.template, frame);
-        let custom = [0, 1].map(|side| self.bases[side].as_ref().map(|base| base.fitted([frame.w, frame.h])));
-        OutSheet { sheet, custom }
+        let mut sheet = make_sheet_art_at(&self.template, frame);
+        let custom = [0, 1].map(|side| self.bases[side].as_ref().map(|base| base.fitted(&self.template, frame)));
+        let zone = (self.output.bleed > 0.0).then(|| bleed_zone(&self.template, &sheet, self.output.bleed));
+        if let Some(zone) = &zone {
+            // 型紙のガイドに、塗り足しの線（赤）を足す。
+            let paper = std::mem::take(&mut sheet.art);
+            draw_bleed_line(&mut sheet.lines, &paper, frame, zone);
+            draw_bleed_line(&mut sheet.guides, &paper, frame, zone);
+            sheet.art = paper;
+        }
+        OutSheet { sheet, custom, zone }
+    }
+
+    /// 型紙の PSD の 1 面ぶん（柄のレイヤーと、統合した絵）。塗り足しで、柄が届かない所は、端を伸ばした絵を
+    /// いちばん下の柄のレイヤー「塗り足し（端を伸ばした所）」にする。
+    pub(super) fn psd_side(&self, out: &OutSheet, back: bool) -> (Vec<DecalLayer>, Vec<u8>) {
+        let (sheet, custom, zone) = (&out.sheet, out.custom(), out.zone.as_ref());
+        let mut layers = self.decal_layers_in(sheet, custom, zone, back);
+        let mut merged = self.painted_in(sheet, custom, zone, back);
+        if let Some(zone) = zone {
+            let frame = sheet.frame;
+            let mut printed = custom[usize::from(back)].map_or_else(|| vec![0u8; frame.w * frame.h * 4], <[u8]>::to_vec);
+            paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::bled(frame, Some(zone), &mut printed));
+            let mut ext = vec![0u8; printed.len()];
+            extend_edges(&mut printed, frame, zone, Some(&mut ext));
+            if ext.chunks_exact(4).any(|p| p[3] > 0) {
+                for (m, e) in merged.chunks_exact_mut(4).zip(ext.chunks_exact(4)) {
+                    if e[3] > 0 {
+                        let mut under = [e[0], e[1], e[2], e[3]];
+                        alpha_over(&mut under, m);
+                        m.copy_from_slice(&under);
+                    }
+                }
+                layers.insert(0, DecalLayer::shown(t!("Bleed (extended edges)").to_owned(), ext));
+            }
+        }
+        (layers, merged)
     }
 
     /// 書き出しの細かさが文字の絵より細かければ、文字を描き直してから `f` を呼び、あとで元に戻す。
@@ -155,7 +194,8 @@ impl App {
         let out = self.out_sheet();
         let (sheet, custom) = (&out.sheet, out.custom());
         let front = self.finish_plates(false, sheet.frame);
-        save_psd(sheet, custom[0], &self.decal_layers_in(sheet, custom, false), Some(&self.painted_in(sheet, custom, false)))
+        let (layers, merged) = self.psd_side(&out, false);
+        save_psd(sheet, custom[0], &layers, Some(&merged))
             .and_then(|bytes| add_spot_channels(bytes, &front))
             .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))
             .map_err(|e| t!("Could not save: {e}"))?;
@@ -163,7 +203,8 @@ impl App {
         if self.has_back_decals() {
             let back = back_path(path);
             let plates: Vec<Plate> = self.finish_plates(true, sheet.frame).into_iter().map(|p| Plate { ink: mirror_gray(&p.ink, sheet.w), ..p }).collect();
-            save_back_psd(sheet, custom[1], &self.decal_layers_in(sheet, custom, true), Some(&self.painted_in(sheet, custom, true)))
+            let (layers, merged) = self.psd_side(&out, true);
+            save_back_psd(sheet, custom[1], &layers, Some(&merged))
                 .and_then(|bytes| add_spot_channels(bytes, &plates))
                 .and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string()))
                 .map_err(|e| t!("Saved the front, but could not save the back: {e}"))?;
@@ -218,6 +259,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut app = App::new(&Initial::default());
         app.output.dpi = 100;
+        app.output.bleed = 0.0;
         app.add_decal(Picture::Logo, [46.0, 46.0]);
         let link = app.decals[0].layer.id;
         app.finishes = vec![Finish::foil(Foil::Gold, link), Finish::emboss(link, false), Finish::foil(Foil::Gold, link)];
@@ -259,6 +301,7 @@ mod tests {
         let mut app = App::new(&Initial::default());
         app.add_decal(Picture::Logo, [46.0, 46.0]);
         app.output.dpi = 300;
+        app.output.bleed = 0.0;
         let path = dir.join("hi.psd");
         app.write_psds(&path);
         let file = craft_psd::PsdFile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
@@ -269,6 +312,29 @@ mod tests {
         let width = (app.template.max[0] - app.template.min[0]) as f64;
         assert!((mm - width).abs() < 0.2, "{mm} mm / {width} mm");
         assert!(frame.w > app.sheet.w * 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn 塗り足しつきの型紙に描いた絵は_塗り足しごと読み戻す() {
+        let dir = std::env::temp_dir().join(format!("pakenoba-bleed-psd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(&Initial::default());
+        app.output.dpi = 300;
+        app.output.bleed = 3.0;
+        let path = dir.join("bleed.psd");
+        app.write_psds(&path);
+        let frame = app.export_frame();
+        let file = craft_psd::PsdFile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((file.header.width as usize, file.header.height as usize), (frame.w, frame.h));
+        // 読み込むと、余白を 3 mm と見て、画面では切り落とす。書き出すときは、塗り足しのぶんも入る。
+        app.open_psd(&path);
+        let base = app.bases[0].as_ref().unwrap();
+        assert!((base.pad - 3.0).abs() < 0.2, "{}", base.pad);
+        assert_eq!(app.custom[0].as_ref().map(Vec::len), Some(app.sheet.w * app.sheet.h * 4));
+        let out = app.out_sheet();
+        assert_eq!(out.custom[0].as_ref().map(Vec::len), Some(frame.w * frame.h * 4));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

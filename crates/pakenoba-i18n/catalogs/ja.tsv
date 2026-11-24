@@ -1176,3 +1176,9 @@ blend	Color	カラー
 	Same as the screen (about 100 dpi)	画面と同じ（約 100 dpi）
 	These images are coarse at actual size: {}	実寸で解像度が足りない画像があります: {}
 	{} x {} pixels. Text is drawn again at this resolution.	{} x {} 画素。文字は、この解像度で描き直します。
+	\nBleed: {pad:.1} mm around the dieline (cut off when shown, kept when exported)	\n塗り足し: 展開図のまわり {pad:.1} mm（画面では切り落とし、書き出しでは使います）
+	Artwork that crosses a cut line continues past it in the plane of its panel. Where nothing reaches, the edge colour is stretched. Finish plates get no bleed.	切り線をまたぐ柄は、そのパネルの面のまま外へ続きます。届かない所は、端の色を伸ばします。加工の版には塗り足しを付けません。
+	Bleed	塗り足し
+	Bleed (extended edges)	塗り足し（端を伸ばした所）
+	"dpi" must be one of 100, 300, 350, 600	"dpi" は 100、300、350、600 のどれかにしてください
+	"bleed" must be between 0 and 5 mm	"bleed" は 0〜5 mm にしてください
