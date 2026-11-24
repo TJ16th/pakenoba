@@ -341,6 +341,18 @@ impl App {
                 }
             }
         }
+        // 画像トレース（画像の柄と、トレースで作った柄）。
+        let raster = matches!(self.decals[index].picture, Picture::Image { vector: false, .. });
+        let traced = self.decals[index].layer.traced.is_some();
+        if raster || traced {
+            ui.separator();
+            let label = if traced { t!("Trace again…") } else { t!("Image Trace…") };
+            let enabled = !self.decals[index].layer.locked && self.trace_session.is_none();
+            if ui.add_enabled(enabled, egui::Button::new(label)).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
+                self.open_trace(index);
+                ui.close();
+            }
+        }
         ui.separator();
         if ui.button(t!("Delete")).clicked() {
             self.cmd_delete();

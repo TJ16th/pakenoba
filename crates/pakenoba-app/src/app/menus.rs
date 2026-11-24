@@ -260,11 +260,12 @@ impl App {
             if item(ui, single.is_some(), t!("Edit in another app"), "Ctrl+E", why) {
                 self.edit_selected();
             }
-            let raster = single.filter(|&i| matches!(self.decals[i].picture, Picture::Image { vector: false, .. }));
-            if item(ui, raster.is_some() && !locked && self.vectorizing.is_none(), t!("Vectorize"), "", t!("Select image artwork (not vector, not locked)"))
+            let raster = single.filter(|&i| matches!(self.decals[i].picture, Picture::Image { vector: false, .. }) || self.decals[i].layer.traced.is_some());
+            let traced = raster.is_some_and(|i| self.decals[i].layer.traced.is_some());
+            if item(ui, raster.is_some() && !locked && self.trace_session.is_none(), if traced { t!("Trace again…") } else { t!("Image Trace…") }, "", t!("Select image artwork (not vector, not locked)"))
                 && let Some(i) = raster
             {
-                self.start_vectorize(i);
+                self.open_trace(i);
             }
             ui.separator();
             if item(ui, index.is_some(), t!("Delete"), "Delete", why) {

@@ -613,7 +613,8 @@ struct App {
     shape_style: pakenoba_core::project::ShapeSpec,
     /// ベクター化の設定と、別のスレッドで動いているベクター化。
     trace: crate::vector::TraceSettings,
-    vectorizing: Option<vectorize::VectorizeJob>,
+    /// 開いている画像トレースの欄。
+    trace_session: Option<vectorize::TraceSession>,
     /// 「パケノバについて」の窓を出しているか。
     about_open: bool,
     /// 起動ロゴ。
@@ -770,8 +771,8 @@ impl App {
             fonts: Default::default(),
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),
-            trace: vectorize::default_settings(),
-            vectorizing: None,
+            trace: crate::vector::TraceSettings::default(),
+            trace_session: None,
             about_open: false,
             splash: splash::Splash::new(initial.splash),
             focus_text: false,
@@ -1190,15 +1191,18 @@ impl App {
         // 素材を運んでいる間は、放したら置かれる柄を、仮に足して描く。
         let with_preview: Vec<Placed>;
         let chosen: Vec<usize>;
+        // 画像トレースの欄を開いている間は、元の画像の所にプレビューを差し込んで描く。
+        let traced = self.trace_preview();
+        let base: &[Placed] = traced.as_deref().unwrap_or(&self.decals);
         let (decals, marks): (&[Placed], Marks) = match &self.preview {
             Some(preview) => {
-                with_preview = self.decals.iter().cloned().chain([preview.clone()]).collect();
+                with_preview = base.iter().cloned().chain([preview.clone()]).collect();
                 chosen = vec![with_preview.len() - 1];
                 (&with_preview, Marks { selected: &chosen, hover: None })
             }
             None => {
                 chosen = self.selection();
-                (&self.decals, Marks { selected: &chosen, hover: self.hover_decal })
+                (base, Marks { selected: &chosen, hover: self.hover_decal })
             }
         };
         if self.art_dirty {
@@ -1449,6 +1453,9 @@ impl eframe::App for App {
         self.poll_pack(ui.ctx());
         self.poll_edits(ui.ctx());
         self.poll_vectorize(ui.ctx());
+        if !self.home && !self.library.open {
+            self.trace_window(ui.ctx());
+        }
         self.poll_agent();
         if !self.home && !self.library.open {
             self.agent_panel(ui);

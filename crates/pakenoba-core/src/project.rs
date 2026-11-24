@@ -304,6 +304,17 @@ pub struct Layer {
     pub blend: Blend,
     /// タイルのように並べて敷き詰める（None なら 1 つだけ）。
     pub tile: Option<Tile>,
+    /// 画像トレースで作ったベクターの柄なら、元の画像のレイヤーと、トレースの設定（やり直すため）。
+    pub traced: Option<TraceSource>,
+}
+
+/// 画像トレースの元。
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TraceSource {
+    /// 元の画像のレイヤーの印（`Layer::id`）。
+    pub layer: u32,
+    /// トレースの設定（アプリが書く JSON。中核は中身を解釈しない）。
+    pub settings: String,
 }
 
 /// 柄を、タイルのように縦横に並べて敷き詰める設定。並べる向きは柄の向き（柄を回せば、並びも回る）。
@@ -360,7 +371,7 @@ impl Tile {
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal, tile: None }
+        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal, tile: None, traced: None }
     }
 }
 
@@ -960,6 +971,9 @@ struct DecalEntry {
     /// タイルのように並べる設定。並べないときは書かない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tile: Option<TileEntry>,
+    /// 画像トレースの元（元の画像のレイヤーの印と、設定）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    traced: Option<TracedEntry>,
     /// グループの入れ子の深さ。
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     depth: u8,
@@ -978,6 +992,14 @@ struct DecalEntry {
     /// 調整（下から順）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     adjust: Vec<AdjustEntry>,
+}
+
+/// 画像トレースの元（ファイルでの形）。
+#[derive(Serialize, Deserialize)]
+struct TracedEntry {
+    layer: u32,
+    #[serde(default)]
+    settings: String,
 }
 
 /// タイルの並べ方（ファイルでの形）。
@@ -1336,7 +1358,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }) }
+                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }), traced: placed.layer.traced.as_ref().map(|t| TracedEntry { layer: t.layer, settings: t.settings.clone() }) }
                 })
                 .collect(),
             finishes: self
@@ -1774,7 +1796,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
         let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
         let tileable = !matches!(source, Source::Group { .. } | Source::Adjustment);
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }) } });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }), traced: entry.traced.as_ref().filter(|_| tileable).map(|t| TraceSource { layer: t.layer, settings: t.settings.clone() }) } });
     }
     tidy_groups(&mut decals);
 
@@ -1981,6 +2003,7 @@ mod tests {
                     depth: 0,
                     clipped: panel % 2 == 1,
                     tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0 }),
+                    traced: (panel % 4 == 3).then(|| TraceSource { layer: 7, settings: "{\"preset\":\"3 Colors\"}".to_owned() }),
                 } }
             })
             .collect::<Vec<_>>();

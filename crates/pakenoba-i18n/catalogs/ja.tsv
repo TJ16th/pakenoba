@@ -451,15 +451,7 @@
 	Format of the selected text	選んでいる文字の書式
 	Click the box or the dieline to place text there	箱か展開図を押すと、そこに文字を置きます
 # pakenoba-app/src/app/vectorize.rs
-	Other artwork is being vectorized. Press again when it has finished.	ほかの柄をベクター化しています。終わってから、もう一度押してください。
-	{stem} (vector).svg	{stem}（ベクター）.svg
 	Could not start vectorizing: {e}	ベクター化を始められませんでした: {e}
-	Vectorizing… (VectorCraft Image Trace)	ベクター化しています…（VectorCraft の画像トレース）
-	Vectorizing stopped partway.	ベクター化が途中で止まりました。
-	The artwork changed while it was being vectorized, so the result was not used.	ベクター化している間に柄が変わったので、結果は使いませんでした。
-	Vectorized ({} shapes). It is a new asset, "{}", and the original asset is unchanged. Press Ctrl+Z to undo.	ベクター化しました（形 {} 個）。新しい素材「{}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
-	Vectorize	ベクター化
-	Turns it into line art (SVG) with VectorCraft Image Trace. It stays sharp when enlarged and can be edited in VectorCraft	VectorCraft の画像トレースで、線の絵（SVG）にします。拡大してもぼやけず、VectorCraft で直せます
 	Tracing…	トレースしています…
 	Preset	プリセット
 	Leave out the background	背景を形にしない
@@ -676,7 +668,6 @@
 	If you close this tab without saving, the changes will be lost.	保存しないでタブを閉じると、変更は失われます。
 	Saving. Switch tabs when it has finished.	保存しています。終わってからタブを切り替えてください。
 	Exporting a video. Switch tabs when it has finished.	動画を書き出しています。終わってからタブを切り替えてください。
-	Vectorizing. Switch tabs when it has finished.	ベクター化しています。終わってからタブを切り替えてください。
 	Close this tab	このタブを閉じる
 	New project in a new tab (Ctrl+N)	新しいタブで、新しい案件を始める（Ctrl+N）
 	Blend mode: how this artwork mixes with what is below it	描画モード: この柄を、下の絵とどう混ぜるか
@@ -1241,3 +1232,39 @@ blend	Color	カラー
 	How far each row is shifted sideways. 50% gives a brick (half-drop) pattern.	1 段ごとに横へずらす量。50% でレンガ積み（ハーフドロップ）になります。
 	Brick	レンガ
 	Only on this panel	この面だけ
+	Adds the vector layer above the image. The image is kept, hidden	画像の上にベクターのレイヤーを足します。画像は隠して残します
+	Apply	確定
+	Areas smaller than this are left out	これより小さいまとまりは、形にしません
+	Corners	コーナー
+	Create	作成
+	Fewer to more colors	色の少なさ〜多さ
+	Fills	塗り
+	Higher follows the picture more closely, with more points	大きいほど、元の絵に細かく沿います（点が増えます）
+	Higher keeps more sharp corners	大きいほど、尖った角を多く残します
+	Image Trace	画像トレース
+	Image Trace is already open. Apply or cancel it first.	画像トレースの欄を開いています。先に確定するか、キャンセルしてください。
+	Image Trace is open. Apply or cancel it, then switch tabs.	画像トレースの欄を開いています。確定するかキャンセルしてから、タブを切り替えてください。
+	Image Trace…	画像トレース…
+	Noise	ノイズ
+	Original	元の画像
+	Outlines	アウトライン
+	Outlines with source	アウトラインと元の画像
+	Paths	パス
+	Pixels darker than this become black	これより暗い所が黒になります
+	Result	トレース結果
+	Select image artwork (not vector) to trace.	トレースするには、画像の柄（ベクターでないもの）を選んでください。
+	Source: {}	元の画像: {}
+	Strokes	線
+	The image changed, so Image Trace was closed.	画像が変わったので、画像トレースの欄を閉じました。
+	The original image of this trace is no longer in the layers, so it cannot be traced again.	このトレースの元の画像がレイヤーにないので、やり直せません。
+	Thin lines become strokes (center lines)	細い線を、線（中心線）にします
+	Trace	トレース
+	Trace again…	トレースをやり直す…
+	Traced ({} shapes, {} colors). The original image is kept, hidden, below it. Press Ctrl+Z to undo.	トレースしました（形 {} 個、色 {} 色）。元の画像は、すぐ下に隠して残してあります。Ctrl+Z で元に戻せます。
+	Tracing stopped partway.	トレースが途中で止まりました。
+	Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept	VectorCraft の画像トレースで、ベクターの形（SVG）にします。プレビューを見ながら調整して確定します。元の画像は残ります
+	{} (trace)	{}（トレース）
+	{} (vector).svg	{}（ベクター）.svg
+	{} shapes, {} colors	形 {} 個・色 {} 色
+	Black threshold	しきい値
+	Color detail	色の多さ

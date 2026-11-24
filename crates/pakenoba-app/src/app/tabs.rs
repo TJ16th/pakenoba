@@ -189,8 +189,8 @@ impl App {
             Some(t!("Exporting a video. Switch tabs when it has finished."))
         } else if self.export_job.is_some() {
             Some(t!("Exporting. Switch tabs when it has finished."))
-        } else if self.vectorizing.is_some() {
-            Some(t!("Vectorizing. Switch tabs when it has finished."))
+        } else if self.trace_session.is_some() {
+            Some(t!("Image Trace is open. Apply or cancel it, then switch tabs."))
         } else {
             None
         }

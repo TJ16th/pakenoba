@@ -1,42 +1,75 @@
-//! 画像の柄のベクター化。VectorCraft の画像トレースで SVG にし、その柄だけを、SVG の新しい素材に差し替える。
+//! 画像トレース（画像の柄のベクター化）。Illustrator の画像トレースと同じく、欄で値を動かしてプレビューを見てから確定する。
 //!
-//! トレースは、写真だと数秒かかることがあるので、別のスレッドで行う。その間も画面は動く。
-//! 終わったときに、柄が別の絵に変わっていたら（消した、差し替えた、別の案件を開いた）、結果は使わない。
-//! 元の素材は変えない。Ctrl+Z で戻せる。
+//! - 入り口: レイヤーの右クリック、柄のメニュー、プロパティの「画像トレース…」。
+//! - 値を動かすと、少し待ってから別のスレッドでトレースし直し、箱の上の元の画像の所にプレビューを出す。
+//!   表示は、トレース結果、元の画像、アウトライン（パスの形だけ）、アウトラインと元の画像を重ねたもの、から選ぶ。
+//! - 確定すると、元の画像のレイヤーは隠して残し、その上に、トレースしたベクターのレイヤーを足す（非破壊）。
+//!   ベクターのレイヤーには、元の画像のレイヤーとトレースの設定を残すので、「トレースをやり直す…」で同じ欄を開き直せる。
+//!   SVG は新しい素材になる。元の素材は変えない。Ctrl+Z で、確定する前に戻せる。
 
 use pakenoba_i18n::t;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use pakenoba_core::project;
+use pakenoba_core::project::{self, Layer, TraceSource};
 
 use super::assets::{Asset, same_picture};
 use super::{App, file};
-use crate::paint::Picture;
-use crate::vector::{PRESETS, TraceSettings};
+use crate::paint::{Picture, Placed};
+use crate::vector::{ColorKnob, PRESETS, TraceSettings, preset_tune};
 
 /// トレースに渡す絵の、長いほうの画素数の上限。これより大きい画像は、縮めてからトレースする（時間とメモリを抑える）。
 const TRACE_LONG: usize = 2500;
+/// 値を動かしてから、トレースし直すまでの待ち時間（スライダーを動かしている間に、何度もトレースしないように）。
+const SETTLE: Duration = Duration::from_millis(300);
 
-/// 別のスレッドでトレースしている、柄 1 つぶん。
-pub(super) struct VectorizeJob {
-    /// 柄の番号と、始めたときの絵（終わったときに、同じ柄かを確かめる）。
-    index: usize,
-    source: Picture,
-    /// 新しい素材の名前。
-    name: String,
-    result: Receiver<Result<Done, String>>,
+/// プレビューの見せ方。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TraceView {
+    /// トレース結果。
+    Result,
+    /// 元の画像。
+    Original,
+    /// アウトライン（パスの形だけ）。
+    Outline,
+    /// アウトラインと元の画像を重ねたもの。
+    OutlineOverOriginal,
 }
 
-/// トレースの結果。
+/// トレースの結果（プレビューと、確定に使うもの）。
 struct Done {
+    settings: TraceSettings,
     svg: String,
     paths: usize,
-    w: usize,
-    h: usize,
-    rgba: Vec<u8>,
+    colors: usize,
+    result: Picture,
+    outline: Picture,
+    overlay: Picture,
+}
+
+/// 開いている画像トレースの欄。
+pub(super) struct TraceSession {
+    /// 元の画像のレイヤーの番号と、開いたときの絵（同じ柄かを確かめる）。
+    source: usize,
+    picture: Picture,
+    /// やり直すときの、トレースしたベクターのレイヤーの番号。
+    target: Option<usize>,
+    pub(super) settings: TraceSettings,
+    pub(super) view: TraceView,
+    /// いちばん新しい結果。
+    done: Option<Done>,
+    /// 動いているトレース（何番目の依頼か、結果）。
+    job: Option<(u64, Receiver<Result<Done, String>>)>,
+    /// 依頼の番号（古い結果を捨てるため）。
+    asked: u64,
+    /// 値を変えた時刻（まだトレースに出していない変更があるとき）。
+    changed: Option<Instant>,
+    error: Option<String>,
+    /// 元の画像の名前（新しい素材と、レイヤーの名前に使う）。
+    stem: String,
 }
 
 /// 長いほうが `long` px 以下になるように、画素を平均して縮める。
@@ -69,109 +102,308 @@ fn shrink(w: usize, h: usize, rgba: &[u8], long: usize) -> (usize, usize, Vec<u8
 }
 
 impl App {
-    /// 画像の柄 `index` のベクター化を始める。
-    pub(super) fn start_vectorize(&mut self, index: usize) {
-        if self.vectorizing.is_some() {
-            return self.say(t!("Other artwork is being vectorized. Press again when it has finished."));
+    /// 画像トレースの欄を開く。`index` は、画像の柄か、トレースで作ったベクターの柄（やり直す）。
+    pub(super) fn open_trace(&mut self, index: usize) {
+        if self.trace_session.is_some() {
+            return self.say(t!("Image Trace is already open. Apply or cancel it first."));
         }
         let Some(placed) = self.decals.get(index) else { return };
-        let Picture::Image { w, h, rgba, vector: false } = &placed.picture else { return };
-        let (w, h, rgba, size) = (*w, *h, rgba.clone(), placed.decal.size);
-        let base = self.asset_of(&placed.picture).map_or_else(|| t!("Image").to_owned(), |i| self.assets[i].name.clone());
-        let stem = base.rsplit_once('.').map_or(base.as_str(), |(stem, _)| stem);
-        let name = t!("{stem} (vector).svg");
-        let settings = self.trace;
-        let (send, result) = std::sync::mpsc::channel();
-        let work = move || {
-            let (tw, th, small) = shrink(w, h, &rgba, TRACE_LONG);
-            let done = crate::vector::trace(tw, th, &small, settings, size).and_then(|traced| {
-                let (w, h, rgba) = crate::vector::decode_svg(traced.svg.as_bytes())?;
-                Ok(Done { svg: traced.svg, paths: traced.paths, w, h, rgba })
-            });
-            let _ = send.send(done);
+        // トレースで作った柄なら、元の画像の柄から開き直す。
+        let (source, target, settings) = match (&placed.picture, &placed.layer.traced) {
+            (Picture::Image { vector: false, .. }, _) => (index, None, self.trace),
+            (_, Some(traced)) => {
+                let Some(source) = self.decals.iter().position(|d| d.layer.id == traced.layer && matches!(d.picture, Picture::Image { vector: false, .. })) else {
+                    return self.say(t!("The original image of this trace is no longer in the layers, so it cannot be traced again."));
+                };
+                (source, Some(index), TraceSettings::from_json(&traced.settings).unwrap_or(self.trace))
+            }
+            _ => return self.say(t!("Select image artwork (not vector) to trace.")),
         };
-        if let Err(e) = std::thread::Builder::new().name("vectorize".to_owned()).spawn(work) {
-            return self.say(t!("Could not start vectorizing: {e}"));
-        }
-        self.vectorizing = Some(VectorizeJob { index, source: placed.picture.clone(), name, result });
-        self.say(t!("Vectorizing… (VectorCraft Image Trace)"));
+        let picture = self.decals[source].picture.clone();
+        let base = self.asset_of(&picture).map_or_else(|| self.layer_label(source), |i| self.assets[i].name.clone());
+        let stem = base.rsplit_once('.').map_or(base.as_str(), |(stem, _)| stem).to_owned();
+        self.trace_session = Some(TraceSession { source, picture, target, settings, view: TraceView::Result, done: None, job: None, asked: 0, changed: Some(Instant::now() - SETTLE), error: None, stem });
+        self.select_only(Some(target.unwrap_or(source)));
     }
 
-    /// ベクター化が終わったかを見る。終わっていたら、柄を差し替える。
+    /// 画像トレースの欄の毎回の仕事: 結果を受け取り、値が落ち着いたら、トレースし直す。
     pub(super) fn poll_vectorize(&mut self, ctx: &egui::Context) {
-        let Some(job) = &self.vectorizing else { return };
-        match job.result.try_recv() {
-            Err(TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
-            Err(TryRecvError::Disconnected) => {
-                self.vectorizing = None;
-                self.say(t!("Vectorizing stopped partway."));
-            }
-            Ok(done) => {
-                let Some(job) = self.vectorizing.take() else { return };
-                match done {
-                    Ok(done) => self.finish_vectorize(job, done),
-                    Err(why) => self.say(why),
+        let Some(session) = &mut self.trace_session else { return };
+        // 開いている間に元の画像が消えたり変わったりしたら、閉じる。
+        let still = self.decals.get(session.source).is_some_and(|d| same_picture(&d.picture, &session.picture)) && session.target.is_none_or(|t| t < self.decals.len());
+        if !still {
+            self.trace_session = None;
+            (self.art_dirty, self.back_dirty) = (true, true);
+            return self.say(t!("The image changed, so Image Trace was closed."));
+        }
+        if let Some((number, result)) = &session.job {
+            match result.try_recv() {
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    session.job = None;
+                    session.error = Some(t!("Tracing stopped partway.").to_owned());
+                }
+                Ok(done) => {
+                    let current = *number == session.asked;
+                    session.job = None;
+                    if current {
+                        match done {
+                            Ok(done) => {
+                                session.done = Some(done);
+                                session.error = None;
+                            }
+                            Err(why) => session.error = Some(why),
+                        }
+                        (self.art_dirty, self.back_dirty) = (true, true);
+                    }
                 }
             }
         }
+        if session.job.is_none() && session.changed.is_some_and(|at| at.elapsed() >= SETTLE) {
+            session.changed = None;
+            session.asked += 1;
+            let number = session.asked;
+            let Picture::Image { w, h, rgba, .. } = &session.picture else { return };
+            let (w, h, rgba, size, settings) = (*w, *h, rgba.clone(), self.decals[session.source].decal.size, session.settings);
+            let (send, result) = std::sync::mpsc::channel();
+            let work = move || {
+                let _ = send.send(trace_now(w, h, &rgba, size, settings));
+            };
+            match std::thread::Builder::new().name("trace".to_owned()).spawn(work) {
+                Ok(_) => session.job = Some((number, result)),
+                Err(e) => session.error = Some(t!("Could not start vectorizing: {e}")),
+            }
+        }
+        if session.job.is_some() || session.changed.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(80));
+        }
     }
 
-    /// トレースの結果を、新しい素材にして、その柄だけを差し替える。
-    fn finish_vectorize(&mut self, job: VectorizeJob, done: Done) {
-        let still = self.decals.get(job.index).is_some_and(|d| same_picture(&d.picture, &job.source));
-        if !still {
-            return self.say(t!("The artwork changed while it was being vectorized, so the result was not used."));
+    /// 描くときに、プレビューを差し込んだ柄の並び。欄を開いていなければ None。
+    pub(super) fn trace_preview(&self) -> Option<Vec<Placed>> {
+        let session = self.trace_session.as_ref()?;
+        let mut decals = self.decals.clone();
+        // やり直しのときは、いまのトレースの柄を隠して、元の画像の所に見せる。
+        if let Some(target) = session.target {
+            decals[target].layer.hidden = true;
         }
-        let size = self.decals[job.index].decal.size;
-        let stored = project::Asset::new(job.name.clone(), done.svg.into_bytes(), size, file::now_local());
+        let picture = match (session.view, &session.done) {
+            (TraceView::Original, _) | (_, None) => session.picture.clone(),
+            (TraceView::Result, Some(done)) => done.result.clone(),
+            (TraceView::Outline, Some(done)) => done.outline.clone(),
+            (TraceView::OutlineOverOriginal, Some(done)) => done.overlay.clone(),
+        };
+        let source = &mut decals[session.source];
+        source.picture = picture;
+        // 元の画像のレイヤーは、確定したあとは隠してある。欄を開いている間は、調整なしで見せる。
+        source.layer = Layer { id: source.layer.id, depth: source.layer.depth, ..Layer::default() };
+        Some(decals)
+    }
+
+    /// 確定: 元の画像のレイヤーを隠して残し、その上にベクターのレイヤーを足す（やり直しなら、そのレイヤーの絵を替える）。
+    fn apply_trace(&mut self) {
+        let Some(session) = self.trace_session.take() else { return };
+        (self.art_dirty, self.back_dirty) = (true, true);
+        let Some(done) = session.done else { return };
+        self.ensure_ids();
+        let source = session.source;
+        let size = self.decals[source].decal.size;
+        let name = t!("{} (vector).svg", session.stem);
+        let stored = project::Asset::new(name.clone(), done.svg.into_bytes(), size, file::now_local());
         self.checkpoint();
         let known = self.assets.iter().find(|a| a.stored.as_ref().is_some_and(|s| s.id() == stored.id())).map(|a| a.picture.clone());
         let picture = known.unwrap_or_else(|| {
-            let picture = Picture::Image { w: done.w, h: done.h, rgba: Arc::new(done.rgba), vector: true };
-            self.assets.push(Asset { name: job.name.clone(), picture: picture.clone(), size: stored.size, thumb: None, bundled: false, stored: Some(stored) });
+            let picture = done.result.clone();
+            self.assets.push(Asset { name: name.clone(), picture: picture.clone(), size: stored.size, thumb: None, bundled: false, stored: Some(stored) });
             picture
         });
-        self.decals[job.index].picture = picture;
-        (self.art_dirty, self.back_dirty) = (true, true);
-        self.say(t!("Vectorized ({} shapes). It is a new asset, \"{}\", and the original asset is unchanged. Press Ctrl+Z to undo.", done.paths, job.name));
+        let traced = TraceSource { layer: self.decals[source].layer.id, settings: done.settings.to_json() };
+        self.trace = done.settings;
+        let index = match session.target {
+            Some(target) => {
+                self.decals[target].picture = picture;
+                self.decals[target].layer.traced = Some(traced);
+                target
+            }
+            None => {
+                let original = &self.decals[source];
+                let layer = Layer { name: Some(t!("{} (trace)", self.layer_label(source))), depth: original.layer.depth, traced: Some(traced), ..Layer::default() };
+                let placed = Placed { decal: original.decal, picture, back: original.back, layer };
+                self.decals.insert(source + 1, placed);
+                self.decals[source].layer.hidden = true;
+                self.tidy_groups();
+                self.ensure_ids();
+                source + 1
+            }
+        };
+        self.select_only(Some(index));
+        self.say(t!("Traced ({} shapes, {} colors). The original image is kept, hidden, below it. Press Ctrl+Z to undo.", done.paths, done.colors));
     }
 
-    /// 画像の調整の欄の、ベクター化の行。
-    pub(super) fn vectorize_controls(&mut self, ui: &mut egui::Ui, index: usize, enabled: bool) {
-        ui.separator();
-        let running = self.vectorizing.as_ref().map(|job| job.index);
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(enabled && running.is_none(), |ui| {
-                if ui.button(t!("Vectorize")).on_hover_text(t!("Turns it into line art (SVG) with VectorCraft Image Trace. It stays sharp when enlarged and can be edited in VectorCraft")).clicked() {
-                    self.start_vectorize(index);
-                }
-            });
-            if running == Some(index) {
-                ui.spinner();
-                ui.weak(t!("Tracing…"));
-            }
-        });
-        ui.add_enabled_ui(enabled, |ui| {
-            egui::Grid::new("trace-settings").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                ui.label(t!("Preset"));
-                let current = PRESETS.get(self.trace.preset).map_or("", |p| pakenoba_i18n::tr(p.1));
-                egui::ComboBox::from_id_salt("trace-preset").selected_text(current).show_ui(ui, |ui| {
-                    for (i, (_, label)) in PRESETS.iter().enumerate() {
-                        ui.selectable_value(&mut self.trace.preset, i, pakenoba_i18n::tr(label));
+    /// 閉じる（何も変えない）。
+    fn cancel_trace(&mut self) {
+        if self.trace_session.take().is_some() {
+            (self.art_dirty, self.back_dirty) = (true, true);
+        }
+    }
+
+    /// 画像トレースの欄。
+    pub(super) fn trace_window(&mut self, ctx: &egui::Context) {
+        let Some(session) = &mut self.trace_session else { return };
+        let mut open = true;
+        let (mut apply, mut cancel) = (false, false);
+        let mut changed = false;
+        let view_before = session.view;
+        // はじめは、立体の表示の右上（プロパティの欄の左）に出す。動かせる。
+        let right = ctx.content_rect().right();
+        egui::Window::new(t!("Image Trace"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(300.0)
+            .default_pos(egui::pos2((right - 660.0).max(60.0), 160.0))
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.weak(t!("Source: {}", session.stem));
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(t!("View")).color(super::theme::MUTED));
+                    for (view, label) in [(TraceView::Result, t!("Result")), (TraceView::Original, t!("Original")), (TraceView::Outline, t!("Outlines")), (TraceView::OutlineOverOriginal, t!("Outlines with source"))] {
+                        ui.selectable_value(&mut session.view, view, label);
                     }
                 });
-                ui.end_row();
-                ui.label("");
-                ui.checkbox(&mut self.trace.drop_background, t!("Leave out the background")).on_hover_text(t!("Does not make shapes from the area connected to the edges in the most common edge color"));
-                ui.end_row();
+                ui.separator();
+                let settings = &mut session.settings;
+                egui::Grid::new("trace-grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                    ui.label(t!("Preset"));
+                    let current = PRESETS.get(settings.preset).map_or("", |p| pakenoba_i18n::tr(p.1));
+                    egui::ComboBox::from_id_salt("trace-preset").width(170.0).selected_text(current).show_ui(ui, |ui| {
+                        for (i, (_, label)) in PRESETS.iter().enumerate() {
+                            if ui.selectable_value(&mut settings.preset, i, pakenoba_i18n::tr(label)).changed() {
+                                // プリセットを選び直したら、細かい値はプリセットのものに戻す。
+                                settings.tune = None;
+                                changed = true;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    let (_, knob) = preset_tune(settings.preset);
+                    let mut tune = settings.tune_now();
+                    let before = tune;
+                    match knob {
+                        ColorKnob::Threshold => {
+                            ui.label(t!("Black threshold"));
+                            ui.add(egui::Slider::new(&mut tune.threshold, 0..=255)).on_hover_text(t!("Pixels darker than this become black"));
+                            ui.end_row();
+                        }
+                        ColorKnob::Colors => {
+                            ui.label(t!("Colors"));
+                            ui.add(egui::Slider::new(&mut tune.colors, 2..=30));
+                            ui.end_row();
+                        }
+                        ColorKnob::Detail => {
+                            ui.label(t!("Color detail"));
+                            ui.add(egui::Slider::new(&mut tune.color_detail, 0.0..=100.0).max_decimals(0)).on_hover_text(t!("Fewer to more colors"));
+                            ui.end_row();
+                        }
+                        ColorKnob::None => {}
+                    }
+                    ui.label(t!("Paths"));
+                    ui.add(egui::Slider::new(&mut tune.paths, 0.0..=100.0).max_decimals(0).suffix(" %")).on_hover_text(t!("Higher follows the picture more closely, with more points"));
+                    ui.end_row();
+                    ui.label(t!("Corners"));
+                    ui.add(egui::Slider::new(&mut tune.corners, 0.0..=100.0).max_decimals(0).suffix(" %")).on_hover_text(t!("Higher keeps more sharp corners"));
+                    ui.end_row();
+                    ui.label(t!("Noise"));
+                    ui.add(egui::Slider::new(&mut tune.noise, 1..=200).suffix(" px").logarithmic(true)).on_hover_text(t!("Areas smaller than this are left out"));
+                    ui.end_row();
+                    ui.label(t!("Create"));
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut tune.fills, t!("Fills"));
+                        ui.checkbox(&mut tune.strokes, t!("Strokes")).on_hover_text(t!("Thin lines become strokes (center lines)"));
+                    });
+                    ui.end_row();
+                    if tune != before {
+                        settings.tune = Some(tune);
+                        changed = true;
+                    }
+                    ui.label("");
+                    changed |= ui.checkbox(&mut settings.drop_background, t!("Leave out the background")).on_hover_text(t!("Does not make shapes from the area connected to the edges in the most common edge color")).changed();
+                    ui.end_row();
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if session.job.is_some() || session.changed.is_some() {
+                        ui.spinner();
+                        ui.weak(t!("Tracing…"));
+                    } else if let Some(why) = &session.error {
+                        ui.colored_label(ui.visuals().warn_fg_color, why);
+                    } else if let Some(done) = &session.done {
+                        ui.weak(t!("{} shapes, {} colors", done.paths, done.colors));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let ready = session.done.is_some() && session.job.is_none() && session.changed.is_none();
+                    let label = if session.target.is_some() { t!("Apply") } else { t!("Trace") };
+                    if ui.add_enabled(ready, egui::Button::new(egui::RichText::new(label).strong())).on_hover_text(t!("Adds the vector layer above the image. The image is kept, hidden")).clicked() {
+                        apply = true;
+                    }
+                    if ui.button(t!("Cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
             });
+        if changed {
+            session.changed = Some(Instant::now());
+            ctx.request_repaint();
+        }
+        if session.view != view_before {
+            (self.art_dirty, self.back_dirty) = (true, true);
+        }
+        if apply {
+            self.apply_trace();
+        } else if cancel || !open {
+            self.cancel_trace();
+        }
+    }
+
+    /// プロパティの、画像トレースの入り口。
+    pub(super) fn vectorize_controls(&mut self, ui: &mut egui::Ui, index: usize, enabled: bool) {
+        ui.separator();
+        let traced = self.decals[index].layer.traced.is_some();
+        let label = if traced { t!("Trace again…") } else { t!("Image Trace…") };
+        ui.add_enabled_ui(enabled && self.trace_session.is_none(), |ui| {
+            if ui.button(label).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
+                self.open_trace(index);
+            }
         });
     }
 }
 
-/// はじめの設定。
-pub(super) fn default_settings() -> TraceSettings {
-    TraceSettings::default()
+/// トレースして、プレビューの絵（結果、アウトライン、アウトラインと元の画像）まで作る。
+fn trace_now(w: usize, h: usize, rgba: &[u8], size: [f32; 2], settings: TraceSettings) -> Result<Done, String> {
+    let (tw, th, small) = shrink(w, h, rgba, TRACE_LONG);
+    let traced = crate::vector::trace(tw, th, &small, settings, size)?;
+    let (rw, rh, result) = crate::vector::decode_svg(traced.svg.as_bytes())?;
+    let (ow, oh, outline) = crate::vector::decode_svg(traced.outline.as_bytes())?;
+    // 元の画像を薄くした上に、アウトラインを重ねる。
+    let mut overlay = outline.clone();
+    for y in 0..oh {
+        for x in 0..ow {
+            let (sx, sy) = ((x * w / ow).min(w - 1), (y * h / oh).min(h - 1));
+            let s = &rgba[(sy * w + sx) * 4..(sy * w + sx) * 4 + 4];
+            let o = (y * ow + x) * 4;
+            let line = overlay[o + 3] as f32 / 255.0;
+            let a = s[3] as f32 / 255.0 * 0.55;
+            for k in 0..3 {
+                let faded = s[k] as f32 * 0.5 + 255.0 * 0.5;
+                let under = faded * a / (a + (1.0 - a) * 0.0).max(1e-3);
+                overlay[o + k] = (outline[o + k] as f32 * line + under * (1.0 - line)).round() as u8;
+            }
+            overlay[o + 3] = ((line + a * (1.0 - line)) * 255.0).round() as u8;
+        }
+    }
+    let image = |w, h, rgba: Vec<u8>, vector| Picture::Image { w, h, rgba: Arc::new(rgba), vector };
+    Ok(Done { settings, svg: traced.svg, paths: traced.paths, colors: traced.colors, result: image(rw, rh, result, true), outline: image(ow, oh, outline, false), overlay: image(ow, oh, overlay, false) })
 }
 
 #[cfg(test)]
@@ -191,61 +423,99 @@ mod tests {
             .collect()
     }
 
-    /// 終わるまで待つ。
+    /// プレビューができるまで待つ。
     fn wait(app: &mut App) {
         let ctx = egui::Context::default();
         for _ in 0..600 {
             app.poll_vectorize(&ctx);
-            if app.vectorizing.is_none() {
+            let session = app.trace_session.as_ref().unwrap();
+            if session.done.is_some() && session.job.is_none() && session.changed.is_none() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        panic!("ベクター化が終わらない");
+        panic!("トレースが終わらない");
     }
 
-    #[test]
-    fn ベクター化すると_svg_の素材になり_保存して戻り_元に戻せる() {
+    fn with_dot() -> (App, usize, Picture) {
         let mut app = App::new(&Initial::default());
         let panel = app.template.panels.iter().position(|p| p.name == "正面").unwrap();
         let picture = Picture::Image { w: 80, h: 60, rgba: Arc::new(red_dot(80, 60)), vector: false };
         let decal = Decal { panel, at: [0.5, 0.5], size: [40.0, 30.0], angle: 0.0 };
         app.decals.push(Placed { decal, picture: picture.clone(), back: false, layer: Default::default() });
         let index = app.decals.len() - 1;
-        let assets = app.assets.len();
-        app.start_vectorize(index);
-        wait(&mut app);
-        assert!(matches!(app.decals[index].picture, Picture::Image { vector: true, .. }), "{:?}", app.message);
-        assert_eq!(app.decals[index].decal.size, [40.0, 30.0], "大きさは変わらない");
-        assert_eq!(app.assets.len(), assets + 1);
-        let asset = app.assets.last().unwrap();
-        assert!(asset.name.ends_with(" (vector).svg"));
-        assert!(crate::vector::is_svg(asset.stored.as_ref().unwrap().bytes()));
-        // 保存して開き直すと、SVG から描き直して、同じくベクターの柄。
-        let project = app.project().unwrap();
-        let mut again = App::new(&Initial::default());
-        let problems = again.apply_project(project);
-        assert!(problems.is_empty(), "{problems:?}");
-        assert!(matches!(again.decals[index].picture, Picture::Image { vector: true, .. }));
-        // 元に戻すと、元の画像。
-        app.undo();
-        assert!(same_picture(&app.decals[index].picture, &picture));
-        assert_eq!(app.assets.len(), assets);
+        (app, index, picture)
     }
 
     #[test]
-    fn 途中で柄を消すと_結果は使わない() {
-        let mut app = App::new(&Initial::default());
-        let panel = app.template.panels.iter().position(|p| p.name == "正面").unwrap();
-        let picture = Picture::Image { w: 80, h: 60, rgba: Arc::new(red_dot(80, 60)), vector: false };
-        let decal = Decal { panel, at: [0.5, 0.5], size: [40.0, 30.0], angle: 0.0 };
-        app.decals.push(Placed { decal, picture, back: false, layer: Default::default() });
-        let index = app.decals.len() - 1;
-        let assets = app.assets.len();
-        app.start_vectorize(index);
-        app.decals.remove(index);
+    fn トレースは元の画像を残して_上にベクターのレイヤーを足す() {
+        let (mut app, index, picture) = with_dot();
+        let (count, assets) = (app.decals.len(), app.assets.len());
+        app.open_trace(index);
         wait(&mut app);
+        // プレビューの間は、柄の並びは変わらない。描くときだけ、結果を差し込む。
+        assert_eq!(app.decals.len(), count);
+        let shown = app.trace_preview().unwrap();
+        assert!(matches!(shown[index].picture, Picture::Image { vector: true, .. }));
+        assert!(same_picture(&app.decals[index].picture, &picture));
+        // 値を変えると、トレースし直す。
+        app.trace_session.as_mut().unwrap().settings.preset = 2;
+        app.trace_session.as_mut().unwrap().changed = Some(Instant::now() - SETTLE);
+        wait(&mut app);
+        app.apply_trace();
+        assert!(app.trace_session.is_none());
+        assert_eq!(app.decals.len(), count + 1);
+        assert!(app.decals[index].layer.hidden, "元の画像は隠して残す");
+        assert!(same_picture(&app.decals[index].picture, &picture));
+        let traced = &app.decals[index + 1];
+        assert!(matches!(traced.picture, Picture::Image { vector: true, .. }));
+        assert_eq!(traced.decal.size, [40.0, 30.0], "大きさは変わらない");
+        let source = traced.layer.traced.as_ref().expect("元とトレースの設定を残す");
+        assert_eq!(source.layer, app.decals[index].layer.id);
+        assert_eq!(TraceSettings::from_json(&source.settings).unwrap().preset, 2);
+        assert_eq!(app.assets.len(), assets + 1);
+        assert!(crate::vector::is_svg(app.assets.last().unwrap().stored.as_ref().unwrap().bytes()));
+        // （保存して開き直しても残ることは、中核の案件の読み書きのテストで見ている。）
+        // やり直す: 元の画像から開き直し、確定すると、同じレイヤーの絵を替える。
+        app.open_trace(index + 1);
+        assert_eq!(app.trace_session.as_ref().unwrap().source, index);
+        assert_eq!(app.trace_session.as_ref().unwrap().settings.preset, 2);
+        wait(&mut app);
+        app.apply_trace();
+        assert_eq!(app.decals.len(), count + 1);
+        // 元に戻すと、トレースする前。
+        app.undo();
+        app.undo();
+        assert_eq!(app.decals.len(), count);
+        assert!(!app.decals[index].layer.hidden);
+    }
+
+    #[test]
+    fn 取り消すと_何も変わらない() {
+        let (mut app, index, picture) = with_dot();
+        let (count, assets) = (app.decals.len(), app.assets.len());
+        app.open_trace(index);
+        wait(&mut app);
+        app.cancel_trace();
+        assert_eq!(app.decals.len(), count);
         assert_eq!(app.assets.len(), assets);
+        assert!(same_picture(&app.decals[index].picture, &picture));
+        assert!(app.trace_preview().is_none());
+    }
+
+    #[test]
+    fn 途中で柄を消すと_欄を閉じる() {
+        let (mut app, index, _) = with_dot();
+        app.open_trace(index);
+        app.decals.remove(index);
+        app.poll_vectorize(&egui::Context::default());
+        assert!(app.trace_session.is_none());
+    }
+
+    #[test]
+    fn 設定は_json_で残して読める() {
+        let settings = TraceSettings { preset: 3, drop_background: false, tune: Some(crate::vector::Tune { paths: 77.0, ..Default::default() }) };
+        assert_eq!(TraceSettings::from_json(&settings.to_json()), Some(settings));
     }
 
     #[test]
