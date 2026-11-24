@@ -108,7 +108,7 @@ impl Motion {
 
 impl Hinge {
     fn is_mountain(&self) -> bool {
-        self.angle < 0.0 || matches!(self.motion, Motion::Follow(scale) if scale < 0.0) || matches!(self.motion, Motion::GableDiagonal(_))
+        self.angle < 0.0 || matches!(self.motion, Motion::Follow(scale) if scale < 0.0)
     }
 }
 
@@ -1022,6 +1022,32 @@ mod tests {
                     // 差し込みは、フタから下へ向かう（箱の中へ入る）。
                     let top = m[lid].point([mid[0], mid[1], t]);
                     assert!(top[1] - outer[1] > depth * 0.5, "{n} 角柱: 差し込みが下を向いていない {top:?} {outer:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ゲーブル型の折り込みは_閉じても屋根の外へ出ない() {
+        // 本人が見つけた不具合（2026-11-24）: 左奥の折り込みが、背面の屋根から紙 1 枚ぶん外へはみ出し、
+        // 屋根の上に紙の裏の色の細い帯が見えた。斜めの折り線を山折りとして、厚みの外側の縁で回していた。
+        use crate::math::{dot, normalize, sub};
+        for t in [0.5f32, 2.0] {
+            let tpl = Template::gable(160.0, 100.0, 110.0, 45.0, t);
+            let placements = tpl.transforms_at(1.0, [1.0, 1.0]);
+            let world = tpl.world_at(1.0);
+            let at = |i: usize, q: P2, z: f32| world.point(placements[i].at(q).point([q[0], q[1], z]));
+            for roof in ["正面の屋根", "背面の屋根"] {
+                let r = index(&tpl, roof);
+                let q0 = tpl.panels[r].outline[0];
+                let (o, n) = (at(r, q0, 0.0), normalize(sub(at(r, q0, 0.0), at(r, q0, t))));
+                for (i, p) in tpl.panels.iter().enumerate().filter(|(_, p)| p.name.contains("折り込み") || p.name == "屋根ののりしろ") {
+                    for &q in &p.outline {
+                        for z in [0.0, t] {
+                            let d = dot(sub(at(i, q, z), o), n);
+                            assert!(d < 0.05, "厚み {t}: {} の角が {roof} の外へ {d:.2} mm 出ている", p.name);
+                        }
+                    }
                 }
             }
         }
