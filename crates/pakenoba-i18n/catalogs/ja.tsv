@@ -1188,3 +1188,14 @@ blend	Color	カラー
 	Saving the print-ready PDF	入稿用の PDF を保存しています
 	The export stopped unexpectedly: {}	書き出しが途中で止まりました: {}
 	{what}… {} s	{what}… {} 秒
+	All artwork placed in 3D	立体の上で置いた柄（まとめたもの）
+	Each PSD has a selection channel for each face: Ctrl+click a channel in Photoshop to select that face (for Generative Fill, for example). The assembled view lays the outside faces out as they face on the box (front in the middle, top above), so nothing comes out upside down; drop it back on the window to put each face back on the dieline.	どちらの PSD にも、面ごとの選択範囲のチャンネルが入ります。Photoshop でチャンネルを Ctrl + クリックすると、その面だけを選べます（生成塗りつぶしなどに）。組み立て向きの PSD は、箱の外側の面を組み立てたときの向き（正面がまん中、天面が上）に並べたもので、絵が逆さになりません。描いたらウィンドウへドロップすると、面ごとに展開図へ戻ります。
+	Save the assembled view as PSD…	組み立て向きの PSD を保存…
+	Save the assembled-view PSD	組み立て向きの PSD を保存
+	Saved: {}. Draw on it, then drop it back on the window: each face goes back to its place on the dieline.	保存しました: {}。描いたらウィンドウへドロップしてください。面ごとに展開図の場所へ戻ります。
+	Saving the assembled-view PSD	組み立て向きの PSD を保存しています
+	The assembled-view PSD does not match the current box (the shape or the dimensions have changed since it was saved).	組み立て向きの PSD が、いまの箱と合いません（保存したあとに、型か寸法が変わっています）。
+	This assembled-view PSD has no resolution, so it cannot be put back on the dieline.	この組み立て向きの PSD には解像度が入っていないので、展開図へ戻せません。
+	{guides} (paper colour, for viewing)	{guides}（紙の色。確認用）
+	{project}_assembled.psd	{project}_組み立て向き.psd
+	{stem} (from the assembled view).psd	{stem}（組み立て向きから）.psd

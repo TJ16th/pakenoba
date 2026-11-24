@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::App;
 use crate::paint::Picture;
-use crate::art::{BleedZone, DecalLayer, Frame, Plate, SheetArt, add_spot_channels, alpha_over, bleed_zone, draw_bleed_line, extend_edges, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
+use crate::art::{BleedZone, DecalLayer, Frame, Plate, SheetArt, add_channels, alpha_over, bleed_zone, draw_bleed_line, extend_edges, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
 use crate::paint::{Canvas, Marks, paint};
 
 /// 別のスレッドで動かす書き出しの種類。
@@ -13,6 +13,8 @@ use crate::paint::{Canvas, Marks, paint};
 pub(super) enum ExportKind {
     Psd,
     Ready,
+    /// 組み立て向きの PSD。
+    Atlas,
 }
 
 /// 書き出しに要る、案件の写し（別のスレッドへ渡す）。
@@ -194,6 +196,23 @@ impl App {
         dialog.save_file().map(with_psd)
     }
 
+    /// 組み立て向きの PSD を保存する（場所を選んでもらう）。
+    pub(super) fn export_atlas(&mut self) {
+        let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| t!("PAKENOBA").to_owned(), |s| s.to_string_lossy().into_owned());
+        let path = match self.answer_export.take() {
+            Some(answer) => with_psd(answer),
+            None => {
+                let mut dialog = rfd::FileDialog::new().set_title(t!("Save the assembled-view PSD")).add_filter(t!("Photoshop (PSD)"), &["psd"]).set_file_name(super::atlas::atlas_name(&project));
+                if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
+                    dialog = dialog.set_directory(dir);
+                }
+                let Some(path) = dialog.save_file() else { return };
+                with_psd(path)
+            }
+        };
+        self.start_export(ExportKind::Atlas, path);
+    }
+
     /// 型紙を PSD で保存する。裏に柄があれば、裏の型紙も、同じ場所に「_裏」を付けて保存する。
     /// 書き出しは、別のスレッドで動かす（画面を止めない）。
     pub(super) fn export_psd(&mut self) {
@@ -214,6 +233,7 @@ impl App {
             match kind {
                 ExportKind::Psd => app.psd_message(&target),
                 ExportKind::Ready => app.ready_message(&target),
+                ExportKind::Atlas => app.atlas_psd().and_then(|bytes| std::fs::write(&target, bytes).map_err(|e| e.to_string())).map(|()| t!("Saved: {}. Draw on it, then drop it back on the window: each face goes back to its place on the dieline.", target.display())).map_err(|e| t!("Could not save: {e}")),
             }
         });
         self.export_job = Some(ExportJob { kind, path, started: std::time::Instant::now(), handle });
@@ -241,6 +261,7 @@ impl App {
             let what = match job.kind {
                 ExportKind::Psd => t!("Saving the dieline PSD"),
                 ExportKind::Ready => t!("Saving the print-ready PDF"),
+                ExportKind::Atlas => t!("Saving the assembled-view PSD"),
             };
             ui.label(t!("{what}… {} s", job.started.elapsed().as_secs()));
         });
@@ -282,18 +303,20 @@ impl App {
         let out = self.out_sheet();
         let (sheet, custom) = (&out.sheet, out.custom());
         let front = self.finish_plates(false, sheet.frame);
+        let faces = super::atlas::face_selections(&self.template, &sheet.frame, out.zone.as_ref());
         let (layers, merged) = self.psd_side(&out, false);
         save_psd(sheet, custom[0], &layers, Some(&merged))
-            .and_then(|bytes| add_spot_channels(bytes, &front))
+            .and_then(|bytes| add_channels(bytes, &front, &faces))
             .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))
             .map_err(|e| t!("Could not save: {e}"))?;
         let mut files = vec![path.to_owned()];
         if self.has_back_decals() {
             let back = back_path(path);
             let plates: Vec<Plate> = self.finish_plates(true, sheet.frame).into_iter().map(|p| Plate { ink: mirror_gray(&p.ink, sheet.w), ..p }).collect();
+            let faces: Vec<Plate> = faces.into_iter().map(|p| Plate { ink: mirror_gray(&p.ink, sheet.w), ..p }).collect();
             let (layers, merged) = self.psd_side(&out, true);
             save_back_psd(sheet, custom[1], &layers, Some(&merged))
-                .and_then(|bytes| add_spot_channels(bytes, &plates))
+                .and_then(|bytes| add_channels(bytes, &plates, &faces))
                 .and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string()))
                 .map_err(|e| t!("Saved the front, but could not save the back: {e}"))?;
             files.push(back);
@@ -334,8 +357,8 @@ mod tests {
         app.write_psds(&path);
         let layers = |p: &Path| craft_psd::PsdFile::from_bytes(&std::fs::read(p).unwrap()).unwrap().iter_layers().map(|l| l.name()).collect::<Vec<_>>();
         // 表には帯（柄 2）だけ、裏にはロゴ（柄 1）だけ。
-        assert_eq!(layers(&path), ["Artwork", "3D artwork 2 (Band)", "Guides (cut lines, fold lines, glue flaps)"]);
-        assert_eq!(layers(&back_path(&path)), ["Back of sheet", "3D artwork 1 (Logo)", "Guides (cut lines, fold lines)"]);
+        assert_eq!(layers(&path), ["Guides (paper colour, for viewing)", "Artwork", "3D artwork 2 (Band)", "Guides (cut lines, fold lines, glue flaps)"]);
+        assert_eq!(layers(&back_path(&path)), ["Guides (paper colour, for viewing)", "Back of sheet", "3D artwork 1 (Logo)", "Guides (cut lines, fold lines)"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -356,7 +379,6 @@ mod tests {
         let files = app.psd_files(&path).unwrap();
         assert_eq!(files, [path.clone(), notes_path(&path)]);
         let mut file = craft_psd::PsdFile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
-        let base = file.header.channels as usize - 2;
         let names: Vec<String> = file.resources.iter().find(|r| r.id == 1006).map(|r| {
             let mut out = Vec::new();
             let mut d = &r.data[..];
@@ -366,11 +388,15 @@ mod tests {
             }
             out
         }).unwrap();
-        // 同じ金箔は 1 枚にまとめ、エンボスは別の版。
-        assert_eq!(names[names.len() - 2..], ["Foil Gold", "Emboss"]);
+        // 同じ金箔は 1 枚にまとめ、エンボスは別の版。そのあとに、面ごとの選択範囲（6 面）。
+        let at = names.iter().position(|n| n == "Foil Gold").unwrap();
+        assert_eq!(names[at..at + 2], ["Foil Gold", "Emboss"]);
+        assert_eq!(names.len() - (at + 2), 6, "{names:?}");
         let kinds: Vec<u8> = craft_psd::channel_resources::display_info(&file.resources.iter().find(|r| r.id == 1077).unwrap().data, true).map(|d| d.kind).collect();
         assert_eq!(kinds.len(), names.len());
-        assert!(kinds[kinds.len() - 2..].iter().all(|&k| k == 2));
+        assert!(kinds[at..at + 2].iter().all(|&k| k == 2));
+        assert!(kinds[at + 2..].iter().all(|&k| k == 1));
+        let base = file.header.channels as usize - 8;
         // 版の中身は、Photoshop と同じく、黒（0）が加工の所。柄の外は白。
         file.image_data.load().unwrap();
         let planes = file.image_data.decode(&file.header).unwrap();

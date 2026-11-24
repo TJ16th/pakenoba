@@ -98,6 +98,10 @@ impl App {
                 return self.say(t!("Could not read {}: {e}", path.display()));
             }
         };
+        // 組み立て向きの PSD なら、面ごとに展開図へ戻してから読む。
+        if super::atlas::psd_is_atlas(&bytes) {
+            return self.open_atlas(path, &bytes);
+        }
         let back = crate::art::psd_is_back(&bytes);
         self.load_base(path, bytes, if back { 1 } else { 0 });
     }

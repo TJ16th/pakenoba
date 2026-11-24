@@ -5,6 +5,7 @@
 //! このファイルは、状態と、工程をまたぐ処理。画面の部品は `panels`、中央の表示は `views`。
 
 mod assets;
+mod atlas;
 mod base;
 mod edit;
 mod export;

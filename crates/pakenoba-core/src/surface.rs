@@ -443,6 +443,42 @@ impl Surface {
         pieces
     }
 
+    /// 箱の外側の面を、`start` の面から、折り線と合わせ目をたどって 1 枚の平面へ開いた並び（組み立てたときの向き）。
+    /// `start_place` は、平面の座標（mm、上が正）を `start` のパネルの座標へ写すもの。
+    /// 面ごとに、平面の座標をそのパネルの座標へ写すものを返す。どの面も 1 回だけ（近い順に、先に届いた道で）置く。
+    /// 閉じると隠れる面と、柄を置けない面（のりしろ）は入れない。ほかの面と重なってしまう面も入れない。
+    pub fn unfold(&self, tpl: &Template, start: usize, start_place: Aff2) -> Vec<(usize, Aff2)> {
+        let usable = |i: usize| !tpl.panels[i].hidden_when_closed() && tpl.panels[i].takes_art();
+        let mut placed: Vec<(usize, Aff2)> = vec![(start, start_place)];
+        let mut next = 0;
+        // 平面の上での、パネルの輪郭（重なりを調べる）。
+        let outline_in = |panel: usize, place: &Aff2| -> Vec<P2> {
+            let back = place.inverse();
+            tpl.panels[panel].outline.iter().map(|&p| back.point(p)).collect()
+        };
+        let mut shapes: Vec<Vec<P2>> = vec![outline_in(start, &start_place)];
+        while next < placed.len() {
+            let (from, place) = placed[next];
+            next += 1;
+            // 折り線を先に、合わせ目をあとに（紙がつながっている向きを優先する）。
+            let mut links: Vec<&Link> = self.links[from].iter().collect();
+            links.sort_by_key(|l| l.seam);
+            for link in links {
+                if !usable(link.to) || placed.iter().any(|&(p, _)| p == link.to) {
+                    continue;
+                }
+                let to_place = link.map.then_after(&place);
+                let shape = outline_in(link.to, &to_place);
+                if shapes.iter().any(|other| polygons_overlap(&shape, other)) {
+                    continue;
+                }
+                shapes.push(shape);
+                placed.push((link.to, to_place));
+            }
+        }
+        placed
+    }
+
     /// 展開図上の点に、どの柄があるか。上に重なっているものを優先する。柄の番号と、柄の座標での位置を返す。
     pub fn decal_at(&self, tpl: &Template, decals: &[Decal], panel: usize, at: P2) -> Option<(usize, P2)> {
         decals.iter().enumerate().rev().find_map(|(index, decal)| {
@@ -691,6 +727,25 @@ pub fn ray_through(forward: V3, right: V3, up: V3, fov_y: f32, aspect: f32, x: f
     normalize(add(forward, add(scale(right, x * reach * aspect), scale(up, y * reach))))
 }
 
+/// 2 つの多角形が、0.5 mm より深く重なっているか（辺が接しているだけなら重ならない）。
+/// どちらかの頂点を少し内側へ寄せた点が、もう一方の内側にあるかで見る。凸な形を前提とした、おおまかな判定。
+fn polygons_overlap(a: &[P2], b: &[P2]) -> bool {
+    let inset = |poly: &[P2]| -> Vec<P2> {
+        let n = poly.len() as f32;
+        let c = poly.iter().fold([0.0f32; 2], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
+        poly.iter()
+            .map(|p| {
+                let d = [c[0] - p[0], c[1] - p[1]];
+                let len = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-6);
+                let step = 0.5f32.min(len * 0.5);
+                [p[0] + d[0] / len * step, p[1] + d[1] / len * step]
+            })
+            .chain(std::iter::once(c))
+            .collect()
+    };
+    inset(a).iter().any(|&p| crate::template::inside(b, p)) || inset(b).iter().any(|&p| crate::template::inside(a, p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,6 +767,32 @@ mod tests {
     fn has_seam(tpl: &Template, surface: &Surface, a: &str, b: &str) -> bool {
         let (a, b) = (index(tpl, a), index(tpl, b));
         surface.seams.iter().any(|s| (s.a == a && s.b == b) || (s.a == b && s.b == a))
+    }
+
+    #[test]
+    fn 組み立て向きに開くと_外側の面が十字に並ぶ() {
+        let (tpl, surface) = tuck(0.5);
+        let front = index(&tpl, "正面");
+        let start = Decal { panel: front, at: [0.5, 0.5], size: [1.0, 1.0], angle: surface.up(front, false) }.place(&tpl);
+        let placed = surface.unfold(&tpl, front, start);
+        let names: Vec<&str> = placed.iter().map(|&(p, _)| tpl.panels[p].name).collect();
+        // 外側に見える 6 面が、1 回ずつ。
+        assert_eq!(placed.len(), 6, "{names:?}");
+        let center = |name: &str| {
+            let (p, place) = placed.iter().find(|&&(p, _)| tpl.panels[p].name == name).copied().unwrap_or_else(|| panic!("{name} がない: {names:?}"));
+            let back = place.inverse();
+            let n = tpl.panels[p].outline.len() as f32;
+            tpl.panels[p].outline.iter().fold([0.0f32; 2], |s, &q| {
+                let q = back.point(q);
+                [s[0] + q[0] / n, s[1] + q[1] / n]
+            })
+        };
+        // 正面がまん中。右の側面は右、左は左、天面は上、底は下（組み立てたときの向き）。
+        let f = center("正面");
+        assert!(center("右側面")[0] > f[0] + 50.0, "{:?}", center("右側面"));
+        assert!(center("左側面")[0] < f[0] - 50.0, "{:?}", center("左側面"));
+        let tops: Vec<P2> = placed.iter().filter(|&&(p, _)| tpl.panels[p].name != "正面").map(|&(p, _)| center(tpl.panels[p].name)).filter(|c| (c[0] - f[0]).abs() < 1.0).collect();
+        assert!(tops.iter().any(|c| c[1] > f[1] + 50.0) && tops.iter().any(|c| c[1] < f[1] - 50.0), "{tops:?}");
     }
 
     #[test]

@@ -382,9 +382,15 @@ impl App {
                     ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
                     self.resolution_choice(ui);
                     if self.export_busy(ui) {
-                    } else if ui.button(t!("Save the dieline as PSD…")).clicked() {
-                        self.export_psd();
+                    } else {
+                        if ui.button(t!("Save the dieline as PSD…")).clicked() {
+                            self.export_psd();
+                        }
+                        if ui.button(t!("Save the assembled view as PSD…")).clicked() {
+                            self.export_atlas();
+                        }
                     }
+                    ui.small(t!("Each PSD has a selection channel for each face: Ctrl+click a channel in Photoshop to select that face (for Generative Fill, for example). The assembled view lays the outside faces out as they face on the box (front in the middle, top above), so nothing comes out upside down; drop it back on the window to put each face back on the dieline."));
                     ui.small(t!("After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel."));
                     if self.has_back_decals() {
                         ui.small(t!("There is artwork on the back of the sheet too, so the back dieline is saved in the same place with \"_back\" added to the name. The back dieline is seen from the back (flipped left to right)."));

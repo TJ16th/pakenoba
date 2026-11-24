@@ -307,7 +307,7 @@ pub fn make_sheet_art_at(tpl: &Template, frame: Frame) -> SheetArt {
     SheetArt { frame, w, h, art, guides, lines }
 }
 
-fn draw_line(buf: &mut [u8], w: usize, h: usize, a: [f32; 2], b: [f32; 2], width: f32, color: [u8; 4]) {
+pub(crate) fn draw_line(buf: &mut [u8], w: usize, h: usize, a: [f32; 2], b: [f32; 2], width: f32, color: [u8; 4]) {
     let half = width * 0.5;
     let x0 = (a[0].min(b[0]) - half).floor().max(0.0) as usize;
     let x1 = ((a[0].max(b[0]) + half).ceil().max(0.0) as usize).min(w.saturating_sub(1));
@@ -347,11 +347,11 @@ const BACK_PAPER: [u8; 3] = [231, 226, 215];
 
 /// 紙の裏（箱の内側の面）の画像を作る。紙の地、裏に置いた柄（`decals` で描く）、切り線と折り線。
 pub fn compose_back(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {
-    // 形は表と同じで、色だけが裏の色。裏の絵を読み込んであれば、それを敷く（表の向きに直したもの）。
-    let mut out: Vec<u8> = match custom {
-        Some(custom) => custom.to_vec(),
-        None => back_paper(sheet),
-    };
+    // 形は表と同じで、色だけが裏の色。裏の絵を読み込んであれば、その上に重ねる（表の向きに直したもの。刷った所だけが色を持つ）。
+    let mut out: Vec<u8> = back_paper(sheet);
+    if let Some(custom) = custom {
+        alpha_over(&mut out, custom);
+    }
     decals(&mut out);
     if show_guides {
         alpha_over(&mut out, &sheet.lines);
@@ -367,12 +367,12 @@ pub fn compose_back(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, 
 /// 読み込んだ絵柄があれば、それが紙ごと刷った絵なので、どちらも同じ画像にする（立体用は None）。
 pub fn compose_split(sheet: &SheetArt, back: bool, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> (Vec<u8>, Option<Vec<u8>>) {
     let guides = if back { &sheet.lines } else { &sheet.guides };
-    if custom.is_some() {
-        let flat = if back { compose_back(sheet, custom, show_guides, decals) } else { compose(sheet, custom, show_guides, decals) };
-        return (flat, None);
-    }
+    // 刷る絵: 読み込んだ展開図の絵（刷った所だけが色を持つ）か、透明な紙。その上に柄。
     let paper = if back { BACK_PAPER } else { PAPER };
-    let mut printed: Vec<u8> = [paper[0], paper[1], paper[2], 0].repeat(sheet.w * sheet.h);
+    let mut printed: Vec<u8> = match custom {
+        Some(custom) => custom.to_vec(),
+        None => [paper[0], paper[1], paper[2], 0].repeat(sheet.w * sheet.h),
+    };
     decals(&mut printed);
     let mut flat = if back { back_paper(sheet) } else { sheet.art.clone() };
     alpha_over(&mut flat, &printed);
@@ -386,7 +386,10 @@ pub fn compose_split(sheet: &SheetArt, back: bool, custom: Option<&[u8]>, show_g
 /// 箱に貼る画像を作る。`custom` があれば確認用の絵柄の代わりに使う。
 /// 立体の上で置いた柄は、絵柄の上、ガイド線の下に `decals` で描く。
 pub fn compose(sheet: &SheetArt, custom: Option<&[u8]>, show_guides: bool, decals: impl FnOnce(&mut [u8])) -> Vec<u8> {
-    let mut out = custom.unwrap_or(&sheet.art).to_vec();
+    let mut out = sheet.art.clone();
+    if let Some(custom) = custom {
+        alpha_over(&mut out, custom);
+    }
     decals(&mut out);
     if show_guides {
         alpha_over(&mut out, &sheet.guides);
@@ -455,7 +458,9 @@ pub fn psd_is_back(bytes: &[u8]) -> bool {
 /// `painted` は、柄まで重ねた絵（ガイドなし）。統合した絵に使う。なければ、レイヤーを順に重ねて作る（グループや調整は効かない）。
 pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let guides = t!("{guides} (cut lines, fold lines, glue flaps)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, sheet.frame.dpi_value(), (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()), painted.map(<[u8]>::to_vec))
+    // 「絵柄」は刷るものだけ（何もなければ透明）。確認用の紙の色は、いちばん下のガイドのレイヤーにする（読み戻すときは除く）。
+    let art = custom.map_or_else(|| vec![0u8; sheet.w * sheet.h * 4], <[u8]>::to_vec);
+    build_psd_on_paper(sheet.w, sheet.h, sheet.frame.dpi_value(), Some(sheet.art.clone()), (tr("Artwork"), art), decals.to_vec(), (guides, sheet.guides.clone()), painted.map(<[u8]>::to_vec))
 }
 
 /// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
@@ -464,12 +469,12 @@ pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], 
 /// `decals` は、表と同じ展開図の向きで描いた、裏の柄の画像（`paint` で裏を描いたもの）。ここで左右を裏返す。
 /// `custom` は、読み込んである裏の絵（表の向きに直したもの）。あれば「紙の裏」のレイヤーにする。
 pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    let paper: Vec<u8> = custom.map_or_else(|| back_paper(sheet), <[u8]>::to_vec);
+    let art: Vec<u8> = custom.map_or_else(|| vec![0u8; sheet.w * sheet.h * 4], <[u8]>::to_vec);
     let flip = |image: &[u8]| mirror(image, sheet.w, sheet.h);
     let flip_gray = |image: &[u8]| mirror_gray(image, sheet.w);
     let decals = decals.iter().map(|layer| DecalLayer { image: if layer.group.is_some() { Vec::new() } else { flip(&layer.image) }, mask: layer.mask.as_deref().map(flip_gray), ..layer.clone() }).collect();
     let guides = t!("{guides} (cut lines, fold lines)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, sheet.frame.dpi_value(), (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
+    build_psd_on_paper(sheet.w, sheet.h, sheet.frame.dpi_value(), Some(flip(&back_paper(sheet))), (tr(BACK_PAPER_LAYER), flip(&art)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
 }
 
 /// 白黒の画像（1 画素 1 バイト）を左右に裏返す。
@@ -490,11 +495,25 @@ pub fn mirror(image: &[u8], w: usize, h: usize) -> Vec<u8> {
 }
 
 /// PSD を組み立てる。いちばん下に `base`、その上に柄、いちばん上に `guides`。
-fn build_psd(w: usize, h: usize, dpi: f32, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+pub(crate) fn build_psd(w: usize, h: usize, dpi: f32, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+    build_psd_on_paper(w, h, dpi, None, base, decals, guides, painted)
+}
+
+/// 確認用の紙の色の、いちばん下に置くガイドのレイヤーの名前。
+pub(crate) fn paper_layer_name() -> String {
+    t!("{guides} (paper colour, for viewing)", guides = tr(GUIDE_LAYER_PREFIX))
+}
+
+/// `build_psd` と同じ。`paper` があれば、いちばん下に確認用の紙の色のレイヤー（ガイド。読み戻すときは除く）を置く。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_psd_on_paper(w: usize, h: usize, dpi: f32, paper: Option<Vec<u8>>, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(w * h);
     match &painted {
         Some(painted) => alpha_over(&mut composite, painted),
         None => {
+            if let Some(paper) = &paper {
+                alpha_over(&mut composite, paper);
+            }
             alpha_over(&mut composite, &base.1);
             for layer in decals.iter().filter(|layer| layer.visible && layer.group.is_none()) {
                 let opacity = layer.opacity.min(100) as f32 / 100.0 * layer.fill.min(100) as f32 / 100.0;
@@ -507,6 +526,9 @@ fn build_psd(w: usize, h: usize, dpi: f32, base: (&str, Vec<u8>), decals: Vec<De
     alpha_over(&mut composite, &guides.1);
     // 解像度を入れておくと、Photoshop で実寸（mm）が合う。
     let mut builder = PsdBuilder::new(w as u32, h as u32).resolution(dpi as f64);
+    if let Some(paper) = paper {
+        builder.push_layer(LayerSpec::new(paper_layer_name(), 0, 0, w as u32, h as u32, PixelData::Rgba8(paper)));
+    }
     builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
     let mut open_groups = 0usize;
     for DecalLayer { name, image, visible, opacity, blend, mask, group, clipped, fill } in decals {
@@ -572,15 +594,17 @@ pub struct Plate {
 
 /// PSD に、加工の版をスポットカラーチャンネルとして足す（Photoshop と同じく、名前、表示の色、
 /// 濃さ 100%、種類「スポット」を書く）。版の中身は、Photoshop と同じく 0 が版のある所（白黒を反転して入れる）。
-pub fn add_spot_channels(bytes: Vec<u8>, plates: &[Plate]) -> Result<Vec<u8>, String> {
-    if plates.is_empty() {
+/// PSD に、加工の版（スポットカラーチャンネル）と、選択範囲（アルファチャンネル。`ink` の白い所が選ばれる）を足す。
+/// 選択範囲は、Photoshop で新しく作るアルファチャンネルと同じく「マスク範囲に色を付ける」、赤の 50%。
+pub fn add_channels(bytes: Vec<u8>, plates: &[Plate], selections: &[Plate]) -> Result<Vec<u8>, String> {
+    if plates.is_empty() && selections.is_empty() {
         return Ok(bytes);
     }
     let fail = |e: &dyn std::fmt::Display| t!("Could not add the finish plates to the PSD: {e}");
     let mut file = PsdFile::from_bytes(&bytes).map_err(|e| fail(&e))?;
     file.image_data.load().map_err(|e| fail(&e))?;
     let (w, h) = (file.header.width as usize, file.header.height as usize);
-    if plates.iter().any(|p| p.ink.len() != w * h) || file.header.depth != 8 {
+    if plates.iter().chain(selections).any(|p| p.ink.len() != w * h) || file.header.depth != 8 {
         return Err(fail(&"size"));
     }
     let mut planes = file.image_data.decode(&file.header).map_err(|e| fail(&e))?;
@@ -589,9 +613,13 @@ pub fn add_spot_channels(bytes: Vec<u8>, plates: &[Plate]) -> Result<Vec<u8>, St
     for plate in plates {
         planes.extend(plate.ink.iter().map(|&v| 255 - v));
     }
-    file.header.channels += plates.len() as u16;
+    for selection in selections {
+        planes.extend_from_slice(&selection.ink);
+    }
+    let count = plates.len() + selections.len();
+    file.header.channels += count as u16;
     file.image_data = craft_psd::ImageData::encode(file.image_data.compression, &planes, &file.header).map_err(|e| fail(&e))?;
-    let names: Vec<&str> = transparency.then_some("Transparency").into_iter().chain(plates.iter().map(|p| p.name.as_str())).collect();
+    let names: Vec<&str> = transparency.then_some("Transparency").into_iter().chain(plates.iter().chain(selections).map(|p| p.name.as_str())).collect();
     file.resources.retain(|r| !matches!(r.id, 1006 | 1045 | 1053 | 1077));
     file.resources.push(craft_psd::ImageResource::new(1006, craft_psd::channel_resources::pascal_names(names.iter().copied())));
     file.resources.push(craft_psd::ImageResource::new(1045, craft_psd::unicode_names::write(names.iter().copied())));
@@ -603,8 +631,12 @@ pub fn add_spot_channels(bytes: Vec<u8>, plates: &[Plate]) -> Result<Vec<u8>, St
         let c = plate.rgb.map(|v| v as u16 * 257);
         display.extend_from_slice(&craft_psd::channel_resources::DisplayInfo { space: 0, components: [c[0], c[1], c[2], 0], opacity: 100, kind: 2 }.to_bytes());
     }
+    for selection in selections {
+        let c = selection.rgb.map(|v| v as u16 * 257);
+        display.extend_from_slice(&craft_psd::channel_resources::DisplayInfo { space: 0, components: [c[0], c[1], c[2], 0], opacity: 50, kind: 1 }.to_bytes());
+    }
     file.resources.push(craft_psd::ImageResource::new(1077, display));
-    file.resources.push(craft_psd::ImageResource::new(1053, craft_psd::tiff::layered::alpha_identifiers(transparency, plates.len())));
+    file.resources.push(craft_psd::ImageResource::new(1053, craft_psd::tiff::layered::alpha_identifiers(transparency, count)));
     file.to_bytes().map_err(|e| fail(&e))
 }
 
@@ -613,7 +645,7 @@ pub const GUIDE_LAYER_PREFIX: &str = "Guides";
 
 /// このソフトが書き出したレイヤーのうち、読み込むときに除くもの（ガイドと、立体の上で置いた柄）。
 /// 柄は、このソフトの中に動かせる形で残っているので、絵として二重に読み込まない。
-fn is_generated(name: &str) -> bool {
+pub(crate) fn is_generated(name: &str) -> bool {
     every(GUIDE_LAYER_PREFIX).into_iter().chain(every(DECAL_LAYER_PREFIX)).any(|prefix| name.starts_with(prefix))
 }
 
@@ -958,7 +990,7 @@ mod tests {
         let loaded = load_psd(&bytes).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.source_size, [sheet.w, sheet.h]);
-        assert_eq!(loaded.layer_names, vec!["Artwork".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
+        assert_eq!(loaded.layer_names, vec!["Guides (paper colour, for viewing)".to_owned(), "Artwork".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
         assert_eq!(fitted.len(), sheet.w * sheet.h * 4);
         // 貼る画像は、絵柄とガイドを重ねたものと同じ大きさになる。
         assert_eq!(compose(&sheet, Some(&fitted), true, |_| {}).len(), sheet.art.len());
@@ -1004,11 +1036,11 @@ mod tests {
         }
         let loaded = load_psd(&bytes).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
-        assert_eq!(loaded.layer_names, vec!["Artwork".to_owned(), "3D artwork 1（帯）".to_owned(), "3D artwork 2（ロゴ）".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
+        assert_eq!(loaded.layer_names, vec!["Guides (paper colour, for viewing)".to_owned(), "Artwork".to_owned(), "3D artwork 1（帯）".to_owned(), "3D artwork 2（ロゴ）".to_owned(), "Guides (cut lines, fold lines, glue flaps)".to_owned()]);
         assert_eq!(loaded.guides, GuideHandling::Removed);
-        // 柄のあった画素でも、読み込んだ絵は元の絵柄のまま（柄が絵として焼き込まれていない）。
+        // 柄のあった画素でも、読み込んだ絵には何も入らない（柄も、確認用の紙の色も、焼き込まれていない）。
         for &i in painted.iter().step_by(97) {
-            assert_eq!(&fitted[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
+            assert_eq!(fitted[i * 4 + 3], 0);
         }
     }
 
@@ -1070,7 +1102,7 @@ mod tests {
         let bytes = save_back_psd(&sheet, None, &[DecalLayer::shown("1（ロゴ）", mark)], None).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
-        assert_eq!(names, ["Back of sheet", "3D artwork 1（ロゴ）", "Guides (cut lines, fold lines)"]);
+        assert_eq!(names, ["Guides (paper colour, for viewing)", "Back of sheet", "3D artwork 1（ロゴ）", "Guides (cut lines, fold lines)"]);
         // 印は、左右が入れ替わった場所にある。
         let image = file.composite_rgba8().unwrap();
         let at = |x: usize| &image.data[(y * sheet.w + x) * 4..(y * sheet.w + x) * 4 + 4];
@@ -1089,11 +1121,11 @@ mod tests {
         let loaded = load_psd(&save_psd(&sheet, None, &[], None).unwrap()).unwrap();
         let fitted = fit(&loaded.source, loaded.source_size, sheet.w, sheet.h);
         assert_eq!(loaded.guides, GuideHandling::Removed);
-        // ガイドの線があった画素でも、読み込んだ絵は元の絵柄と同じになる（線が焼き込まれていない）。
+        // ガイドの線と、確認用の紙の色は、読み込んだ絵に入らない（何も刷っていない型紙は、どこも透明）。
         let mut on_guides = 0;
         for i in 0..sheet.w * sheet.h {
             if sheet.guides[i * 4 + 3] == 255 && sheet.art[i * 4 + 3] == 255 {
-                assert_eq!(&fitted[i * 4..i * 4 + 4], &sheet.art[i * 4..i * 4 + 4]);
+                assert_eq!(fitted[i * 4 + 3], 0);
                 on_guides += 1;
             }
         }
