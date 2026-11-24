@@ -348,7 +348,9 @@ impl App {
                     // トレースし直している間は、右上に小さく出す。
                     let at = rect.right_top() + egui::vec2(-22.0, 22.0);
                     painter.circle_filled(at, 13.0, egui::Color32::from_black_alpha(140));
-                    ui.put(egui::Rect::from_center_size(at, egui::vec2(16.0, 16.0)), egui::Spinner::new().size(14.0).color(egui::Color32::WHITE));
+                    // ui.put で置くと、後に続く部品の位置がプレビューの上へずれるので、描くだけにする。
+                    egui::Spinner::new().size(14.0).color(egui::Color32::WHITE).paint_at(ui, egui::Rect::from_center_size(at, egui::vec2(16.0, 16.0)));
+                    ui.ctx().request_repaint();
                 }
                 painter.text(rect.left_bottom() + egui::vec2(6.0, -6.0), egui::Align2::LEFT_BOTTOM, format!("{:.0}%", session.zoom * 100.0), egui::FontId::proportional(11.0), egui::Color32::from_gray(90));
                 response.on_hover_text(t!("Scroll to zoom, drag to move, double-click to fit"));

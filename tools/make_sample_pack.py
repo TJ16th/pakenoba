@@ -2,12 +2,14 @@
 """パケノバの見本パック（ZIP）を作る。
 
 見本パックは、アプリ本体とは別に配る素材の詰め合わせ（GitHub のリリースに置き、アプリの素材の画面から取ってくる）。
-中身は、架空のメーカーやブランドのロゴ（PNG）、箱の全面に使える四方連続の模様（SVG）、旧パケノバの見本（SVG）。
+中身は、架空のメーカーやブランドのロゴ（PNG）、箱の全面に使える四方連続の模様（SVG）、旧パケノバの見本（SVG）、
+箱を一周させる帯の絵（龍や麒麟。背景が透明な横長の PNG）、背景の絵（水彩の流れ、モザイク。JPEG）。
 どれも画像生成 AI と、周期関数から作ったもので、実在の作品やブランドを元にしていない。
 
 使い方:
     python3 tools/make_sample_pack.py --logos <ロゴの images フォルダ> --patterns <package_patterns_set06_wave_fields>
-        --classic <旧パケノバの docs/reports/assets/RPT-0192> --out dist/pakenoba-samples-1.zip
+        --classic <旧パケノバの docs/reports/assets/RPT-0192> --bands <帯の PNG のフォルダ> --backgrounds <背景の絵のフォルダ>
+        --out dist/pakenoba-samples-1.zip
 
 必要なもの: Python 3.9 以上、Pillow。
 """
@@ -27,6 +29,10 @@ PACK_VERSION = 1
 LOGO_PX = 800
 # 模様の SVG の、1 周期（スーパータイル）の実寸。
 PATTERN_MM = 120
+# 帯の絵の長さ（箱を一周させる長さの目安）。
+BAND_MM = 240
+# 背景の絵の、長いほうの実寸。
+BACKGROUND_MM = 180
 KINDS = {"maker": "Maker", "brand": "Brand", "series": "Series", "grade": "Grade", "product": "Product"}
 
 
@@ -87,11 +93,51 @@ def classic_entries(folder: Path):
         }, path.read_bytes()
 
 
+def band_entries(folder: Path):
+    """横長で背景が透明な帯の絵（龍、麒麟など）。PNG のまま入れる。"""
+    for number, path in enumerate(sorted(folder.glob("*.png")), 1):
+        with Image.open(path) as im:
+            im = im.convert("RGBA")
+            box = im.getbbox()
+            if box:
+                im = im.crop(box)
+            out = BytesIO()
+            im.save(out, "PNG", optimize=True)
+        name = path.stem.replace("_", " ").replace("-", " ")
+        yield {
+            "file": f"bands/{path.name}",
+            "name": f"{name}",
+            "kind": "band",
+            "size_mm": [BAND_MM, round(BAND_MM * im.height / im.width, 1)],
+            "tags": ["band", "dragon" if "dragon" in path.stem.lower() else "illustration"],
+        }, out.getvalue()
+
+
+def background_entries(folder: Path):
+    """箱の面いっぱいに敷く背景の絵。不透明なので、JPEG（品質 92）にして小さくする。"""
+    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    for number, path in enumerate(files, 1):
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            out = BytesIO()
+            im.save(out, "JPEG", quality=92, optimize=True)
+        stem = f"background-{number:02d}"
+        yield {
+            "file": f"backgrounds/{stem}.jpg",
+            "name": f"Background {number}",
+            "kind": "background",
+            "size_mm": [BACKGROUND_MM, round(BACKGROUND_MM * im.height / im.width, 1)] if im.width >= im.height else [round(BACKGROUND_MM * im.width / im.height, 1), BACKGROUND_MM],
+            "tags": ["background", "mosaic" if im.width == im.height else "watercolor"],
+        }, out.getvalue()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--logos", type=Path, required=True)
     ap.add_argument("--patterns", type=Path, required=True)
     ap.add_argument("--classic", type=Path)
+    ap.add_argument("--bands", type=Path)
+    ap.add_argument("--backgrounds", type=Path)
     ap.add_argument("--license", default="CC0-1.0")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
@@ -102,6 +148,10 @@ def main():
         sources = [logo_entries(args.logos), pattern_entries(args.patterns)]
         if args.classic:
             sources.append(classic_entries(args.classic))
+        if args.bands:
+            sources.append(band_entries(args.bands))
+        if args.backgrounds:
+            sources.append(background_entries(args.backgrounds))
         for source in sources:
             for entry, data in source:
                 z.writestr(entry["file"], data)
@@ -115,7 +165,7 @@ def main():
             "items": items,
         }
         z.writestr("pakenoba-samples.json", json.dumps(manifest, ensure_ascii=False, indent=1))
-        z.writestr("README.txt", "PAKENOBA sample pack\n\nFictional logos (PNG), seamless wave-field patterns (SVG) and classic samples (SVG).\n"
+        z.writestr("README.txt", "PAKENOBA sample pack\n\nFictional logos (PNG), seamless wave-field patterns (SVG), classic samples (SVG),\nband illustrations such as dragons (PNG) and backgrounds (JPEG).\n"
                    f"License: {args.license}\nSee pakenoba-samples.json for the list.\n")
     print(f"{args.out}: {len(items)} items, {args.out.stat().st_size / 1e6:.1f} MB")
 
