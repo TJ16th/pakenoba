@@ -101,6 +101,27 @@ pub(crate) struct ShapePreset {
     pub paper: String,
     #[serde(default)]
     pub coat: String,
+    /// 読み込んだ型（DXF）なら、そのファイルと読み方。ファイルは設定のフォルダの `dielines/` に写しを置く。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dieline: Option<DielinePreset>,
+}
+
+/// 自分の型に残した、型の線のファイルと読み方。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DielinePreset {
+    /// 元のファイルの名前。
+    pub name: String,
+    /// 設定のフォルダの中での名前（`dielines/<印>.dxf`）。
+    pub file: String,
+    pub unit_mm: f32,
+    #[serde(default)]
+    pub mirror: bool,
+    /// レイヤーの名前と、線の種類（`cut` など）。
+    #[serde(default)]
+    pub lines: std::collections::BTreeMap<String, String>,
+    /// 角度を決めた折り線（動くパネルの番号を文字にしたもの → 度）。
+    #[serde(default)]
+    pub folds: std::collections::BTreeMap<String, f32>,
 }
 
 /// 箱開け動画の動きのプリセット。デザインを変えても、同じ見せ方で書き出すため。
@@ -196,6 +217,11 @@ impl Settings {
     }
 
     /// いまの設定を書く。書けなかったら、そのわけを返す。
+    /// 設定のファイルのあるフォルダ（書けるときだけ）。
+    pub fn folder(&self) -> Option<PathBuf> {
+        self.file.as_ref().filter(|_| self.writable).and_then(|f| f.parent().map(Path::to_path_buf))
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
         let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone(), record_log: self.record_log, agent_folders: self.agent_folders.clone(), lighting: self.lighting.clone(), motion: self.motions.clone(), shape: self.shapes.clone() }).map_err(|e| e.to_string())?;

@@ -12,7 +12,9 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::math::{Affine, V3, add, cross, dot, normalize, rotate, scale, sub};
 
+mod imported;
 mod library;
+pub use imported::{FoldInfo, ImportReport, ImportSettings};
 pub use library::TuckFlaps;
 
 pub type P2 = [f32; 2];
@@ -233,6 +235,16 @@ pub struct Template {
     pub openings: Vec<Opening>,
     /// 貼り合わせる面の組（パネルの番号）。のりしろと貼る相手、貼りしろどうし、など。
     pub glued: Vec<(usize, usize)>,
+    /// 読み込んだ型の線のファイルの線（切り線と、折り線・ミシン目）。型紙として書き出すときは、
+    /// パネルの輪郭から作らずに、これをそのまま使う（メーカーの抜き型とずれないように）。
+    pub drawn: Option<DrawnLines>,
+}
+
+/// 型の線のファイルにあった線（紙の座標、mm）。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DrawnLines {
+    pub cuts: Vec<(P2, P2)>,
+    pub folds: Vec<(P2, P2)>,
 }
 
 /// 多角形の内側か。点から右へ伸ばした線が辺を横切る回数で判定する（へこんだ輪郭でも使える）。
@@ -642,11 +654,11 @@ impl Template {
                 }
             };
             for piece in &pieces {
-                for i in 1..piece.len() - 1 {
-                    for &q in &[piece[0], piece[i], piece[i + 1]] {
+                for tri in triangles(piece) {
+                    for &q in &tri {
                         emit(&place.at(q), [q[0], q[1], 0.0], [0.0, 0.0, -1.0], self.uv(q), 0.0);
                     }
-                    for &q in &[piece[0], piece[i], piece[i + 1]] {
+                    for &q in &tri {
                         emit(&place.at(q), [q[0], q[1], t], [0.0, 0.0, 1.0], self.uv(q), 1.0);
                     }
                 }
@@ -698,6 +710,55 @@ impl Template {
     }
 }
 
+/// 多角形を三角形に分ける。凸なら扇形に、へこみがあれば耳を切り取っていく（読み込んだ型の、切り欠きのあるパネル）。
+pub fn triangles(points: &[P2]) -> Vec<[P2; 3]> {
+    let n = points.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let ccw = signed_area(points) >= 0.0;
+    let turn = |a: P2, b: P2, c: P2| {
+        let z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+        if ccw { z } else { -z }
+    };
+    if (0..n).all(|i| turn(points[i], points[(i + 1) % n], points[(i + 2) % n]) >= -1e-6) {
+        return (1..n - 1).map(|i| [points[0], points[i], points[i + 1]]).collect();
+    }
+    let mut ring: Vec<P2> = points.to_vec();
+    let mut out = Vec::with_capacity(n - 2);
+    let mut guard = 0;
+    while ring.len() > 3 && guard < n * n {
+        guard += 1;
+        let m = ring.len();
+        let mut cut = None;
+        for i in 0..m {
+            let (a, b, c) = (ring[(i + m - 1) % m], ring[i], ring[(i + 1) % m]);
+            if turn(a, b, c) <= 1e-9 {
+                continue;
+            }
+            let blocked = ring.iter().enumerate().any(|(k, &p)| {
+                if k == i || k == (i + m - 1) % m || k == (i + 1) % m || p == a || p == b || p == c {
+                    return false;
+                }
+                turn(a, b, p) >= 0.0 && turn(b, c, p) >= 0.0 && turn(c, a, p) >= 0.0
+            });
+            if !blocked {
+                cut = Some(i);
+                break;
+            }
+        }
+        // 耳が見つからない（輪郭が自分と交わるなど）ときは、残りを扇形にする。
+        let Some(i) = cut else { break };
+        let m = ring.len();
+        out.push([ring[(i + m - 1) % m], ring[i], ring[(i + 1) % m]]);
+        ring.remove(i);
+    }
+    for i in 1..ring.len().saturating_sub(1) {
+        out.push([ring[0], ring[i], ring[i + 1]]);
+    }
+    out
+}
+
 /// 頂点全体を包む球（中心と半径）。カメラを合わせるのに使う。
 pub fn bounding_sphere(vertices: &[Vertex]) -> (V3, f32) {
     let mut min = [f32::INFINITY; 3];
@@ -711,6 +772,22 @@ pub fn bounding_sphere(vertices: &[Vertex]) -> (V3, f32) {
     let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5];
     let half = sub(max, center);
     (center, dot(half, half).sqrt().max(1.0))
+}
+
+#[cfg(test)]
+mod triangle_tests {
+    use super::*;
+
+    #[test]
+    fn concave_outlines_are_covered_exactly() {
+        // L 字（へこみが 1 つ）と、凸の四角。
+        for shape in [vec![[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [4.0, 4.0], [4.0, 10.0], [0.0, 10.0]], vec![[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]] {
+            let tris = triangles(&shape);
+            assert_eq!(tris.len(), shape.len() - 2);
+            let area: f32 = tris.iter().map(|t| signed_area(t).abs()).sum();
+            assert!((area - signed_area(&shape).abs()).abs() < 1e-3, "{area}");
+        }
+    }
 }
 
 #[cfg(test)]

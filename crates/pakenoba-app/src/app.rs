@@ -24,6 +24,7 @@ pub(crate) mod settings;
 mod typing;
 mod shapes;
 mod my_shapes;
+mod dieline;
 pub(crate) mod adjust;
 mod vectorize;
 mod model3d;
@@ -200,6 +201,8 @@ struct Dims {
     roof: f32,
     /// 差し込み箱のフラップの長さ（決めていないものは寸法から自動）。
     flaps: TuckFlaps,
+    /// 読み込んだ型（`IMPORTED`）の、`dieline::register` の番号。ほかの型では 0。
+    dieline: u64,
 }
 
 impl Dims {
@@ -212,7 +215,7 @@ impl Dims {
             n if n >= 3 => (70.0, 60.0, 160.0),
             _ => (200.0, 160.0, 85.0),
         };
-        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default() }
+        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default(), dieline: 0 }
     }
 
     /// 案件のファイルに書く形の、型と寸法。
@@ -221,6 +224,7 @@ impl Dims {
             2 => project::Kind::Gable,
             PILLOW => project::Kind::Pillow,
             PLAIN_PILLOW => project::Kind::PlainPillow,
+            IMPORTED => project::Kind::Imported(self.dieline),
             n if n >= 3 => project::Kind::Prism(n),
             _ => project::Kind::TuckBox,
         };
@@ -228,14 +232,20 @@ impl Dims {
     }
 
     fn from_shape(shape: &project::Shape) -> Dims {
-        let sides = match shape.kind {
-            project::Kind::TuckBox => 0,
-            project::Kind::Gable => 2,
-            project::Kind::Pillow => PILLOW,
-            project::Kind::PlainPillow => PLAIN_PILLOW,
-            project::Kind::Prism(n) => n,
+        let (sides, dieline) = match shape.kind {
+            project::Kind::TuckBox => (0, 0),
+            project::Kind::Gable => (2, 0),
+            project::Kind::Pillow => (PILLOW, 0),
+            project::Kind::PlainPillow => (PLAIN_PILLOW, 0),
+            project::Kind::Prism(n) => (n, 0),
+            project::Kind::Imported(key) => (IMPORTED, key),
         };
-        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps }
+        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps, dieline }
+    }
+
+    /// 同じパネルの並びか（型が同じで、読み込んだ型なら同じファイルと読み方。寸法や折る角度は違ってよい）。
+    fn same_layout(&self, other: &Dims) -> bool {
+        self.sides == other.sides && (self.sides != IMPORTED || pakenoba_core::dieline::same_layout(self.dieline, other.dieline))
     }
 
     /// 型紙。案件のファイルを開いたときと同じ作り方にする（パネルの並びがずれないように）。
@@ -249,7 +259,9 @@ impl Dims {
         let template = self.template();
         let thin = Dims { t: 0.02, ..*self }.template();
         let surface = Surface::new(&template, &thin);
-        let problems = check(&template, &thin).iter().map(|p| (p.is_blocking(), p.describe(&template))).collect();
+        // 読み込んだ型は、開け口が決まらなくても（テープで閉じる箱、ふたのないトレーなど）、問題ではなく注意にする。
+        let imported = template.drawn.is_some();
+        let problems = check(&template, &thin).iter().map(|p| (p.is_blocking() && !(imported && matches!(p, pakenoba_core::check::Problem::NoOpening)), p.describe(&template))).collect();
         (Rc::new(template), surface, problems)
     }
 
@@ -260,6 +272,7 @@ impl Dims {
             0 => 2.0 * (self.w + self.d),
             2 => 2.0 * (self.w + self.d.min(self.w)),
             PILLOW | PLAIN_PILLOW => self.w,
+            IMPORTED => tpl.max[0] - tpl.min[0],
             n => n as f32 * self.w,
         };
         (front, around)
@@ -338,6 +351,9 @@ fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
 }
 
 /// 選べる型。検査を通ったものだけを並べる。
+/// 読み込んだ型の線のファイル（DXF）の型の番号。
+const IMPORTED: usize = 300;
+
 const SHAPES: [(usize, &str); 8] = [(0, "Tuck-end box"), (2, "Gable box"), (PILLOW, "Pillow box with handle"), (PLAIN_PILLOW, "Pillow box"), (3, "Triangular prism"), (5, "Pentagonal prism"), (6, "Hexagonal prism"), (8, "Octagonal prism")];
 
 /// ワークスペース。左から順に進めば完成する。
@@ -505,6 +521,10 @@ struct App {
     pending_shape: Option<usize>,
     /// 自分の型を選んで、型が変わるのを確かめているあいだの、寸法と紙。
     pending_dims: Option<(Dims, pakenoba_core::material::Material)>,
+    /// 型の線のファイル（DXF）を読み込む欄。
+    dieline_import: Option<dieline::DielineImport>,
+    /// 読み込んだ型で、角度を直すために選んだ折り線（動くパネルの番号）。
+    fold_pick: Option<usize>,
     /// 自分の型として残すときの名前の欄。
     shape_preset_name: String,
     /// 次に型紙を作り直すとき、柄を外さない（元に戻すで型を戻すとき）。
@@ -729,6 +749,8 @@ impl App {
             editing: false,
             pending_shape: None,
             pending_dims: None,
+            dieline_import: None,
+            fold_pick: None,
             shape_preset_name: String::new(),
             keep_decals: false,
             preview: None,
@@ -854,7 +876,12 @@ impl App {
         // 起動したときの状態は、保存してある状態として扱う（何もしていないのに「未保存」と出さない）。
         app.mark_saved();
         for (n, path) in initial.project.iter().enumerate() {
-            if n == 0 {
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dxf")) {
+                // 型の線のファイルは、読み込みの欄を開く。
+                app.home = false;
+                app.workspace = Workspace::Shape;
+                app.open_dieline(path);
+            } else if n == 0 {
                 app.open_path(path);
             } else {
                 app.request_open(Some(path.clone()));
@@ -868,7 +895,7 @@ impl App {
         if self.built_dims == Some(self.dims) {
             return;
         }
-        let shape_changed = self.built_dims.map(|d| d.sides) != Some(self.dims.sides);
+        let shape_changed = !self.built_dims.is_some_and(|d| d.same_layout(&self.dims));
         (self.template, self.surface, self.problems) = self.dims.build();
         self.sheet = make_sheet_art(&self.template);
         self.built_dims = Some(self.dims);
@@ -914,7 +941,7 @@ impl App {
     }
 
     fn restore(&mut self, state: Snapshot) {
-        if state.dims.sides != self.dims.sides {
+        if !state.dims.same_layout(&self.dims) {
             // 型を変える前へ戻す。型紙を作り直してから、柄を戻す。
             self.dims = state.dims;
             self.keep_decals = true;
@@ -1230,6 +1257,11 @@ impl App {
         let d = self.dims;
         let name = SHAPES.iter().find(|(sides, _)| *sides == d.sides).map_or(t!("Structure"), |(_, name)| pakenoba_i18n::tr(name));
         match d.sides {
+            IMPORTED => {
+                let file = pakenoba_core::dieline::source(d.dieline).map(|s| s.name.clone()).unwrap_or_default();
+                let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
+                format!("{file}　{:.0} × {:.0} mm", size[0], size[1])
+            }
             PILLOW | PLAIN_PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
             n if n >= 3 => t!("{name}  side {:.0} × height {:.0} mm", d.w, d.h),
             _ => format!("{name}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h),
@@ -1512,6 +1544,9 @@ impl eframe::App for App {
             let dieline = ext.as_deref() == Some("psd") && std::fs::read(path).is_ok_and(|bytes| crate::art::psd_is_dieline(&bytes));
             if ext.as_deref() == Some(project::EXTENSION) {
                 self.request_open(Some(path.clone()));
+            } else if ext.as_deref() == Some("dxf") {
+                // 型の線のファイルは、型として読み込む。
+                self.open_dieline(path);
             } else if dieline || !is_image(path) {
                 self.open_psd(path);
             } else if self.library.open {
@@ -1541,6 +1576,7 @@ impl eframe::App for App {
         self.switch_camera();
         self.status_bar(ui);
         self.confirm_shape(ui.ctx());
+        self.dieline_window(ui.ctx());
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());

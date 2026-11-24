@@ -43,6 +43,8 @@ pub(super) enum FileAction {
     SaveAs,
     /// 展開図の絵（PSD）を読み込む。
     ImportDieline,
+    /// 型の線のファイル（DXF）を読んで、型にする。
+    ImportDxf,
     /// 操作の記録を外して、名前を付けて保存する（人に渡すとき）。
     SaveWithoutLog,
     /// 名前を付けて版を残す。
@@ -689,6 +691,7 @@ impl App {
             pick(ui, true, t!("Keep a version…"), "", FileAction::KeepVersion);
             ui.separator();
             pick(ui, !saving, t!("Import dieline artwork (PSD)…"), "", FileAction::ImportDieline);
+            pick(ui, !saving, t!("Import a box type from a dieline file (DXF)…"), "", FileAction::ImportDxf);
             self.export_items(ui);
             ui.separator();
             // 終了。保存していない変更があれば、閉じるときと同じく確かめる。
@@ -731,6 +734,7 @@ impl App {
                     self.open_psd(&path);
                 }
             }
+            FileAction::ImportDxf => self.choose_dieline(),
             FileAction::Save => {
                 if self.is_saving() {
                     // すでに保存しているところ。

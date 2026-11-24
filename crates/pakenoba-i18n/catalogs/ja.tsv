@@ -1336,3 +1336,53 @@ blend	Color	カラー
 	Saves this box type, size and paper under the name. It can be used in any project.	いまの型と寸法と紙を、この名前で残します。どの案件でも使えます。
 	This box type is not available in this version.	この型は、この版では使えません。
 	Your box types	自分の型
+	A positive angle folds toward the inside (valley), a negative one toward the outside (mountain).	プラスの角度は内側へ折る谷折り、マイナスは外側へ折る山折りです。
+	All folds	すべての折り線
+	Binary DXF files are not supported. Save it as an ASCII (text) DXF.	バイナリ形式の DXF は読めません。ASCII（テキスト）形式の DXF で保存し直してください。
+	Change how the file is read…	読み方を変える…
+	Choose what each layer of the file is.	ファイルのレイヤーごとに、どの線かを選びます。
+	Click a panel of the box to choose its fold.	箱の面をクリックすると、その面の折り線を選べます。
+	Drawn from the inside (flip left and right)	内側から見た図（左右を裏返す）
+	Flat size: {:.0} × {:.0} mm, {} panels	展開図: {:.0} × {:.0} mm、パネル {} 枚
+	Fold of panel {}	パネル {} の折り線
+	Guessed angle	当てた角度
+	Import a dieline (DXF)	型の線のファイル（DXF）を読む
+	Import a dieline: {}	型の線のファイルを読む: {}
+	Lines	線
+	Make it a mountain fold	山折りにする
+	Make it a valley fold	谷折りにする
+	No glue flap was found. Fold angles start at 90°; you can change them afterwards.	のりしろが見つかりませんでした。折る角度は 90 度で始めます。あとから直せます。
+	No lines were found in this DXF file.	この DXF には線がありませんでした。
+	Panel {} → {}   {:.0}°	パネル {} → {}　{:.0}°
+	Put all angles back to the guess	すべての角度を、当てた角度に戻す
+	The cut and crease lines are written out exactly as in the file.	切り線と折り線は、ファイルの線のまま書き出します。
+	The dieline file is not available.	型の線のファイルがありません。
+	The file does not say its units, so they were guessed from its size.	ファイルに単位が書いていないので、大きさから当てています。
+	The thickness only changes how the box folds on screen. The dieline lines stay as in the file.	厚みは、画面の上での折れ方だけに効きます。型紙の線は、ファイルのままです。
+	This does not look like a DXF file.	DXF のファイルではないようです。
+	Turn this on if the file shows the unprinted side of the sheet.	ファイルが、印刷しない側（内側）から見た図のときに入れます。
+	Units	単位
+	Use this dieline	この型にする
+	Which layers are cut and crease lines, the units, and flipping	どのレイヤーが切り線と折り線か、単位、裏返し
+	inch	インチ
+	{:.0}°	{:.0}°
+	{} curved fold(s) cannot be folded yet; those panels stay flat or are left out.	曲線の折り線が {} 本あり、まだ折れません。その先のパネルは平らなままか、外れます。
+	{} line(s)	{} 本
+	{} panels, {} folds. Flat size {:.0} × {:.0} mm.	パネル {} 枚、折り線 {} 本。展開図 {:.0} × {:.0} mm。
+	{} piece(s) not joined by a fold were left out (waste, holes).	折り線でつながっていない {} か所を外しました（抜きかす、穴）。
+	Import a box type from a dieline file (DXF)…	型の線のファイル（DXF）から型を読む…
+	No cut lines were found. Choose which lines are cut lines.	切り線が見つかりません。どの線が切り線かを選んでください。
+	The cut lines do not close into a shape. Check that the outline has no gaps.	切り線が閉じた形になっていません。外形にすき間がないか確かめてください。
+	Dieline file	型の線のファイル
+	Folds	折り線
+	Import DXF…	DXF を読む…
+	Imported from a dieline file	型の線のファイルから読んだ型
+	Make a box type from a dieline file (DXF) with cut and crease lines. You can also drop the file onto the window.	切り線と折り線の入った型の線のファイル（DXF）から、型を作ります。ファイルをウィンドウに落としても読めます。
+	The dieline file of this project is missing	この案件の型の線のファイルがありません
+	Cut	切り線
+	Crease	折り線
+	Perforation	ミシン目
+	Not used	使わない
+	Could not keep the dieline file: {e}	型の線のファイルを残せませんでした: {e}
+	Could not read the dieline file of this box type: {e}	この型の、型の線のファイルを読めませんでした: {e}
+	This box type cannot be kept because the settings cannot be saved.	設定を保存できないので、この型を残せません。

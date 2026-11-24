@@ -524,6 +524,9 @@ impl App {
             self.add_text_at(panel, at, back);
         } else if shape_click && let Some((panel, at, back)) = hit {
             self.add_shape_at(panel, at, back);
+        } else if response.clicked() && self.workspace == Workspace::Shape && self.dims.sides == super::IMPORTED {
+            // 型の画面で、読み込んだ型なら、押した面の折り線を選ぶ。
+            self.pick_fold(hit.map(|(panel, _, _)| panel));
         } else if response.clicked() && self.tool != Tool::Hand && !brushing {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
@@ -595,6 +598,21 @@ impl App {
         if let Some(index) = self.hover_shown(decal_under.map(|(i, _)| i), None) {
             let to_screen = |panel: usize, p: [f32; 2]| project(&mvp, rect, world.then_after(&placements[panel].at(p)).point([p[0], p[1], 0.0]));
             self.paint_outline(&painter, index, to_screen);
+        }
+        // 選んだ折り線と、それで動くパネル（読み込んだ型の、型の画面）。
+        if self.workspace == Workspace::Shape
+            && let Some(panel) = self.fold_pick.and_then(|p| template.panels.get(p))
+            && let Some(hinge) = &panel.hinge
+        {
+            let index = self.fold_pick.unwrap_or(0);
+            let to_screen = |i: usize, p: [f32; 2]| project(&mvp, rect, world.then_after(&placements[i].at(p)).point([p[0], p[1], 0.0]));
+            let outline: Vec<Pos2> = panel.outline.iter().filter_map(|&p| to_screen(index, p)).collect();
+            if outline.len() == panel.outline.len() {
+                painter.add(egui::Shape::closed_line(outline, egui::Stroke::new(1.5, super::views::HOVER_COLOR)));
+            }
+            if let (Some(a), Some(b)) = (to_screen(hinge.parent, hinge.a), to_screen(hinge.parent, hinge.b)) {
+                painter.line_segment([a, b], egui::Stroke::new(3.0, Color32::from_rgb(255, 170, 40)));
+            }
         }
         // 吸い付いた先の補助線。丸めた面にも沿うよう、細かく分けて描く。
         for &(panel, a, b) in &self.snap_shown {

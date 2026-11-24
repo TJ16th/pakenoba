@@ -19,7 +19,7 @@
 //! その柄や素材だけを外して開き、何を外したかを `Opened::problems` で返す。
 
 use pakenoba_i18n::t;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
@@ -70,6 +70,8 @@ pub enum Kind {
     PlainPillow,
     /// 正多角柱。値は角の数。
     Prism(usize),
+    /// 読み込んだ型の線のファイル（DXF）。値は `dieline::register` の番号。寸法は紙の厚みだけを使う。
+    Imported(u64),
 }
 
 /// 型と寸法。
@@ -101,6 +103,11 @@ impl Shape {
             Kind::Pillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), true, true),
             Kind::PlainPillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), false, false),
             Kind::Prism(n) => Template::prism(n, self.w, self.h, self.t),
+            Kind::Imported(key) => crate::dieline::source(key)
+                .and_then(|src| Template::imported(&src.drawing, &src.settings, self.t).ok())
+                .map(|(tpl, _)| tpl)
+                // 読めない（覚えていない）ときは、差し込み箱にしておく（画面が空にならないように）。
+                .unwrap_or_else(|| Template::tuck_box(self.w, self.d, self.h, self.t)),
         }
     }
 
@@ -907,6 +914,9 @@ struct Manifest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     written_by: String,
     shape: ShapeEntry,
+    /// 読み込んだ型の線のファイル（型が `imported` のとき）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dieline: Option<DielineEntry>,
     /// 紙とコート。書いていなければ、はじめの素材（コートボール、コートなし）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     material: Option<MaterialEntry>,
@@ -952,6 +962,45 @@ struct FinishEntry {
     /// つや消しの部分 UV ニス。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     matte: bool,
+}
+
+/// 読み込んだ型の線のファイル。中身は素材と同じ形の名前（`assets/<印>.dxf`）で入れる。
+#[derive(Serialize, Deserialize)]
+struct DielineEntry {
+    /// 元のファイルの名前。
+    name: String,
+    /// 案件のファイルの中での名前。
+    file: String,
+    /// 1 単位あたりの mm。
+    unit_mm: f64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    mirror: bool,
+    /// 線のまとまり（レイヤー）の名前と、種類（`cut`、`crease`、`perforation`、`ignore`）。
+    #[serde(default)]
+    lines: BTreeMap<String, String>,
+    /// 角度を決めた折り線（動くパネルの番号と、度）。
+    #[serde(rename = "fold", default, skip_serializing_if = "Vec::is_empty")]
+    folds: Vec<FoldEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FoldEntry {
+    panel: usize,
+    angle: f64,
+}
+
+impl DielineEntry {
+    fn of(src: &crate::dieline::Source) -> DielineEntry {
+        let id: String = Sha256::digest(src.bytes.as_slice()).iter().map(|b| format!("{b:02x}")).collect();
+        DielineEntry {
+            name: src.name.clone(),
+            file: format!("assets/{id}.dxf"),
+            unit_mm: tidy(src.settings.unit_mm),
+            mirror: src.settings.mirror,
+            lines: src.drawing.groups.iter().zip(&src.settings.kinds).map(|(g, k)| (g.name.clone(), k.key().to_owned())).collect(),
+            folds: src.settings.folds.iter().map(|(&panel, &angle)| FoldEntry { panel, angle: tidy(angle) }).collect(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1504,8 +1553,14 @@ impl Project {
             Kind::Pillow => ("pillow", None),
             Kind::PlainPillow => ("plain_pillow", None),
             Kind::Prism(n) => ("prism", Some(n)),
+            Kind::Imported(_) => ("imported", None),
+        };
+        let dieline = match s.kind {
+            Kind::Imported(key) => crate::dieline::source(key).map(|src| DielineEntry::of(&src)),
+            _ => None,
         };
         Manifest {
+            dieline,
             format: FORMAT.to_owned(),
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
@@ -1619,6 +1674,17 @@ impl Project {
             zip.start_file(file.as_str(), options).map_err(zip_error)?;
             zip.write_all(&asset.bytes)?;
             written.push(file);
+        }
+        // 読み込んだ型の線のファイル。
+        if let Kind::Imported(key) = self.shape.kind
+            && let Some(src) = crate::dieline::source(key)
+        {
+            let file = DielineEntry::of(&src).file;
+            if !written.contains(&file) {
+                zip.start_file(file.as_str(), SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+                zip.write_all(&src.bytes)?;
+                written.push(file);
+            }
         }
         for mask in self.decals.iter().filter_map(|placed| placed.layer.mask.as_ref()) {
             let file = mask.file();
@@ -1768,6 +1834,26 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         ("plain_pillow", _) => Kind::PlainPillow,
         ("prism", Some(n)) if SIDES.contains(&n) => Kind::Prism(n),
         ("prism", _) => return Err(Error::Broken(t!("The number of sides of the prism is not valid").to_owned())),
+        ("imported", _) => {
+            let Some(d) = &manifest.dieline else { return Err(Error::Broken(t!("The dieline file of this project is missing").to_owned())) };
+            if !is_asset_file(&d.file) {
+                return Err(Error::Broken(t!("The contents are not valid").to_owned()));
+            }
+            let bytes = Arc::new(read_entry(zip, &d.file).map_err(Error::Broken)?);
+            let drawing = crate::dieline::read_dxf(&bytes).map_err(Error::Broken)?;
+            let mut settings = crate::template::ImportSettings::guess(&drawing);
+            if d.unit_mm.is_finite() && d.unit_mm > 0.0 {
+                settings.unit_mm = d.unit_mm as f32;
+            }
+            settings.mirror = d.mirror;
+            for (group, kind) in drawing.groups.iter().zip(settings.kinds.iter_mut()) {
+                if let Some(k) = d.lines.get(&group.name).and_then(|k| crate::dieline::LineKind::from_key(k)) {
+                    *kind = k;
+                }
+            }
+            settings.folds = d.folds.iter().filter(|f| f.angle.is_finite()).map(|f| (f.panel, (f.angle as f32).clamp(-180.0, 180.0))).collect();
+            Kind::Imported(crate::dieline::register(&d.name, bytes, Some(settings)).map_err(Error::Broken)?)
+        }
         (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
     };
     let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32, flaps: TuckFlaps::default() };
@@ -2119,7 +2205,7 @@ mod tests {
             Kind::Gable => (160.0, 100.0, 110.0),
             Kind::Pillow => (180.0, 60.0, 110.0),
             Kind::PlainPillow => (160.0, 60.0, 80.0),
-            Kind::Prism(_) => (70.0, 60.0, 160.0),
+            Kind::Prism(_) | Kind::Imported(_) => (70.0, 60.0, 160.0),
         };
         Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() } }
     }
@@ -2272,6 +2358,29 @@ mod tests {
     }
 
     const KINDS: [Kind; 7] = [Kind::TuckBox, Kind::Gable, Kind::Pillow, Kind::PlainPillow, Kind::Prism(3), Kind::Prism(6), Kind::Prism(8)];
+
+    #[test]
+    fn 読み込んだ型は_ファイルごと保存して開ける() {
+        let dxf = "0\nSECTION\n2\nENTITIES\n\
+                   0\nLWPOLYLINE\n8\nCUT\n70\n1\n10\n0\n20\n0\n10\n200\n20\n0\n10\n200\n20\n100\n10\n0\n20\n100\n\
+                   0\nLINE\n8\nCREASE\n10\n100\n20\n0\n11\n100\n21\n100\n0\nENDSEC\n0\nEOF\n";
+        let bytes = Arc::new(dxf.as_bytes().to_vec());
+        let drawing = crate::dieline::read_dxf(&bytes).unwrap();
+        let mut settings = crate::template::ImportSettings::guess(&drawing);
+        settings.folds.insert(1, 120.0);
+        settings.mirror = true;
+        let key = crate::dieline::register("box.dxf", bytes, Some(settings)).unwrap();
+        let mut project = sample(Kind::TuckBox);
+        project.decals.clear();
+        project.shape.kind = Kind::Imported(key);
+        assert_eq!(project.shape.template().panels.len(), 2);
+        let opened = reopen(&project);
+        assert!(opened.problems.is_empty(), "{:?}", opened.problems);
+        assert_eq!(opened.project.shape.kind, Kind::Imported(key));
+        let tpl = opened.project.shape.template();
+        assert!((tpl.panels[1].hinge.as_ref().unwrap().angle - 120f32.to_radians()).abs() < 1e-5);
+        assert_eq!(crate::dieline::source(key).unwrap().name, "box.dxf");
+    }
 
     #[test]
     fn 保存して開くと_同じ状態に戻る() {

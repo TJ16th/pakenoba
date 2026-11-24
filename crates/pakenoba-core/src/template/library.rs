@@ -141,7 +141,7 @@ impl Template {
         let marks = vec![([u_r, h * 0.55], r), ([u_b + w * 0.5, h + t], r * 0.8)];
         let openings = openings(&panels, &[("上のフタ", Some("上の差し込み"), Hold::Nothing), ("底のフタ", Some("底の差し込み"), Hold::Nothing)]);
         let glued = glued(&panels, &[("のりしろ", "背面")]);
-        Template { panels, thickness: t, min, max, world: upright_world([u_f + w * 0.5, h * 0.5], d, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued }
+        Template { panels, thickness: t, min, max, world: upright_world([u_f + w * 0.5, h * 0.5], d, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued, drawn: None }
     }
 
     /// 正多角柱（三角柱、五角柱など）。`side` は内側の一辺の長さ、`h` は内寸の高さ（mm）。
@@ -244,7 +244,7 @@ impl Template {
         let depth = side / (std::f32::consts::PI / n as f32).tan();
         let openings = openings(&panels, &[("上のフタ", Some("上の差し込み"), Hold::Nothing), ("底のフタ", Some("底の差し込み"), Hold::Nothing)]);
         let glued = glued(&panels, &[("のりしろ", "側面 1")]);
-        Template { panels, thickness: t, min, max, world: upright_world([u0 + side * 0.5, h * 0.5], depth, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued }
+        Template { panels, thickness: t, min, max, world: upright_world([u0 + side * 0.5, h * 0.5], depth, t), tilt: 0.0, tilt_window: (0.0, 0.5), marks, holes: Vec::new(), open_angle: 0.0, openings, glued, drawn: None }
     }
 
     /// 手提げ型。底は平らな長方形で、正面と背面が丸みを持って立ち上がり、上で合わさって持ち手になる。
@@ -316,7 +316,7 @@ impl Template {
         // 展開図では印刷面を手前に向け、組み上がるにつれて 90 度倒して、底を水平に寝かせる。
         // 倒しきると、x が幅、y が高さ（底の内側が 0）、z が奥行き（正面が手前）になる。
         let world = upright_world([c, d * 0.5], 0.0, t);
-        Template { panels, thickness: t, min, max, world, tilt: std::f32::consts::FRAC_PI_2, tilt_window: (0.0, 0.5), marks, holes: vec![hole(top, 1.0), hole(-l, -1.0)], open_angle: 0.0, openings: Vec::new(), glued: Vec::new() }
+        Template { panels, thickness: t, min, max, world, tilt: std::f32::consts::FRAC_PI_2, tilt_window: (0.0, 0.5), marks, holes: vec![hole(top, 1.0), hole(-l, -1.0)], open_angle: 0.0, openings: Vec::new(), glued: Vec::new(), drawn: None }
     }
 
     /// ゲーブル型（屋根の形に閉じる手提げ箱）。寸法は内寸（mm）で、`roof` は胴の上端から屋根のてっぺんまでの高さ。
@@ -463,6 +463,7 @@ impl Template {
             open_angle: closed,
             openings,
             glued,
+            drawn: None,
         }
     }
 
@@ -606,6 +607,7 @@ impl Template {
             open_angle: 0.0,
             openings,
             glued,
+            drawn: None,
         }
     }
 }

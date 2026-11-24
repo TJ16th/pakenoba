@@ -133,6 +133,10 @@ pub type Segment = (P2, P2);
 /// 親とつながる折り線（まっすぐなものと曲線）の上も、折り線。辺の一部だけが重なっていれば、その部分だけが折り線で、
 /// はみ出した所は切り線（厚みのぶん、隣より少し長いパネルの角など）。抜き穴の輪郭は切り線。
 pub fn sheet_lines(tpl: &Template) -> (Vec<Segment>, Vec<Segment>) {
+    // 読み込んだ型は、ファイルの線をそのまま使う（メーカーの抜き型とずれないように）。
+    if let Some(drawn) = &tpl.drawn {
+        return (drawn.cuts.clone(), drawn.folds.clone());
+    }
     let mut cuts: Vec<Segment> = cut_edges(tpl).into_iter().map(|(a, b, _)| (a, b)).collect();
     let creases = creases(tpl);
     let mut folds = creases.clone();

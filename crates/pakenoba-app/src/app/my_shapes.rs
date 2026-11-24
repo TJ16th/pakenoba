@@ -7,8 +7,9 @@ use pakenoba_core::template::TuckFlaps;
 use eframe::egui;
 use pakenoba_i18n::t;
 
-use super::settings::ShapePreset;
-use super::{App, Dims, SHAPES};
+use super::settings::{DielinePreset, ShapePreset};
+use super::{App, Dims, IMPORTED, SHAPES};
+use pakenoba_core::dieline;
 
 /// いまの型・寸法・紙を、自分の型の形にする。
 fn preset_of(name: &str, dims: &Dims, material: &Material) -> ShapePreset {
@@ -26,14 +27,49 @@ fn preset_of(name: &str, dims: &Dims, material: &Material) -> ShapePreset {
         tuck_flap: dims.flaps.tuck,
         paper: material.paper.key().to_owned(),
         coat: material.coat.key().to_owned(),
+        dieline: (dims.sides == IMPORTED).then(|| dieline_preset(dims.dieline)).flatten(),
     }
 }
 
-/// 自分の型から、寸法と紙を戻す。知らない型（新しい版で消えたもの）なら None。
-fn dims_of(preset: &ShapePreset) -> Option<(Dims, Material)> {
-    if !SHAPES.iter().any(|(s, _)| *s == preset.sides) {
-        return None;
+/// 読み込んだ型の、ファイルの名前と読み方。
+fn dieline_preset(key: u64) -> Option<DielinePreset> {
+    use sha2::{Digest, Sha256};
+    let src = dieline::source(key)?;
+    let id: String = Sha256::digest(src.bytes.as_slice()).iter().take(16).map(|b| format!("{b:02x}")).collect();
+    Some(DielinePreset {
+        name: src.name.clone(),
+        file: format!("dielines/{id}.dxf"),
+        unit_mm: src.settings.unit_mm,
+        mirror: src.settings.mirror,
+        lines: src.drawing.groups.iter().zip(&src.settings.kinds).map(|(g, k)| (g.name.clone(), k.key().to_owned())).collect(),
+        folds: src.settings.folds.iter().map(|(p, a)| (p.to_string(), *a)).collect(),
+    })
+}
+
+/// 残した型の線のファイルを読み、読み方をそろえて、番号を返す。
+fn load_dieline(preset: &DielinePreset, folder: &std::path::Path) -> Result<u64, String> {
+    let bytes = std::fs::read(folder.join(&preset.file)).map_err(|e| t!("Could not read the dieline file of this box type: {e}"))?;
+    let bytes = std::sync::Arc::new(bytes);
+    let drawing = dieline::read_dxf(&bytes)?;
+    let mut settings = pakenoba_core::template::ImportSettings::guess(&drawing);
+    settings.unit_mm = preset.unit_mm;
+    settings.mirror = preset.mirror;
+    for (group, kind) in drawing.groups.iter().zip(settings.kinds.iter_mut()) {
+        if let Some(k) = preset.lines.get(&group.name).and_then(|k| dieline::LineKind::from_key(k)) {
+            *kind = k;
+        }
     }
+    settings.folds = preset.folds.iter().filter_map(|(p, a)| Some((p.parse().ok()?, *a))).collect();
+    dieline::register(&preset.name, bytes, Some(settings))
+}
+
+/// 自分の型から、寸法と紙を戻す。知らない型（新しい版で消えたもの）や、読み込んだ型のファイルがなければ None。
+fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Dims, Material)> {
+    let dieline = match (&preset.dieline, folder) {
+        (Some(d), Some(folder)) if preset.sides == IMPORTED => load_dieline(d, folder).ok()?,
+        (None, _) if SHAPES.iter().any(|(s, _)| *s == preset.sides) => 0,
+        _ => return None,
+    };
     let dims = Dims {
         sides: preset.sides,
         w: preset.width,
@@ -43,6 +79,7 @@ fn dims_of(preset: &ShapePreset) -> Option<(Dims, Material)> {
         bulge: preset.bulge,
         roof: preset.roof,
         flaps: TuckFlaps { glue: preset.glue_flap, dust: preset.dust_flap, tuck: preset.tuck_flap },
+        dieline,
     };
     let material = Material { paper: Paper::from_key(&preset.paper).unwrap_or_default(), coat: Coat::from_key(&preset.coat).unwrap_or_default() };
     Some((dims, material))
@@ -50,6 +87,9 @@ fn dims_of(preset: &ShapePreset) -> Option<(Dims, Material)> {
 
 /// 型の名前と寸法の短い説明（一覧の小さな字）。
 fn summary(preset: &ShapePreset) -> String {
+    if let Some(d) = &preset.dieline {
+        return format!("{} (DXF)", d.name);
+    }
     let kind = SHAPES.iter().find(|(s, _)| *s == preset.sides).map_or("?", |(_, name)| pakenoba_i18n::tr(name));
     let size = match preset.sides {
         0 | 2 => format!("{:.0} × {:.0} × {:.0}", preset.width, preset.depth, preset.height),
@@ -111,6 +151,19 @@ impl App {
             return;
         }
         let preset = preset_of(name, &self.dims, &self.material);
+        // 読み込んだ型は、ファイルの写しを設定のフォルダに置く（元のファイルを動かしても使えるように）。
+        if let Some(d) = &preset.dieline {
+            let (Some(folder), Some(src)) = (self.settings.folder(), dieline::source(self.dims.dieline)) else {
+                return self.say(t!("This box type cannot be kept because the settings cannot be saved."));
+            };
+            let path = folder.join(&d.file);
+            if !path.exists() {
+                let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, src.bytes.as_slice()));
+                if let Err(e) = written {
+                    return self.say(t!("Could not keep the dieline file: {e}"));
+                }
+            }
+        }
         match self.settings.shapes.iter_mut().find(|s| s.name == name) {
             Some(old) => *old = preset,
             None => self.settings.shapes.push(preset),
@@ -123,11 +176,12 @@ impl App {
 
     /// 自分の型にする。型が変わって柄が外れるときは、先に確かめる。
     fn use_my_shape(&mut self, index: usize) {
-        let Some((dims, material)) = self.settings.shapes.get(index).and_then(dims_of) else {
+        let folder = self.settings.folder();
+        let Some((dims, material)) = self.settings.shapes.get(index).and_then(|p| dims_of(p, folder.as_deref())) else {
             self.say(t!("This box type is not available in this version."));
             return;
         };
-        if dims.sides != self.dims.sides && !self.decals.is_empty() {
+        if !dims.same_layout(&self.dims) && !self.decals.is_empty() {
             self.pending_shape = Some(dims.sides);
             self.pending_dims = Some((dims, material));
             return;
@@ -137,10 +191,19 @@ impl App {
 
     /// 寸法と紙をまとめて変える（元に戻せる）。型が違えば、型も変える。
     pub(super) fn apply_dims(&mut self, dims: Dims, material: Material) {
-        if dims.sides != self.dims.sides {
-            self.set_shape(dims.sides);
-        } else {
+        if dims.same_layout(&self.dims) {
             self.history.record(self.snapshot());
+        } else {
+            // 型が変わる（パネルの並びが変わる）。置いた柄は外れるが、元に戻せる。
+            self.checkpoint();
+            let removed = self.decals.len();
+            self.fold = 1.0;
+            self.open = [0.0; 2];
+            (self.animate_to, self.open_to) = (None, [None; 2]);
+            self.fold_pick = None;
+            if removed > 0 {
+                self.say(t!("Changing the box type removed {removed} placed artwork(s). Press Ctrl+Z to get the previous box type and artwork back."));
+            }
         }
         self.dims = dims;
         self.material = material;
@@ -153,15 +216,46 @@ mod tests {
 
     #[test]
     fn preset_round_trips_dims_and_paper() {
-        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) } };
+        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) }, dieline: 0 };
         let material = Material { paper: Paper::Kraft, coat: Coat::MattePp };
         let preset = preset_of("小箱", &dims, &material);
         let text = toml::to_string(&preset).unwrap();
         let back: ShapePreset = toml::from_str(&text).unwrap();
         assert_eq!(back, preset);
-        assert_eq!(dims_of(&back), Some((dims, material)));
+        assert_eq!(dims_of(&back, None), Some((dims, material)));
         // 知らない型は使わない。
-        assert_eq!(dims_of(&ShapePreset { sides: 999, ..back }), None);
+        assert_eq!(dims_of(&ShapePreset { sides: 999, ..back }, None), None);
+    }
+
+    fn sample_dxf() -> std::sync::Arc<Vec<u8>> {
+        let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nKNIFE\n70\n1\n10\n0\n20\n0\n10\n200\n20\n0\n10\n200\n20\n100\n10\n0\n20\n100\n\
+                    0\nLINE\n8\nSCORE\n10\n100\n20\n0\n11\n100\n21\n100\n0\nENDSEC\n0\nEOF\n";
+        std::sync::Arc::new(text.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn imported_type_is_kept_with_its_file_and_folds() {
+        let bytes = sample_dxf();
+        let drawing = dieline::read_dxf(&bytes).unwrap();
+        let mut settings = pakenoba_core::template::ImportSettings::guess(&drawing);
+        settings.folds.insert(1, 60.0);
+        let key = dieline::register("tray.dxf", bytes.clone(), Some(settings)).unwrap();
+        let dims = Dims { sides: IMPORTED, dieline: key, ..Dims::for_shape(0, 0.4) };
+        let material = Material::default();
+        let preset = preset_of("トレー", &dims, &material);
+        let d = preset.dieline.clone().unwrap();
+        // 設定のフォルダに写しを置いたことにする。
+        let folder = std::env::temp_dir().join(format!("pkn-shapes-{}", std::process::id()));
+        std::fs::create_dir_all(folder.join("dielines")).unwrap();
+        std::fs::write(folder.join(&d.file), bytes.as_slice()).unwrap();
+        let text = toml::to_string(&preset).unwrap();
+        let back: ShapePreset = toml::from_str(&text).unwrap();
+        let (again, _) = dims_of(&back, Some(&folder)).unwrap();
+        assert!(again.same_layout(&dims));
+        assert_eq!(dieline::source(again.dieline).unwrap().settings.folds.get(&1), Some(&60.0));
+        // ファイルがなければ使えない。
+        assert!(dims_of(&back, None).is_none());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

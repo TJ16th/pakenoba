@@ -650,6 +650,14 @@ impl App {
                         }
                     }
                 }
+                if self.dims.sides == super::IMPORTED {
+                    let name = pakenoba_core::dieline::source(self.dims.dieline).map(|s| s.name.clone()).unwrap_or_default();
+                    let _ = ui.selectable_label(true, name).on_hover_text(t!("Imported from a dieline file"));
+                }
+                ui.add_space(4.0);
+                if ui.button(t!("Import DXF…")).on_hover_text(t!("Make a box type from a dieline file (DXF) with cut and crease lines. You can also drop the file onto the window.")).clicked() {
+                    self.choose_dieline();
+                }
             }));
             boxed(ui, t!("Your box types"), true, |ui| self.my_shapes(ui));
         });
@@ -665,6 +673,10 @@ impl App {
                 let gable = self.dims.sides == 2;
                 let pillow = super::is_pillow(self.dims.sides);
                 let prism = self.dims.sides >= 3 && !pillow;
+                if self.dims.sides == super::IMPORTED {
+                    boxed(ui, t!("Dieline file"), false, |ui| self.dieline_settings(ui));
+                    boxed(ui, t!("Folds"), false, |ui| self.fold_settings(ui));
+                } else {
                 boxed(ui, t!("Dimensions (inside)"), false, |ui| {
                     let dims = &mut self.dims;
                     egui::Grid::new("dims").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -714,6 +726,7 @@ impl App {
                         self.editing = true;
                     }
                 });
+                }
                 if self.dims.sides == 0 {
                     boxed(ui, t!("Flaps"), false, |ui| self.flap_settings(ui));
                 }
@@ -733,7 +746,7 @@ impl App {
                 });
             });
         });
-        if self.dims != dims_before && self.dims.sides == dims_before.sides {
+        if self.dims != dims_before && self.dims.same_layout(&dims_before) {
             if !self.editing {
                 let mut earlier = self.snapshot();
                 earlier.dims = dims_before;
@@ -797,7 +810,10 @@ impl App {
     /// 型を変える前の確認。置いた柄が外れることを知らせる。
     pub(super) fn confirm_shape(&mut self, ctx: &egui::Context) {
         let Some(sides) = self.pending_shape else { return };
-        let name = SHAPES.iter().find(|(s, _)| *s == sides).map_or(t!("another box type"), |(_, name)| pakenoba_i18n::tr(name));
+        let name = match (sides, &self.pending_dims) {
+            (super::IMPORTED, Some((dims, _))) => pakenoba_core::dieline::source(dims.dieline).map(|s| s.name.clone()).unwrap_or_default(),
+            _ => SHAPES.iter().find(|(s, _)| *s == sides).map_or(t!("another box type"), |(_, name)| pakenoba_i18n::tr(name)).to_owned(),
+        };
         let count = self.decals.len();
         let buttons = [super::dialog::Button::accept(t!("Change box type"), true), super::dialog::Button::cancel(t!("Cancel"))];
         let picked = super::dialog::show(ctx, "confirm-shape", &t!("Change the box type to \"{name}\"?"), 400.0, &buttons, |ui| {
