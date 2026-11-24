@@ -398,6 +398,7 @@ impl App {
                         rows_at.push((index, rect));
                     }
                     self.adjust_rows(ui, index);
+                    self.vector_rows(ui, index);
                 }
                 if !filtering {
                     self.base_layer(ui, back as usize);
@@ -900,6 +901,60 @@ impl App {
         let clicked = response.on_hover_text(t!("Click to change its settings in Properties")).clicked();
         ui.advance_cursor_after_rect(rect);
         (eye.clicked(), clicked && !heading)
+    }
+
+    /// 選んでいるベクターの柄の下に、色ごとの行を並べる（目で、その色の形を隠す・見せる）。多すぎるときは 12 色まで。
+    fn vector_rows(&mut self, ui: &mut egui::Ui, index: usize) {
+        if self.selected != Some(index) {
+            return;
+        }
+        let Picture::Image { rgba, vector: true, .. } = &self.decals[index].picture else { return };
+        let key = std::sync::Arc::as_ptr(rgba) as usize;
+        let groups = match &self.vector_groups {
+            Some((k, groups)) if *k == key => groups.clone(),
+            _ => {
+                let Some(svg) = crate::vector::svg_of(rgba) else { return };
+                let groups = std::rc::Rc::new(crate::vector::color_groups(&svg));
+                self.vector_groups = Some((key, groups.clone()));
+                groups
+            }
+        };
+        if groups.len() < 2 {
+            return;
+        }
+        let depth = self.decals[index].layer.depth as f32;
+        let locked = self.decals[index].layer.locked || self.decals[index].layer.lock_pixels;
+        for &(color, count) in groups.iter().take(12) {
+            let style = self.decals[index].layer.vector.clone().unwrap_or_default();
+            let hidden = style.colors.iter().any(|c| c.color == color && c.hidden);
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SUB_H), egui::Sense::click());
+            let visuals = ui.visuals().clone();
+            ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, SUB_H)), 0.0, super::theme::EYE_COLUMN);
+            if response.hovered() {
+                ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left() + EYE_W, rect.top()), rect.max), 0.0, super::theme::HOVER);
+            }
+            ui.painter().vline(rect.left() + EYE_W, rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
+            let eye = ui.put(egui::Rect::from_center_size(egui::pos2(rect.left() + EYE_W / 2.0, rect.center().y), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !hidden));
+            let x = rect.left() + EYE_W + 6.0 + DEPTH_W * depth + THUMB_PT / 2.0 + 18.0;
+            let swatch = egui::Rect::from_center_size(egui::pos2(x + 6.0, rect.center().y), egui::vec2(12.0, 12.0));
+            ui.painter().rect_filled(swatch, 2.0, egui::Color32::from_rgb(color[0], color[1], color[2]));
+            ui.painter().rect_stroke(swatch, 2.0, egui::Stroke::new(1.0, visuals.weak_text_color()), egui::StrokeKind::Outside);
+            let ink = if hidden { visuals.weak_text_color() } else { visuals.text_color() };
+            ui.painter().text(egui::pos2(x + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, t!("{} shapes", count), egui::FontId::proportional(12.0), ink);
+            ui.advance_cursor_after_rect(rect);
+            if eye.clicked() && !locked {
+                let earlier = self.snapshot();
+                let mut style = style;
+                match style.colors.iter_mut().find(|c| c.color == color) {
+                    Some(c) => c.hidden = !hidden,
+                    None => style.colors.push(pakenoba_core::project::ColorStyle { hidden: true, ..pakenoba_core::project::ColorStyle::new(color) }),
+                }
+                style.colors.retain(|c| !c.is_plain());
+                self.decals[index].layer.vector = (!style.is_plain()).then_some(style);
+                self.history.record(earlier);
+                (self.art_dirty, self.back_dirty) = (true, true);
+            }
+        }
     }
 
     /// 欄のいちばん下の、枠のないアイコンのボタン（PhotoCraft と同じ並びの、パケノバにあるもの: マスク、調整、グループ、削除）。

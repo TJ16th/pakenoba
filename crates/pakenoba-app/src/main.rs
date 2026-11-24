@@ -3,6 +3,9 @@
 //! 箱の形（型紙）を決め、立体の上で柄を置き、見せるための画像や型紙を書き出す。
 //! 計算の中核は `pakenoba-core`。ここは、ウィンドウと描画。
 
+// Windows のリリース用のビルドでは、ダブルクリックで起動したときに、後ろにコンソールの窓を開かない。
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod art;
 mod blend;

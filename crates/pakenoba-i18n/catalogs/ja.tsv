@@ -1279,3 +1279,13 @@ blend	Color	カラー
 	Scroll to zoom, drag to move, double-click to fit	ホイールで拡大・縮小、ドラッグで移動、ダブルクリックで全体を表示
 	Reset to default size	初期値に戻す
 	Puts the dimensions (and flap lengths) back to the starting size of this box type. Paper thickness stays	寸法（とフラップの長さ）を、この型のはじめの大きさに戻します。紙の厚みはそのままです
+	Deselect path	パスの選択を解除
+	Double-click the artwork to select one path.	柄をダブルクリックすると、パスを 1 本選べます。
+	Fill color of this path	このパスの塗りの色
+	Reset this path	このパスを元に戻す
+	Selected path {}	選んだパス（{} 番目）
+	Selected path {} of this vector artwork. Change it in Properties; press Esc to deselect.	このベクターの {} 番目のパスを選びました。プロパティで変えられます。Esc で選択を解除します。
+	Show or hide this path	このパスを表示・非表示
+	The shapes of this vector artwork cannot be read.	このベクターの形を読めませんでした。
+	There is no path there.	そこにはパスがありません。
+	{} shapes	形 {} 個

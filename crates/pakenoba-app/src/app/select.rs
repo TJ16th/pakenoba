@@ -43,6 +43,10 @@ impl App {
 
     /// その柄だけを選ぶ（None なら、何も選ばない）。
     pub(super) fn select_only(&mut self, index: Option<usize>) {
+        // 別の柄を選んだら、パスの選択は外す。
+        if self.path_pick.is_some_and(|(i, ..)| Some(i) != index) {
+            self.path_pick = None;
+        }
         self.selected = index;
         self.extra.clear();
         (self.art_dirty, self.back_dirty) = (true, true);

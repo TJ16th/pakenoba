@@ -589,9 +589,14 @@ impl App {
             gizmo.on_hover_text(t!("Click an axis to view from that side (again for the opposite side)"));
         }
         // ダブルクリック: 柄の上なら、外のアプリで直す（文字なら、右の欄で打つ）。
-        if response.double_clicked() && self.tool != Tool::Hand && let Some((index, _)) = decal_under {
-            self.select_only(Some(index));
-            self.edit_selected();
+        // ベクターの柄なら、押したところのパスを選ぶ（Illustrator のダイレクト選択に当たる）。
+        if response.double_clicked() && self.tool != Tool::Hand && let Some((index, grab)) = decal_under {
+            if matches!(self.decals[index].picture, Picture::Image { vector: true, .. }) {
+                self.pick_path(index, grab);
+            } else {
+                self.select_only(Some(index));
+                self.edit_selected();
+            }
         }
         // 柄を右クリックしたら、その場で使える操作（差し替え、消す）。
         if self.selected.is_some() && self.tool != Tool::Hand {
@@ -736,6 +741,12 @@ impl App {
         } else if response.clicked() && self.tool != Tool::Hand && !brushing {
             let shift = ui.input(|i| i.modifiers.shift);
             self.select_click(decal_under.map(|(index, _)| index), shift);
+        }
+        // ベクターの柄をダブルクリックしたら、そのパスを選ぶ。
+        if response.double_clicked() && self.tool != Tool::Hand && let Some((index, grab)) = decal_under
+            && matches!(self.decals[index].picture, Picture::Image { vector: true, .. })
+        {
+            self.pick_path(index, grab);
         }
         // 右クリックは、選んでいる柄の上なら選んだものを保つ（まとめて消す、など）。
         if response.secondary_clicked() && self.tool != Tool::Hand && !decal_under.is_some_and(|(index, _)| self.is_selected(index)) {

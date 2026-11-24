@@ -317,12 +317,35 @@ pub struct VectorStyle {
     pub outline_only: bool,
     /// 色ごとの設定（もとの色で引く）。並んでいない色は、そのまま。
     pub colors: Vec<ColorStyle>,
+    /// パスごとの設定（SVG の中の形の順番で引く）。色ごとの設定より優先する。
+    pub paths: Vec<PathStyle>,
 }
 
 impl VectorStyle {
     /// 何も変えていない。
     pub fn is_plain(&self) -> bool {
-        !self.outline_only && self.colors.iter().all(ColorStyle::is_plain)
+        !self.outline_only && self.colors.iter().all(ColorStyle::is_plain) && self.paths.iter().all(PathStyle::is_plain)
+    }
+}
+
+/// ベクターの柄の、ひとつのパス（形）の見せ方。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PathStyle {
+    /// SVG の中で何番目の形か（0 から。path、rect、circle などを、出てくる順に数える）。
+    pub index: u32,
+    pub hidden: bool,
+    pub fill: Paint,
+    /// 線を足す（色と、太さ。0.01 mm 単位）。
+    pub stroke: Option<([u8; 3], u16)>,
+}
+
+impl PathStyle {
+    pub fn new(index: u32) -> PathStyle {
+        PathStyle { index, hidden: false, fill: Paint::Keep, stroke: None }
+    }
+
+    pub fn is_plain(&self) -> bool {
+        !self.hidden && self.fill == Paint::Keep && self.stroke.is_none()
     }
 }
 
@@ -1057,11 +1080,17 @@ struct VectorEntry {
     outline_only: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     colors: Vec<ColorEntry>,
+    /// パスごと（`color` のかわりに `path` に、形の順番）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    paths: Vec<ColorEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ColorEntry {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     hidden: bool,
     /// 塗り: なし（もとのまま）、`none`、`#rrggbb`。
@@ -1088,40 +1117,50 @@ fn color_of(text: &str) -> Option<[u8; 3]> {
 
 impl VectorEntry {
     fn of(style: &VectorStyle) -> VectorEntry {
-        let colors = style
-            .colors
-            .iter()
-            .filter(|c| !c.is_plain())
-            .map(|c| ColorEntry {
-                color: hex_of(c.color),
-                hidden: c.hidden,
-                fill: match c.fill {
-                    Paint::Keep => None,
-                    Paint::None => Some("none".to_owned()),
-                    Paint::Color(x) => Some(hex_of(x)),
-                },
-                stroke: c.stroke.map(|(x, _)| hex_of(x)),
-                stroke_width: c.stroke.map(|(_, w)| tidy(w as f32 / 100.0)),
-            })
-            .collect();
-        VectorEntry { outline_only: style.outline_only, colors }
+        let entry = |color: String, path: Option<u32>, hidden: bool, fill: Paint, stroke: Option<([u8; 3], u16)>| ColorEntry {
+            color,
+            path,
+            hidden,
+            fill: match fill {
+                Paint::Keep => None,
+                Paint::None => Some("none".to_owned()),
+                Paint::Color(x) => Some(hex_of(x)),
+            },
+            stroke: stroke.map(|(x, _)| hex_of(x)),
+            stroke_width: stroke.map(|(_, w)| tidy(w as f32 / 100.0)),
+        };
+        let colors = style.colors.iter().filter(|c| !c.is_plain()).map(|c| entry(hex_of(c.color), None, c.hidden, c.fill, c.stroke)).collect();
+        let paths = style.paths.iter().filter(|p| !p.is_plain()).map(|p| entry(String::new(), Some(p.index), p.hidden, p.fill, p.stroke)).collect();
+        VectorEntry { outline_only: style.outline_only, colors, paths }
     }
 
     fn style(&self) -> VectorStyle {
+        let read = |c: &ColorEntry| {
+            let fill = match c.fill.as_deref() {
+                None => Paint::Keep,
+                Some("none") => Paint::None,
+                Some(x) => color_of(x).map_or(Paint::Keep, Paint::Color),
+            };
+            let stroke = c.stroke.as_deref().and_then(color_of).map(|x| (x, (c.stroke_width.unwrap_or(0.3) * 100.0).round().clamp(1.0, 60000.0) as u16));
+            (fill, stroke)
+        };
         let colors = self
             .colors
             .iter()
             .filter_map(|c| {
-                let fill = match c.fill.as_deref() {
-                    None => Paint::Keep,
-                    Some("none") => Paint::None,
-                    Some(x) => color_of(x).map_or(Paint::Keep, Paint::Color),
-                };
-                let stroke = c.stroke.as_deref().and_then(color_of).map(|x| (x, (c.stroke_width.unwrap_or(0.3) * 100.0).round().clamp(1.0, 60000.0) as u16));
+                let (fill, stroke) = read(c);
                 Some(ColorStyle { color: color_of(&c.color)?, hidden: c.hidden, fill, stroke })
             })
             .collect();
-        VectorStyle { outline_only: self.outline_only, colors }
+        let paths = self
+            .paths
+            .iter()
+            .filter_map(|c| {
+                let (fill, stroke) = read(c);
+                Some(PathStyle { index: c.path?, hidden: c.hidden, fill, stroke })
+            })
+            .collect();
+        VectorStyle { outline_only: self.outline_only, colors, paths }
     }
 }
 
@@ -2135,7 +2174,7 @@ mod tests {
                     clipped: panel % 2 == 1,
                     tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0 }),
                     traced: (panel % 4 == 3).then(|| TraceSource { layer: 7, settings: "{\"preset\":\"3 Colors\"}".to_owned() }),
-                    vector: (panel % 4 == 3).then(|| VectorStyle { outline_only: panel % 2 == 0, colors: vec![ColorStyle { color: [200, 10, 30], hidden: true, fill: Paint::None, stroke: Some(([0, 0, 0], 35)) }, ColorStyle { fill: Paint::Color([1, 2, 3]), ..ColorStyle::new([255, 255, 255]) }] }),
+                    vector: (panel % 4 == 3).then(|| VectorStyle { outline_only: panel % 2 == 0, colors: vec![ColorStyle { color: [200, 10, 30], hidden: true, fill: Paint::None, stroke: Some(([0, 0, 0], 35)) }, ColorStyle { fill: Paint::Color([1, 2, 3]), ..ColorStyle::new([255, 255, 255]) }], paths: vec![PathStyle { hidden: true, ..PathStyle::new(3) }, PathStyle { stroke: Some(([9, 9, 9], 120)), ..PathStyle::new(40) }] }),
                 } }
             })
             .collect::<Vec<_>>();

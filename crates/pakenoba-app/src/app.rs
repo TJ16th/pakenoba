@@ -618,6 +618,8 @@ struct App {
     trace: crate::vector::TraceSettings,
     /// 開いている画像トレースの欄。
     trace_session: Option<vectorize::TraceSession>,
+    /// ベクターの柄で選んでいるパス（柄の番号、SVG の中の形の順番、その形のもとの色）。ダブルクリックで選ぶ。
+    path_pick: Option<(usize, u32, Option<[u8; 3]>)>,
     /// プロパティの欄に出す、ベクターの柄の色の一覧（絵ごとに 1 度だけ数える）。
     vector_groups: Option<(usize, std::rc::Rc<Vec<crate::vector::ColorCount>>)>,
     /// 「パケノバについて」の窓を出しているか。
@@ -779,6 +781,7 @@ impl App {
             trace: crate::vector::TraceSettings::default(),
             trace_session: None,
             vector_groups: None,
+            path_pick: None,
             about_open: false,
             splash: splash::Splash::new(initial.splash),
             focus_text: false,
@@ -1229,7 +1232,9 @@ impl App {
         let chosen: Vec<usize>;
         // 画像トレースの欄を開いている間は、元の画像の所にプレビューを差し込んで描く。
         let traced = self.trace_preview();
-        let base: &[Placed] = traced.as_deref().unwrap_or(&self.decals);
+        // ベクターの柄で選んでいるパスは、水色の線で囲んで見せる（保存はしない）。
+        let picked = self.path_highlight(traced.as_deref().unwrap_or(&self.decals));
+        let base: &[Placed] = picked.as_deref().or(traced.as_deref()).unwrap_or(&self.decals);
         let (decals, marks): (&[Placed], Marks) = match &self.preview {
             Some(preview) => {
                 with_preview = base.iter().cloned().chain([preview.clone()]).collect();
@@ -1367,7 +1372,12 @@ impl App {
             self.toggle_brush();
         }
         if plain && escape && self.workspace == Workspace::Design && self.carry.is_none() {
-            self.select_only(None);
+            // パスを選んでいれば、まずパスの選択だけを外す。
+            if self.path_pick.take().is_some() {
+                (self.art_dirty, self.back_dirty) = (true, true);
+            } else {
+                self.select_only(None);
+            }
         }
         if !plain || self.workspace != Workspace::Design {
             return;

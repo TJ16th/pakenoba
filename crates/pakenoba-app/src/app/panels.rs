@@ -412,8 +412,74 @@ impl App {
         let edited = !before.is_plain();
         // 色が多い（写真をトレースしたものなど）と並べきれないので、形の多い色から並べる。
         const SHOWN: usize = 40;
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(edited || groups.len() <= 12).show(ui, |ui| {
+        let picked = self.path_pick.filter(|(i, ..)| *i == index);
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(edited || groups.len() <= 12).open(picked.is_some().then_some(true)).show(ui, |ui| {
             ui.add_enabled_ui(!locked, |ui| {
+                // ダブルクリックで選んだパス 1 本の設定（色ごとの設定より優先する）。
+                match picked {
+                    Some((_, path, color)) => {
+                        use pakenoba_core::project::PathStyle;
+                        let at = style.paths.iter().position(|p| p.index == path);
+                        let mut own = at.map_or(PathStyle::new(path), |i| style.paths[i]);
+                        let was = own;
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(t!("Selected path {}", path + 1)).strong());
+                            if let Some(c) = color {
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(c[0], c[1], c[2]));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            let mut shown = !own.hidden;
+                            if icons::eye_button(ui, shown).on_hover_text(t!("Show or hide this path")).clicked() {
+                                shown = !shown;
+                            }
+                            own.hidden = !shown;
+                            let base = color.unwrap_or([0, 0, 0]);
+                            let mut fill = match own.fill {
+                                Paint::Color(c) => c,
+                                _ => base,
+                            };
+                            if ui.color_edit_button_srgb(&mut fill).on_hover_text(t!("Fill color of this path")).changed() {
+                                own.fill = if fill == base { Paint::Keep } else { Paint::Color(fill) };
+                            }
+                            let mut filled = own.fill != Paint::None;
+                            if ui.checkbox(&mut filled, t!("Fill")).changed() {
+                                own.fill = if filled { Paint::Keep } else { Paint::None };
+                            }
+                            let mut stroked = own.stroke.is_some();
+                            if ui.checkbox(&mut stroked, t!("Stroke")).changed() {
+                                own.stroke = stroked.then_some(([0, 0, 0], 30));
+                            }
+                            if let Some((mut c, width)) = own.stroke {
+                                ui.color_edit_button_srgb(&mut c);
+                                let mut mm = width as f32 / 100.0;
+                                ui.add_sized([62.0, 20.0], egui::DragValue::new(&mut mm).range(0.05..=10.0).speed(0.02).max_decimals(2).suffix(" mm")).on_hover_text(t!("Stroke width"));
+                                own.stroke = Some((c, (mm * 100.0).round().clamp(5.0, 1000.0) as u16));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(!own.is_plain(), egui::Button::new(t!("Reset this path"))).clicked() {
+                                own = PathStyle::new(path);
+                            }
+                            if ui.button(t!("Deselect path")).on_hover_text("Esc").clicked() {
+                                self.path_pick = None;
+                                self.art_dirty = true;
+                                self.back_dirty = true;
+                            }
+                        });
+                        if own != was {
+                            match at {
+                                Some(i) => style.paths[i] = own,
+                                None => style.paths.push(own),
+                            }
+                        }
+                        ui.separator();
+                    }
+                    None => {
+                        ui.weak(t!("Double-click the artwork to select one path."));
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut style.outline_only, t!("Outlines only")).on_hover_text(t!("Show every shape as a thin line, without fills"));
                     if ui.add_enabled(edited, egui::Button::new(t!("Reset"))).on_hover_text(t!("Show every color as it was traced")).clicked() {
@@ -477,6 +543,7 @@ impl App {
             });
         });
         style.colors.retain(|c| !c.is_plain());
+        style.paths.retain(|p| !p.is_plain());
         if style != before {
             self.decals[index].layer.vector = (!style.is_plain()).then_some(style);
             self.art_dirty = true;

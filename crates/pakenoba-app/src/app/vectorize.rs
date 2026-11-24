@@ -78,6 +78,9 @@ pub(super) struct TraceSession {
     pan: egui::Vec2,
 }
 
+/// 選んだパスを囲む線の色。
+const HIGHLIGHT: [u8; 3] = [0, 170, 255];
+
 /// 欄の中のプレビューの絵の、長いほうの上限（画面に出す絵として十分な細かさ）。
 const PREVIEW_LONG: usize = 2048;
 
@@ -214,6 +217,57 @@ impl App {
         // 元の画像のレイヤーは、確定したあとは隠してある。欄を開いている間は、調整なしで見せる。
         source.layer = Layer { id: source.layer.id, depth: source.layer.depth, ..Layer::default() };
         Some(decals)
+    }
+
+    /// 選んでいるパスを、水色の線で囲んだ柄の並び（パスを選んでいなければ None）。
+    pub(super) fn path_highlight(&self, decals: &[Placed]) -> Option<Vec<Placed>> {
+        let (index, path, _) = self.path_pick?;
+        let placed = decals.get(index).filter(|p| matches!(p.picture, Picture::Image { vector: true, .. }))?;
+        let mut style = placed.layer.vector.clone().unwrap_or_default();
+        let mark = Some((HIGHLIGHT, 60));
+        match style.paths.iter_mut().find(|p| p.index == path) {
+            Some(p) => p.stroke = mark,
+            None => style.paths.push(pakenoba_core::project::PathStyle { stroke: mark, ..pakenoba_core::project::PathStyle::new(path) }),
+        }
+        let mut out = decals.to_vec();
+        out[index].layer.vector = Some(style);
+        Some(out)
+    }
+
+    /// ベクターの柄 `index` の、柄の座標 `grab`（mm、中心が原点）にあるパスを選ぶ。選べたら真。
+    pub(super) fn pick_path(&mut self, index: usize, grab: [f32; 2]) -> bool {
+        let Some(placed) = self.decals.get(index) else { return false };
+        let Picture::Image { rgba, vector: true, .. } = &placed.picture else { return false };
+        let Some(svg) = crate::vector::svg_of(rgba) else {
+            self.say(t!("The shapes of this vector artwork cannot be read."));
+            return false;
+        };
+        // 隠したパスは選ばない（見えているものから選ぶ）。線だけ表示でも、形の中を押せば選べるように、塗りで見分ける。
+        let text = match placed.layer.vector.clone().filter(|v| !v.is_plain()) {
+            Some(mut style) => {
+                style.outline_only = false;
+                crate::vector::restyle(&svg, &style)
+            }
+            None => svg.to_string(),
+        };
+        let size = placed.decal.size;
+        // 裏の柄は、左右を逆にして描いている。
+        let x = grab[0] / size[0] * if placed.back { -1.0 } else { 1.0 } + 0.5;
+        let y = 0.5 - grab[1] / size[1];
+        match crate::vector::path_at(&text, [x, y]) {
+            Some(path) => {
+                let color = crate::vector::shape_colors(&svg).get(path as usize).copied().flatten();
+                self.select_only(Some(index));
+                self.path_pick = Some((index, path, color));
+                (self.art_dirty, self.back_dirty) = (true, true);
+                self.say(t!("Selected path {} of this vector artwork. Change it in Properties; press Esc to deselect.", path + 1));
+                true
+            }
+            None => {
+                self.say(t!("There is no path there."));
+                false
+            }
+        }
     }
 
     /// 確定: 元の画像のレイヤーを隠して残し、その上にベクターのレイヤーを足す（やり直しなら、そのレイヤーの絵を替える）。

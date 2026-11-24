@@ -376,7 +376,7 @@ mod size_tests {
 
 // ---- ベクターの柄の、色ごとの見せ方 ----
 
-use pakenoba_core::project::{ColorStyle, Paint, VectorStyle};
+use pakenoba_core::project::{ColorStyle, Paint, PathStyle, VectorStyle};
 use std::sync::{Arc, Mutex, Weak};
 
 /// 描いた絵（の画素の入れ物）から、もとの SVG を引く表。素材を読んだときに覚える。
@@ -539,33 +539,119 @@ pub fn restyle(svg: &str, style: &VectorStyle) -> String {
     let upm = units_per_mm(svg);
     // アウトラインの線は 0.1 mm。
     let hair = 0.1 * upm;
+    let mut next = 0u32;
     each_shape(svg, |tag| {
+        // 形の順番（色を読めない形も数える。パスごとの設定は、この順番で引く）。
+        let index = next;
+        next += 1;
         let (color, stroke_only) = element_color(tag)?;
-        let own = style.colors.iter().find(|c| c.color == color).copied().unwrap_or_else(|| ColorStyle::new(color));
-        if own.is_plain() && !style.outline_only {
+        let by_color = style.colors.iter().find(|c| c.color == color).copied().unwrap_or_else(|| ColorStyle::new(color));
+        // パスごとの設定は、色ごとの設定より優先する（変えていない項目は、色ごとの設定のまま）。
+        let by_path = style.paths.iter().find(|p| p.index == index).copied().unwrap_or_else(|| PathStyle::new(index));
+        let hidden = by_color.hidden || by_path.hidden;
+        let fill = if by_path.fill != Paint::Keep { by_path.fill } else { by_color.fill };
+        let stroke = by_path.stroke.or(by_color.stroke);
+        if !hidden && fill == Paint::Keep && stroke.is_none() && !style.outline_only {
             return None;
         }
-        if own.hidden {
+        if hidden {
             return Some(with(&without(tag, &["display"]), " display=\"none\""));
         }
         if style.outline_only {
             let bare = without(tag, &["fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity"]);
-            return Some(with(&bare, &format!(" fill=\"none\" stroke=\"#1b1b1b\" stroke-width=\"{hair:.3}\" stroke-linejoin=\"round\"")));
+            // パスに線を付けていれば（選んだパスの印など）、アウトラインでもその線で描く。
+            let (c, w) = by_path.stroke.map_or(([0x1b, 0x1b, 0x1b], hair), |(c, w)| (c, w as f32 / 100.0 * upm));
+            return Some(with(&bare, &format!(" fill=\"none\" stroke=\"{}\" stroke-width=\"{w:.3}\" stroke-linejoin=\"round\"", hex3(c))));
         }
         let mut tag = tag.to_owned();
         // 塗り（線だけの形では、線の色に効かせる）。
         let paint_attr = if stroke_only { "stroke" } else { "fill" };
-        match own.fill {
+        match fill {
             Paint::Keep => {}
             Paint::None => tag = with(&without(&tag, &[paint_attr]), &format!(" {paint_attr}=\"none\"")),
             Paint::Color(c) => tag = with(&without(&tag, &[paint_attr]), &format!(" {paint_attr}=\"{}\"", hex3(c))),
         }
-        if let (Some((c, width)), false) = (own.stroke, stroke_only) {
+        if let Some((c, width)) = stroke {
             let w = width as f32 / 100.0 * upm;
+            // 線だけの形に線を付けたときは、その線の色と太さを替える。
             tag = with(&without(&tag, &["stroke", "stroke-width", "stroke-linejoin"]), &format!(" stroke=\"{}\" stroke-width=\"{w:.3}\" stroke-linejoin=\"round\"", hex3(c)));
         }
         Some(tag)
     })
+}
+
+/// SVG の形の数と、それぞれの色（`element_color` で読めないものは None）。
+pub fn shape_colors(svg: &str) -> Vec<Option<[u8; 3]>> {
+    let mut out = Vec::new();
+    each_shape(svg, |tag| {
+        out.push(element_color(tag).map(|(c, _)| c));
+        None
+    });
+    out
+}
+
+/// パスを見分けるための絵（形ごとに、番号を色にして塗ったもの）。直前のいくつかを覚えておく。
+static ID_MAPS: Mutex<Vec<(u64, Arc<IdMap>)>> = Mutex::new(Vec::new());
+
+/// 見分ける絵（幅、高さ、RGBA）。
+type IdMap = (usize, usize, Vec<u8>);
+
+/// 見分ける絵の、長いほうの画素数。
+const ID_MAP_LONG: f32 = 1200.0;
+
+/// SVG の、絵の上の位置（左上が 0, 0、右下が 1, 1）にある形の番号。いちばん上に描かれた形。何もなければ None。
+pub fn path_at(svg: &str, at: [f32; 2]) -> Option<u32> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    svg.hash(&mut hasher);
+    let key = hasher.finish();
+    let found = ID_MAPS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key).map(|(_, m)| m.clone());
+    let map = match found {
+        Some(map) => map,
+        None => {
+            // 形ごとに、番号 + 1 を色にして塗る（線だけの形は、線をその色に）。透明度は消す。
+            let mut next = 0u32;
+            let painted = each_shape(svg, |tag| {
+                next += 1;
+                let id = format!("#{:06x}", next);
+                let stroke_only = matches!(element_color(tag), Some((_, true)));
+                let bare = without(tag, &["fill", "stroke", "opacity", "fill-opacity", "stroke-opacity"]);
+                Some(if stroke_only { with(&bare, &format!(" fill=\"none\" stroke=\"{id}\"")) } else { with(&bare, &format!(" fill=\"{id}\"")) })
+            });
+            let (w, h, rgba) = decode_svg_long(painted.as_bytes(), ID_MAP_LONG).ok()?;
+            let map = Arc::new((w, h, rgba));
+            let mut maps = ID_MAPS.lock().unwrap_or_else(|e| e.into_inner());
+            maps.push((key, map.clone()));
+            if maps.len() > 3 {
+                maps.remove(0);
+            }
+            map
+        }
+    };
+    let (w, h, rgba) = (map.0, map.1, &map.2);
+    let (x, y) = ((at[0] * w as f32) as isize, (at[1] * h as f32) as isize);
+    // 縁は色が混ざるので、まわりの画素のうち、透けていないものでいちばん多い番号を取る。
+    let mut votes: Vec<(u32, usize)> = Vec::new();
+    for dy in -2..=2 {
+        for dx in -2..=2 {
+            let (px, py) = (x + dx, y + dy);
+            if px < 0 || py < 0 || px >= w as isize || py >= h as isize {
+                continue;
+            }
+            let o = (py as usize * w + px as usize) * 4;
+            if rgba[o + 3] < 250 {
+                continue;
+            }
+            let id = (rgba[o] as u32) << 16 | (rgba[o + 1] as u32) << 8 | rgba[o + 2] as u32;
+            // 真ん中の画素を重く数える。
+            let weight = if dx == 0 && dy == 0 { 3 } else { 1 };
+            match votes.iter_mut().find(|(v, _)| *v == id) {
+                Some((_, n)) => *n += weight,
+                None => votes.push((id, weight)),
+            }
+        }
+    }
+    votes.into_iter().max_by_key(|(_, n)| *n).and_then(|(id, _)| id.checked_sub(1))
 }
 
 #[cfg(test)]
@@ -595,6 +681,7 @@ mod style_tests {
                 ColorStyle { fill: Paint::None, stroke: Some(([0, 0, 0], 50)), ..ColorStyle::new([30, 90, 180]) },
                 ColorStyle { fill: Paint::Color([255, 0, 0]), ..ColorStyle::new([0, 0, 0]) },
             ],
+            paths: vec![],
         };
         let out = restyle(SVG, &style);
         assert_eq!(out.matches("display=\"none\"").count(), 2);
@@ -608,9 +695,32 @@ mod style_tests {
 
     #[test]
     fn アウトラインは_すべてを細い線にする() {
-        let out = restyle(SVG, &VectorStyle { outline_only: true, colors: vec![] });
+        let out = restyle(SVG, &VectorStyle { outline_only: true, ..Default::default() });
         assert_eq!(out.matches("fill=\"none\" stroke=\"#1b1b1b\"").count(), 4);
         assert!(decode_svg(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn パスごとの設定は色ごとの設定より強い() {
+        let style = VectorStyle {
+            outline_only: false,
+            colors: vec![ColorStyle { fill: Paint::Color([0, 255, 0]), ..ColorStyle::new([200, 30, 40]) }],
+            paths: vec![PathStyle { hidden: true, ..PathStyle::new(1) }, PathStyle { fill: Paint::Color([0, 0, 255]), ..PathStyle::new(0) }],
+        };
+        let out = restyle(SVG, &style);
+        assert!(out.contains("d=\"M0 0L10 0L10 10Z\" fill=\"#0000ff\""), "{out}");
+        assert!(out.contains("display=\"none\" d=\"M20 0") || out.contains("d=\"M20 0L30 0L30 10Z\" display=\"none\"") || out.matches("display=\"none\"").count() == 1, "{out}");
+        assert_eq!(out.matches("display=\"none\"").count(), 1);
+    }
+
+    #[test]
+    fn 絵の上の点から_パスの番号を引ける() {
+        // 20 × 10 mm、座標は 200 × 100。1 つ目の三角は左上の角、3 つ目は 40〜50。
+        assert_eq!(path_at(SVG, [0.045, 0.02]), Some(0));
+        assert_eq!(path_at(SVG, [0.245, 0.02]), Some(2));
+        assert_eq!(path_at(SVG, [0.5, 0.5]), Some(3));
+        assert_eq!(path_at(SVG, [0.9, 0.9]), None);
+        assert_eq!(shape_colors(SVG).len(), 4);
     }
 
     #[test]
