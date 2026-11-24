@@ -26,6 +26,15 @@ fn number(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f3
     ui.add_sized([96.0, ui.spacing().interact_size.y], egui::DragValue::new(value).range(range).speed(0.5).max_decimals(1).suffix(format!(" {unit}")))
 }
 
+/// 上の帯の説明の 1 行。右の端の表示の切り替えに重ならないよう、はみ出す分は「…」にする（全文はカーソルを乗せると出る）。
+fn hint(ui: &mut egui::Ui, text: &str) {
+    let width = (ui.available_width() - 230.0).max(60.0);
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.add(egui::Label::new(egui::RichText::new(text).weak()).truncate());
+    });
+}
+
 /// 見出し（タブの帯）つきの灰色の箱（PhotoCraft の欄と同じ形）。`fill` なら、下の端まで伸ばす。
 pub(super) fn boxed<R>(ui: &mut egui::Ui, title: &str, fill: bool, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     super::theme::panel_frame()
@@ -81,6 +90,11 @@ impl App {
                     self.toggle_library();
                 }
                 // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.selectable_label(self.agent.open, t!("  Agent  ")).on_hover_text(t!("Ask an AI to make changes (Anthropic or OpenAI)")).clicked() {
+                        self.agent.open = !self.agent.open;
+                    }
+                });
             });
         });
     }
@@ -123,11 +137,11 @@ impl App {
                             self.align_buttons(ui);
                         }
                         None => {
-                            ui.weak(t!("Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline"));
+                            hint(ui, t!("Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline"));
                         }
                     },
                     Tool::Hand => {
-                        ui.weak(t!("Drag to turn the box or move the dieline"));
+                        hint(ui, t!("Drag to turn the box or move the dieline"));
                     }
                     Tool::Text => self.text_bar(ui),
                     Tool::Shape => self.shape_bar(ui),

@@ -40,6 +40,11 @@ impl<T> History<T> {
         Some(after)
     }
 
+    /// 元に戻せる数（エージェントの依頼のあとに、ほかの変更がないかを見るため）。
+    pub fn depth(&self) -> usize {
+        self.past.len()
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.past.is_empty()
     }

@@ -33,6 +33,7 @@ mod theme;
 mod commands;
 mod commands_doc;
 pub(crate) mod mcp;
+mod agent;
 mod oplog;
 
 use pakenoba_i18n::t;
@@ -543,6 +544,8 @@ struct App {
     allowed: Vec<PathBuf>,
     /// 操作の記録の窓を開いている。
     log_open: bool,
+    /// エージェントの欄。
+    agent: agent::Agent,
     /// 「素材」の画面。
     library: library::Library,
     /// 箱を描く仕組み（書き出しで、画面とは別に箱を描くため）。
@@ -696,6 +699,7 @@ impl App {
             actor: "person".to_owned(),
             allowed: Vec::new(),
             log_open: false,
+            agent: agent::Agent::default(),
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,
             layer_drag: None,
@@ -1358,6 +1362,10 @@ impl eframe::App for App {
         self.movie_frame(ui.ctx());
         self.poll_edits(ui.ctx());
         self.poll_vectorize(ui.ctx());
+        self.poll_agent();
+        if !self.home && !self.library.open {
+            self.agent_panel(ui);
+        }
         if self.home {
             self.home_screen(ui);
             self.settle_hover(ui.ctx());

@@ -239,19 +239,29 @@ impl App {
 
     /// いくつかのコマンドを続けて実行する。元に戻すのは、まとめて 1 回ぶん。途中で失敗したら、そこで止める（そこまでの変更は残り、元に戻せる）。
     pub(crate) fn run_batch(&mut self, actor: &str, calls: Vec<(String, Value)>) -> Result<Vec<Value>, String> {
-        self.undo_batch = Some(false);
+        // すでに外側でまとめている（エージェントの 1 回の依頼）なら、その中に入れる。
+        let outer = self.undo_batch.is_some();
+        if !outer {
+            self.undo_batch = Some(false);
+        }
         let mut results = Vec::new();
+        let mut failed = None;
         for (name, args) in calls {
             match self.run_command(actor, &name, args) {
                 Ok(value) => results.push(value),
                 Err(e) => {
-                    self.undo_batch = None;
-                    return Err(t!("{name}: {e} ({} command(s) before it were done)", results.len()));
+                    failed = Some(t!("{name}: {e} ({} command(s) before it were done)", results.len()));
+                    break;
                 }
             }
         }
-        self.undo_batch = None;
-        Ok(results)
+        if !outer {
+            self.undo_batch = None;
+        }
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(results),
+        }
     }
 
     /// 操作の記録に 1 件足す。続けて同じ人が同じものを同じコマンドで変えたときは、前の 1 件を書き換える。

@@ -988,3 +988,32 @@ blend	Color	カラー
 	Unknown box type "{other}" (tuck_box, gable, pillow, prism)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、prism）
 	{} already exists. AI does not overwrite files; choose another name.	{} はすでにあります。AI はファイルを上書きしません。別の名前にしてください。
 	{} is outside the folders allowed for AI	{} は、AI が使えるフォルダの外です
+	  Agent  	  エージェント  
+	(Undone)	（元に戻しました）
+	API key: saved	API キー: 保存済み
+	Agent	エージェント
+	Ask an AI to make changes (Anthropic or OpenAI)	AI に頼んで直してもらう（Anthropic か OpenAI）
+	Ask for changes in your own words, for example "Make the logo on the front a little bigger and turn the band gold". Each request can be undone in one step.	直したいことを、ふつうの言葉で頼んでください。たとえば「正面のロゴを少し大きくして、帯を金色に」。1 回の依頼は、1 回で元に戻せます。
+	Ask the agent… (Ctrl+Enter to send)	エージェントに頼む…（Ctrl+Enter で送る）
+	Change…	変える…
+	Could not reach the API: {e}	API につながりませんでした: {e}
+	Could not read the answer: {e}	答えを読めませんでした: {e}
+	Could not save the key in the OS keychain: {e}	キーを OS の鍵の保管庫にしまえませんでした: {e}
+	Enter the API key…	API キーを入れる…
+	Forget	消す
+	New conversation	新しい会話
+	Other model name	ほかのモデルの名前
+	Remove the key from the OS keychain	OS の鍵の保管庫からキーを消す
+	Removed the {} API key from the OS keychain.	{} の API キーを OS の鍵の保管庫から消しました。
+	Saved the {} API key in the OS keychain.	{} の API キーを OS の鍵の保管庫にしまいました。
+	Send	送る
+	Sent to {}: your request, the project's state as text, and preview pictures of the dieline when the model asks for them. Asset files are not sent.	{} に送るもの: 頼んだ文、案件の状態（文字）、モデルが求めたときの展開図の見た目の絵。素材のファイルそのものは送りません。
+	Stop	止める
+	Stopped	止めました
+	Stopped after {MAX_STEPS} steps	{MAX_STEPS} 回やりとりしたので止めました
+	The API returned an error ({status}): {message}	API がエラーを返しました（{status}）: {message}
+	The answer was not JSON (status {status})	答えが JSON ではありませんでした（{status}）
+	The key is kept in the OS keychain (Windows Credential Manager, macOS Keychain), not in a settings file.	キーは OS の鍵の保管庫（Windows の資格情報マネージャー、macOS のキーチェーン）にしまいます。設定のファイルには書きません。
+	Undo this request	この依頼を元に戻す
+	Working…	作業しています…
+	{} API key	{} の API キー

@@ -185,6 +185,9 @@ impl App {
                 self.show_guides = !self.show_guides;
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
+            if check(ui, true, self.agent.open, t!("Agent"), "", "") {
+                self.agent.open = !self.agent.open;
+            }
             if check(ui, true, self.log_open, t!("Operation history"), "", "") {
                 self.log_open = !self.log_open;
             }
