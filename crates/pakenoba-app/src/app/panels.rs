@@ -3,7 +3,6 @@
 //! 役割は工程をまたいで変えない。左は「選ぶもの・道具」、右は「選んだものの設定」、下は「動き」。
 
 use pakenoba_i18n::t;
-use std::path::PathBuf;
 
 use eframe::egui;
 
@@ -173,11 +172,6 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 6.0;
                     self.layers(ui);
                 });
-                super::theme::panel_frame().show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 6.0;
-                    icons::panel_tabs(ui, &[t!("Load dieline artwork")], 0);
-                    super::theme::panel_body().show(ui, |ui| self.psd_loader(ui));
-                });
             });
         });
     }
@@ -325,26 +319,6 @@ impl App {
         ui.add_space(4.0);
         if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
             self.delete_selected();
-        }
-    }
-
-    /// 展開図まるごとの絵（PSD）の読み込み。
-    pub(super) fn psd_loader(&mut self, ui: &mut egui::Ui) {
-        {
-            ui.small(t!("Draw on a dieline PSD saved from \"Output\" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with \"_back\") is laid on the back of the sheet."));
-            let mut load_clicked = false;
-            let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-            ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                load_clicked = ui.button(t!("Load")).clicked();
-                ui.add(egui::TextEdit::singleline(&mut self.psd_path).hint_text(t!("PSD path")).desired_width(f32::INFINITY));
-            });
-            if load_clicked {
-                let path = PathBuf::from(self.psd_path.trim().trim_matches('"'));
-                self.open_psd(&path);
-            }
-            if !self.psd_info.is_empty() {
-                ui.small(&self.psd_info);
-            }
         }
     }
 

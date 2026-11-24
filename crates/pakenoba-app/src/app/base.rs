@@ -76,7 +76,6 @@ impl App {
         if record {
             self.checkpoint();
         }
-        self.psd_info = base.as_ref().map_or_else(String::new, |b| b.info.clone());
         self.bases[side] = base;
         self.refit_bases();
     }
@@ -86,8 +85,7 @@ impl App {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.psd_info = t!("Could not read {}: {e}", path.display());
-                return self.say(self.psd_info.clone());
+                return self.say(t!("Could not read {}: {e}", path.display()));
             }
         };
         let back = crate::art::psd_is_back(&bytes);
@@ -106,7 +104,6 @@ impl App {
                 self.say(if replaced { t!("Replaced the dieline artwork on the {where_} with {name}. Press Ctrl+Z to undo.") } else { t!("Made {name} the dieline artwork on the {where_}.") });
             }
             Err(e) => {
-                self.psd_info = format!("{}\n{e}", path.display());
                 self.say(t!("Could not read {name}: {e}"));
             }
         }

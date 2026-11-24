@@ -350,10 +350,8 @@
 	 (being edited elsewhere)	（外で編集中）
 	Double-click to rename. Drag to change the stacking order	ダブルクリックで名前を変える。ドラッグで重なり順を変える
 	Rename	名前を変える
-	Load dieline artwork	展開図の絵を読み込む
-	Draw on a dieline PSD saved from "Output" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with "_back") is laid on the back of the sheet.	「出力」で保存した型紙の PSD に絵を描いて、ウィンドウにドロップします。パスを打っても読めます。裏の型紙（名前に「_裏」が付くもの）に描いた絵は、紙の裏に敷きます。
-	Load	読み込む
-	PSD path	PSD のパス
+	Import dieline artwork (PSD)…	展開図の絵を読み込む（PSD）…
+	After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel.	Photoshop などで絵を描いたら、その PSD をウィンドウにドロップします（「ファイル」→「展開図の絵を読み込む（PSD）…」でも読めます）。レイヤーの欄に「展開図の絵」として入ります。
 	Dimensions (inside)	寸法（内寸）
 	Side	一辺
 	Horizontal length	横の長さ

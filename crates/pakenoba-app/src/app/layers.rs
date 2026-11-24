@@ -1726,7 +1726,7 @@ fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
     }
     let n = *count as usize;
     let lut = crate::effects::curve_lut(&points[..n]);
-    let line: Vec<egui::Pos2> = (0..=64).map(|k| { let x = k * 255 / 64; egui::pos2(rect.left() + x as f32 / 255.0 * side, rect.bottom() - lut[x] * side) }).collect();
+    let line: Vec<egui::Pos2> = (0..=255usize).map(|x| { egui::pos2(rect.left() + x as f32 / 255.0 * side, rect.bottom() - lut[x] * side) }).collect();
     painter.with_clip_rect(rect.expand(1.0)).add(egui::Shape::line(line, egui::Stroke::new(1.5, super::theme::TEXT)));
     for (i, p) in points[..n].iter().enumerate() {
         let box_ = egui::Rect::from_center_size(to_screen(*p), egui::vec2(7.0, 7.0));

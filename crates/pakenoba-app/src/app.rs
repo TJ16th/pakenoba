@@ -592,8 +592,6 @@ struct App {
     pitch: f32,
     zoom: f32,
     renderer: Option<BoxRenderer>,
-    psd_path: String,
-    psd_info: String,
     /// 下の帯に出す知らせと、出し始めた時刻。数秒で消す。
     message: Option<(String, Option<f64>)>,
     triangles: usize,
@@ -717,14 +715,11 @@ impl App {
             pitch: initial.pitch,
             zoom: 1.0,
             renderer: None,
-            psd_path: String::new(),
-            psd_info: String::new(),
             message: None,
             triangles: 0,
             backend: String::new(),
         };
         if let Some(path) = &initial.psd {
-            app.psd_path = path.display().to_string();
             app.open_psd(path);
         }
         if let Some(path) = &initial.png {
@@ -795,7 +790,6 @@ impl App {
         }
         self.restore_library(state.library);
         if !(base::same_base(&state.bases[0], &self.bases[0]) && base::same_base(&state.bases[1], &self.bases[1])) {
-            self.psd_info.clear();
             self.bases = state.bases;
             self.refit_bases();
         }
@@ -1299,7 +1293,6 @@ impl eframe::App for App {
             if ext.as_deref() == Some(project::EXTENSION) {
                 self.request_open(Some(path.clone()));
             } else if dieline || !is_image(path) {
-                self.psd_path = path.display().to_string();
                 self.open_psd(path);
             } else if self.library.open {
                 // 「素材」の画面では、箱がないので、取り込むだけ。

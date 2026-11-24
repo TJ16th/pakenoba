@@ -122,7 +122,10 @@ fn to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
-/// トーンカーブの点（0〜255）から、なめらかで行き過ぎない曲線（単調な 3 次）の表を作る。値は 0〜1。
+/// トーンカーブの点（0〜255）から曲線の表を作る。値は 0〜1。
+///
+/// Photoshop と同じく、自然な 3 次スプライン（両端で曲がりがない、点をすべて通るなめらかな曲線）。
+/// 0〜255 の外へ出た所は端で止める（Photoshop でも、上や下に張り付く）。最初の点より左と最後の点より右は、端の点の高さのまま。
 pub fn curve_lut(points: &[[u8; 2]]) -> [f32; 256] {
     let mut pts: Vec<(f32, f32)> = points.iter().map(|p| (p[0] as f32, p[1] as f32)).collect();
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -135,26 +138,27 @@ pub fn curve_lut(points: &[[u8; 2]]) -> [f32; 256] {
         return lut;
     }
     let n = pts.len();
-    let slopes: Vec<f32> = (0..n - 1).map(|i| (pts[i + 1].1 - pts[i].1) / (pts[i + 1].0 - pts[i].0)).collect();
-    let mut tangents = vec![0f32; n];
-    tangents[0] = slopes[0];
-    tangents[n - 1] = slopes[n - 2];
-    for i in 1..n - 1 {
-        tangents[i] = if slopes[i - 1] * slopes[i] <= 0.0 { 0.0 } else { (slopes[i - 1] + slopes[i]) * 0.5 };
-    }
-    // 行き過ぎないように、接線を抑える（Fritsch-Carlson）。
-    for i in 0..n - 1 {
-        if slopes[i] == 0.0 {
-            tangents[i] = 0.0;
-            tangents[i + 1] = 0.0;
-            continue;
+    let h: Vec<f32> = (0..n - 1).map(|i| pts[i + 1].0 - pts[i].0).collect();
+    // 各点での 2 階の微分 m を、3 重対角の連立式で解く（両端は 0）。
+    let mut m = vec![0f32; n];
+    if n > 2 {
+        let k = n - 2;
+        let mut diag = vec![0f32; k];
+        let mut rhs = vec![0f32; k];
+        for j in 0..k {
+            let i = j + 1;
+            diag[j] = 2.0 * (h[i - 1] + h[i]);
+            rhs[j] = 6.0 * ((pts[i + 1].1 - pts[i].1) / h[i] - (pts[i].1 - pts[i - 1].1) / h[i - 1]);
         }
-        let (a, b) = (tangents[i] / slopes[i], tangents[i + 1] / slopes[i]);
-        let r = a * a + b * b;
-        if r > 9.0 {
-            let t = 3.0 / r.sqrt();
-            tangents[i] = t * a * slopes[i];
-            tangents[i + 1] = t * b * slopes[i];
+        // 前から消して、後ろから代入する（トーマス法）。
+        for j in 1..k {
+            let w = h[j] / diag[j - 1];
+            diag[j] -= w * h[j];
+            rhs[j] -= w * rhs[j - 1];
+        }
+        for j in (0..k).rev() {
+            let upper = if j + 1 < k { h[j + 1] * m[j + 2] } else { 0.0 };
+            m[j + 1] = (rhs[j] - upper) / diag[j];
         }
     }
     for (x, v) in lut.iter_mut().enumerate() {
@@ -165,10 +169,9 @@ pub fn curve_lut(points: &[[u8; 2]]) -> [f32; 256] {
             pts[n - 1].1
         } else {
             let i = (0..n - 1).find(|&i| x <= pts[i + 1].0).unwrap_or(n - 2);
-            let h = pts[i + 1].0 - pts[i].0;
-            let t = (x - pts[i].0) / h;
-            let (t2, t3) = (t * t, t * t * t);
-            (2.0 * t3 - 3.0 * t2 + 1.0) * pts[i].1 + (t3 - 2.0 * t2 + t) * h * tangents[i] + (-2.0 * t3 + 3.0 * t2) * pts[i + 1].1 + (t3 - t2) * h * tangents[i + 1]
+            let a = (pts[i + 1].0 - x) / h[i];
+            let b = 1.0 - a;
+            a * pts[i].1 + b * pts[i + 1].1 + ((a * a * a - a) * m[i] + (b * b * b - b) * m[i + 1]) * h[i] * h[i] / 6.0
         };
         *v = (y / 255.0).clamp(0.0, 1.0);
     }
@@ -620,7 +623,13 @@ mod tests {
         assert!((straight[128] - 128.0 / 255.0).abs() < 1e-4);
         let lifted = curve_lut(&[[0, 0], [128, 180], [255, 255]]);
         assert!(lifted[128] > 0.69 && lifted[0] == 0.0 && (lifted[255] - 1.0).abs() < 1e-5);
-        assert!(lifted.windows(2).all(|w| w[1] >= w[0] - 1e-6), "行き過ぎない（単調）");
+        assert!(lifted.windows(2).all(|w| w[1] >= w[0] - 1e-6), "この点なら上がり続ける");
+        // Photoshop と同じ自然な 3 次スプライン: 点を通り、外へ出た所は 1 で止まる。
+        let bent = curve_lut(&[[0, 0], [51, 153], [255, 255]]);
+        assert!((bent[51] - 0.6).abs() < 1e-4);
+        assert!((bent[17] * 255.0 - 55.0).abs() < 1.0, "{}", bent[17] * 255.0);
+        assert!((bent[68] * 255.0 - 191.0).abs() < 1.0, "{}", bent[68] * 255.0);
+        assert_eq!(bent[170], 1.0, "上に張り付く");
         // 露光量 +1 で、直線の光の量が 2 倍。
         let e = pixel(AdjustKind::Exposure { exposure: 100, offset: 0, gamma: 100 }, [0.2; 3]);
         assert!((to_linear(e[0]) - to_linear(0.2) * 2.0).abs() < 1e-3);

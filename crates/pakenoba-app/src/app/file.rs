@@ -41,6 +41,8 @@ pub(super) enum FileAction {
     Open,
     Save,
     SaveAs,
+    /// 展開図の絵（PSD）を読み込む。
+    ImportDieline,
 }
 
 /// 裏で進めている保存。
@@ -282,8 +284,6 @@ impl App {
         }
 
         // 展開図まるごとの絵。
-        self.psd_info.clear();
-        self.psd_path.clear();
         let sheet = [self.sheet.w, self.sheet.h];
         for (side, base) in [project.base, project.back_base].into_iter().enumerate() {
             self.bases[side] = base.and_then(|file| {
@@ -654,6 +654,7 @@ impl App {
             pick(ui, !saving, t!("Save"), "Ctrl+S", FileAction::Save);
             pick(ui, !saving, t!("Save As…"), "Ctrl+Shift+S", FileAction::SaveAs);
             ui.separator();
+            pick(ui, !saving, t!("Import dieline artwork (PSD)…"), "", FileAction::ImportDieline);
             self.export_items(ui);
             ui.separator();
             // 終了。保存していない変更があれば、閉じるときと同じく確かめる。
@@ -690,6 +691,12 @@ impl App {
         match action {
             FileAction::New => self.request_new(),
             FileAction::Open => self.request_open(None),
+            FileAction::ImportDieline => {
+                // 表か裏かは、PSD の中身で決まる（パケノバの裏の型紙なら裏）。
+                if let Some(path) = rfd::FileDialog::new().set_title(t!("Choose the dieline artwork (PSD)")).add_filter("PSD", &["psd", "PSD"]).pick_file() {
+                    self.open_psd(&path);
+                }
+            }
             FileAction::Save => {
                 if self.is_saving() {
                     // すでに保存しているところ。

@@ -297,6 +297,7 @@ impl App {
                     if ui.button(t!("Save the dieline as PSD…")).clicked() {
                         self.export_psd();
                     }
+                    ui.small(t!("After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel."));
                     if self.has_back_decals() {
                         ui.small(t!("There is artwork on the back of the sheet too, so the back dieline is saved in the same place with \"_back\" added to the name. The back dieline is seen from the back (flipped left to right)."));
                     }

@@ -77,8 +77,6 @@ doc! {
     yaw: f32,
     pitch: f32,
     zoom: f32,
-    psd_path: String,
-    psd_info: String,
     ortho: bool,
 }
 
@@ -130,8 +128,6 @@ impl Doc {
             yaw: app.yaw,
             pitch: app.pitch,
             zoom: 1.0,
-            psd_path: String::new(),
-            psd_info: String::new(),
             ortho: app.ortho,
             label: String::new(),
             dirty: false,
