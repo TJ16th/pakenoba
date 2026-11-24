@@ -2881,6 +2881,7 @@ dependencies = [
  "gif",
  "half",
  "keyring",
+ "naga",
  "nokhwa",
  "pakenoba-core",
  "pakenoba-i18n",

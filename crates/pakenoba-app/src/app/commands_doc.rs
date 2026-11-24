@@ -182,6 +182,9 @@ impl App {
     }
 
     pub(super) fn dispatch_doc(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        if let Some(result) = self.dispatch_finish(name, args) {
+            return result;
+        }
         match name {
             "project.info" => Ok(json!({
                 "name": self.project_name(),
@@ -196,7 +199,7 @@ impl App {
                 if !self.pristine() && !self.open_tab() {
                     return Err(t!("Could not open a new tab").to_owned());
                 }
-                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), material: Default::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
+                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), material: Default::default(), finishes: Vec::new(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
                 self.file.path = None;
                 self.mark_saved();
                 Ok(Value::Null)

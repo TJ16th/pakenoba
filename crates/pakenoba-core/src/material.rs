@@ -106,6 +106,74 @@ pub struct Material {
     pub coat: Coat,
 }
 
+/// 箔の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub enum Foil {
+    #[default]
+    Gold,
+    Silver,
+    Copper,
+    /// 赤金（赤みの強い金）。
+    RedGold,
+    MatteGold,
+    MatteSilver,
+    /// ホログラム（見る向きで虹色に変わる）。
+    Hologram,
+}
+
+impl Foil {
+    pub const ALL: [Foil; 7] = [Foil::Gold, Foil::Silver, Foil::Copper, Foil::RedGold, Foil::MatteGold, Foil::MatteSilver, Foil::Hologram];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Foil::Gold => "gold",
+            Foil::Silver => "silver",
+            Foil::Copper => "copper",
+            Foil::RedGold => "red_gold",
+            Foil::MatteGold => "matte_gold",
+            Foil::MatteSilver => "matte_silver",
+            Foil::Hologram => "hologram",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Foil> {
+        Foil::ALL.into_iter().find(|f| f.key() == key)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Foil::Gold => t!("Gold foil"),
+            Foil::Silver => t!("Silver foil"),
+            Foil::Copper => t!("Copper foil"),
+            Foil::RedGold => t!("Red gold foil"),
+            Foil::MatteGold => t!("Matte gold foil"),
+            Foil::MatteSilver => t!("Matte silver foil"),
+            Foil::Hologram => t!("Hologram foil"),
+        }
+    }
+
+    /// 並びの番号（描くときに、箔の種類を絵の 1 チャンネルに入れるため）。
+    pub fn index(self) -> usize {
+        Foil::ALL.iter().position(|&f| f == self).unwrap_or(0)
+    }
+}
+
+/// 加工のレイヤー（特殊版）。いまは箔押しだけ。
+///
+/// 形は、つないだ柄（`link` のレイヤー）の形をそのまま使う。柄を動かすと、加工も付いてくる。
+/// 柄を隠しても、加工の形には使う（インキを刷らずに箔だけを押す、を表すため）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Finish {
+    /// 加工ごとの決まった印（柄のレイヤーの印と同じ数の並びから付ける）。0 はまだ付けていない。
+    pub id: u32,
+    pub foil: Foil,
+    /// 形を借りる柄のレイヤーの印。
+    pub link: u32,
+    /// 使う人が付けた名前。
+    pub name: Option<String>,
+    pub hidden: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +187,8 @@ mod tests {
             assert_eq!(Coat::from_key(c.key()), Some(c));
         }
         assert_eq!(Paper::from_key("washi"), None);
+        for f in Foil::ALL {
+            assert_eq!(Foil::from_key(f.key()), Some(f));
+        }
     }
 }

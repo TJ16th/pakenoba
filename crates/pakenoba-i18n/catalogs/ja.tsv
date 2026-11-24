@@ -1095,3 +1095,27 @@ blend	Color	カラー
 	Lighting	照明
 	Choose the environment that lights the box, and turn it	箱を照らす景色を選ぶ、回す
 	Paper and coating	紙とコート
+	Gold foil	金箔
+	Silver foil	銀箔
+	Copper foil	銅箔
+	Red gold foil	赤金箔
+	Matte gold foil	つや消し金箔
+	Matte silver foil	つや消し銀箔
+	Hologram foil	ホログラム箔
+	Finish layer {number} ({kind}, {foil}) is not known to this version of PAKENOBA, so it was removed	加工のレイヤー {number}（{kind}、{foil}）は、このパケノバが知らないものなので、外しました
+	There is no finish layer with id {id}	印 {id} の加工のレイヤーはありません
+	Foil can only be added to artwork (an image, text or shape), not to a group or adjustment layer	箔は、柄（画像、文字、図形）にだけ押せます。グループや調整レイヤーには押せません
+	Unknown foil "{key}"	知らない箔です（{key}）
+	Foil stamping	箔押し
+	Foil	箔
+	Shape from	形の元
+	Select this artwork	この柄を選ぶ
+	The artwork it was linked to is gone	つないでいた柄がありません
+	The foil takes the shape of the linked artwork and moves with it. Hide the artwork's layer to stamp foil without ink.	箔は、つないだ柄の形になり、柄と一緒に動きます。インキを刷らずに箔だけを押すときは、柄のレイヤーを隠します。
+	Remove the foil	箔を外す
+	Foil (the linked artwork is gone)	箔（つないでいた柄がありません）
+	Add foil stamping in the shape of the selected artwork	選んでいる柄の形で、箔を押す
+	Added foil	箔を押した
+	Changed the foil	箔を変えた
+	Removed the foil	箔を外した
+	"id" is missing	「id」がありません

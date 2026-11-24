@@ -121,13 +121,15 @@ fn backdrop(d: [f32; 3], top: f32, horizon: f32, floor: f32) -> f32 {
     if d[1] >= 0.0 { horizon + (top - horizon) * d[1] } else { horizon + (floor - horizon) * smoothstep(0.0, 0.15, -d[1]) }
 }
 
-fn studio(backdrop_levels: [f32; 3], panels: &[Panel]) -> Equirect {
+/// `ring` は、床の白い台の明るさ（水平より 12〜45 度下の帯。金属やグロスの面に、明るい帯として映る）。
+fn studio(backdrop_levels: [f32; 3], ring: f32, panels: &[Panel]) -> Equirect {
     let (w, h) = (1024, 512);
     let mut px = Vec::with_capacity(w * h);
     for y in 0..h {
         for x in 0..w {
             let d = direction(x, y, w, h);
-            let base = backdrop(d, backdrop_levels[0], backdrop_levels[1], backdrop_levels[2]);
+            let below = -d[1];
+            let base = backdrop(d, backdrop_levels[0], backdrop_levels[1], backdrop_levels[2]) + ring * smoothstep(0.17, 0.24, below) * (1.0 - smoothstep(0.66, 0.74, below));
             let mut c = [base; 3];
             for p in panels {
                 let k = p.light(d);
@@ -149,9 +151,11 @@ const fn white(k: f32) -> [f32; 3] {
 
 /// やわらかいスタジオ: 真上と奥の上の大きなソフトボックス、左右の後ろの細長い照明、手前からの弱い光。
 /// フタの面には奥の照明が、側面には細長い照明が、つやのある紙なら映り込む。
+/// 床は白い台（撮影の白い紙のように、明るく照り返す）。箔の正面に映るのは、この床。
 fn studio_soft() -> Equirect {
     studio(
-        [0.22, 0.16, 0.10],
+        [0.22, 0.12, 0.2],
+        1.4,
         &[
             Panel { azimuth: 0.0, elevation: 75.0, half: [30.0, 22.0], color: white(5.0) },
             Panel { azimuth: 180.0, elevation: 32.0, half: [34.0, 16.0], color: white(5.0) },
@@ -166,6 +170,7 @@ fn studio_soft() -> Equirect {
 fn studio_key() -> Equirect {
     studio(
         [0.025, 0.02, 0.03],
+        0.0,
         &[
             Panel { azimuth: -42.0, elevation: 32.0, half: [18.0, 24.0], color: [13.0, 12.6, 12.0] },
             Panel { azimuth: 150.0, elevation: 18.0, half: [4.0, 30.0], color: white(9.0) },
@@ -176,7 +181,7 @@ fn studio_key() -> Equirect {
 
 /// 白いスタジオ（白ホリ）: まわりがすべて明るい。色の確認に向く。
 fn studio_white() -> Equirect {
-    studio([1.0, 0.85, 0.7], &[Panel { azimuth: 0.0, elevation: 78.0, half: [40.0, 40.0], color: white(2.5) }])
+    studio([1.0, 0.85, 0.7], 0.0, &[Panel { azimuth: 0.0, elevation: 78.0, half: [40.0, 40.0], color: white(2.5) }])
 }
 
 // ---- 景色の一覧 ----

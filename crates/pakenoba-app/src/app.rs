@@ -9,6 +9,7 @@ mod base;
 mod edit;
 mod export;
 mod file;
+mod finishes;
 mod history;
 mod icons;
 mod library;
@@ -426,6 +427,8 @@ impl Default for FlatCam {
 #[derive(Clone)]
 struct Snapshot {
     decals: Vec<Placed>,
+    /// 加工のレイヤー（箔押しなど）。
+    finishes: Vec<pakenoba_core::material::Finish>,
     selected: Option<usize>,
     /// いっしょに選んでいた柄。
     extra: Vec<usize>,
@@ -444,6 +447,10 @@ struct App {
     material: pakenoba_core::material::Material,
     /// 照らす景色の用意の進み具合。
     env: lighting::EnvState,
+    /// 加工のレイヤー（箔押しなど）。
+    finishes: Vec<pakenoba_core::material::Finish>,
+    /// 選んでいる加工（選んでいる間は、柄は選ばない）。
+    finish_selected: Option<usize>,
     /// 型紙。共有して持つ（表示の中で、App を書き換えながら読むため）。
     template: Rc<Template>,
     /// 柄がたどれる面のつながり（折り線と合わせ目）。
@@ -647,6 +654,8 @@ impl App {
             built_dims: Some(dims),
             material: Default::default(),
             env: Default::default(),
+            finishes: Vec::new(),
+            finish_selected: None,
             template,
             surface,
             problems,
@@ -815,7 +824,7 @@ impl App {
 
     /// いまの、柄の状態。
     fn snapshot(&self) -> Snapshot {
-        Snapshot { decals: self.decals.clone(), selected: self.selected, extra: self.extra.clone(), dims: self.dims, library: self.library(), bases: self.bases.clone() }
+        Snapshot { decals: self.decals.clone(), finishes: self.finishes.clone(), selected: self.selected, extra: self.extra.clone(), dims: self.dims, library: self.library(), bases: self.bases.clone() }
     }
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
@@ -844,6 +853,8 @@ impl App {
             self.refit_bases();
         }
         self.decals = state.decals;
+        self.finishes = state.finishes;
+        self.finish_selected = self.finish_selected.filter(|&i| i < self.finishes.len());
         self.selected = state.selected.filter(|&i| i < self.decals.len());
         self.extra = state.extra.into_iter().filter(|&i| i < self.decals.len()).collect();
         self.hover_decal = None;
@@ -1147,10 +1158,16 @@ impl App {
         };
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            let (flat, solid) = compose_split(&self.sheet, false, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
+            let (mut flat, solid) = compose_split(&self.sheet, false, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
+            let foil = self.finish_map(false);
+            if let Some(map) = &foil {
+                self.overlay_finishes(&mut flat, map);
+            }
             self.front_rgba = flat;
             if let Some(rs) = rs {
-                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, false, w, h, solid.as_deref().unwrap_or(&self.front_rgba));
+                let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
+                renderer.set_art(rs, false, w, h, solid.as_deref().unwrap_or(&self.front_rgba));
+                renderer.set_finish(rs, false, w, h, foil.as_deref());
             }
             self.art_dirty = false;
             self.front_tex_dirty = true;
@@ -1162,10 +1179,16 @@ impl App {
         }
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
-            let (flat, solid) = compose_split(&self.sheet, true, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
+            let (mut flat, solid) = compose_split(&self.sheet, true, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
+            let foil = self.finish_map(true);
+            if let Some(map) = &foil {
+                self.overlay_finishes(&mut flat, map);
+            }
             self.back_rgba = flat;
             if let Some(rs) = rs {
-                self.renderer.get_or_insert_with(|| BoxRenderer::new(rs)).set_art(rs, true, w, h, solid.as_deref().unwrap_or(&self.back_rgba));
+                let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
+                renderer.set_art(rs, true, w, h, solid.as_deref().unwrap_or(&self.back_rgba));
+                renderer.set_finish(rs, true, w, h, foil.as_deref());
             }
             self.back_has_decals = decals.iter().any(|decal| decal.back);
             self.back_dirty = false;

@@ -236,6 +236,11 @@ impl App {
     }
 
     fn properties(&mut self, ui: &mut egui::Ui) {
+        if self.selected.is_none()
+            && let Some(index) = self.finish_selected.filter(|&i| i < self.finishes.len())
+        {
+            return self.finish_properties(ui, index);
+        }
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else {
             ui.weak(t!("Select artwork to see its settings here."));
             return;

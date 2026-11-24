@@ -155,6 +155,13 @@ pub(super) fn draw_adjust(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.add(Shape::convex_polygon(half, stroke.color, Stroke::NONE));
 }
 
+/// 加工（箔押し）。4 本の光の筋の星。
+pub(super) fn draw_foil(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    let star = vec![p(0.0, -7.0), p(1.6, -1.6), p(7.0, 0.0), p(1.6, 1.6), p(0.0, 7.0), p(-1.6, 1.6), p(-7.0, 0.0), p(-1.6, -1.6), p(0.0, -7.0)];
+    painter.add(Shape::line(star, stroke));
+}
+
 /// フォルダ（グループ）。
 pub(super) fn draw_folder(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     let p = |x: f32, y: f32| c + vec2(x, y);

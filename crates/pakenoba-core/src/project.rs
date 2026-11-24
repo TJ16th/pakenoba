@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::material::{Coat, Material, Paper};
+use crate::material::{Coat, Finish, Foil, Material, Paper};
 use crate::surface::Decal;
 use crate::template::{P2, Template, TuckFlaps};
 
@@ -634,6 +634,8 @@ pub struct Project {
     pub shape: Shape,
     /// 紙とコート。
     pub material: Material,
+    /// 加工のレイヤー（箔押しなど）。並びは重なりの順。
+    pub finishes: Vec<Finish>,
     pub assets: Vec<Asset>,
     /// 置いた柄。並びは重なりの順（後ろのものが上）。
     pub decals: Vec<Placement>,
@@ -765,6 +767,23 @@ struct Manifest {
     assets: Vec<AssetEntry>,
     #[serde(rename = "decal", default, skip_serializing_if = "Vec::is_empty")]
     decals: Vec<DecalEntry>,
+    #[serde(rename = "finish", default, skip_serializing_if = "Vec::is_empty")]
+    finishes: Vec<FinishEntry>,
+}
+
+/// 加工のレイヤー 1 つ。
+#[derive(Serialize, Deserialize)]
+struct FinishEntry {
+    id: u32,
+    /// `foil` だけ（あとで、部分 UV ニス、エンボスなどを足す）。
+    kind: String,
+    foil: String,
+    /// 形を借りる柄のレイヤーの印。
+    link: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    hidden: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1230,6 +1249,7 @@ impl Project {
                     DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
+            finishes: self.finishes.iter().map(|f| FinishEntry { id: f.id, kind: "foil".to_owned(), foil: f.foil.key().to_owned(), link: f.link, name: f.name.clone(), hidden: f.hidden }).collect(),
         }
     }
 
@@ -1650,7 +1670,17 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         }
     }
 
-    Ok(Opened { project: Project { shape, material, assets, decals, base, back_base, log: Vec::new(), versions: Vec::new() }, problems })
+    // 加工のレイヤー。知らない種類は外して知らせる。
+    let mut finishes = Vec::new();
+    for (i, entry) in manifest.finishes.iter().enumerate() {
+        let number = i + 1;
+        match (entry.kind.as_str(), Foil::from_key(&entry.foil)) {
+            ("foil", Some(foil)) => finishes.push(Finish { id: entry.id, foil, link: entry.link, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden }),
+            _ => problems.push(t!("Finish layer {number} ({kind}, {foil}) is not known to this version of PAKENOBA, so it was removed", kind = entry.kind, foil = entry.foil)),
+        }
+    }
+
+    Ok(Opened { project: Project { shape, material, finishes, assets, decals, base, back_base, log: Vec::new(), versions: Vec::new() }, problems })
 }
 
 /// グループの入れ子とクリッピングマスクの決まりに合うように、印を直す（読むとき、並べ替えたあと）。
@@ -1852,7 +1882,7 @@ mod tests {
             LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
             LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
         ];
-        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, assets, decals, base, back_base, log, versions: Vec::new() }
+        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, finishes: vec![Finish { id: 900, foil: Foil::Hologram, link: 1, name: Some("箔".to_owned()), hidden: true }], assets, decals, base, back_base, log, versions: Vec::new() }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -1940,7 +1970,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), material: Material::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
+        let project = Project { shape: shape(Kind::TuckBox), material: Material::default(), finishes: Vec::new(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -2299,7 +2329,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), material: Material::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
+        let small = Project { shape: shape(Kind::TuckBox), material: Material::default(), finishes: Vec::new(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -2359,6 +2389,7 @@ mod tests {
         let panel = |name: &str, nth: usize| panel_index(&tpl, name, nth).unwrap();
         Project {
             material: Material::default(),
+            finishes: Vec::new(),
             shape,
             assets: vec![Asset::new("ロゴ.png", fake_file(11, 600), [46.0, 46.0], "2026-11-22T00:30:00+09:00"), Asset::new("地紋.psd", fake_file(12, 2000), [120.0, 80.0], "2026-11-22T00:31:00+09:00")],
             decals: vec![

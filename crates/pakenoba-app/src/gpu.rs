@@ -7,7 +7,7 @@ use pakenoba_i18n::t;
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
-use pakenoba_core::material::{Coat, Material, Paper};
+use pakenoba_core::material::{Coat, Foil, Material, Paper};
 use pakenoba_core::math::Mat4;
 use pakenoba_core::template::Vertex;
 
@@ -41,11 +41,16 @@ struct Globals {
     grain: vec4<f32>,
     // 展開図の大きさ（mm）と、段ボールの段の間隔（mm）と高さ（mm）。
     sheet: vec4<f32>,
+    // 箔の種類ごとの、映り込みの色（線形）と粗さ。並びは Foil::ALL と同じ。
+    foils: array<vec4<f32>, 8>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var art: texture_2d<f32>;
 @group(1) @binding(1) var art_sampler: sampler;
 @group(1) @binding(2) var back_art: texture_2d<f32>;
+// 加工の版（表と裏）。R が箔の量、G が箔の種類（番号 × 32 + 16）。
+@group(1) @binding(3) var finish_front: texture_2d<f32>;
+@group(1) @binding(4) var finish_back: texture_2d<f32>;
 @group(2) @binding(0) var env_map: texture_2d<f32>;
 @group(2) @binding(1) var env_sampler: sampler;
 
@@ -153,6 +158,13 @@ fn fibers(p: vec2<f32>) -> f32 {
     return v;
 }
 
+// 押した箔の、小さなうねりの高さ（mm）。
+fn foil_height(mm: vec2<f32>) -> f32 {
+    // 格子の目が見えないよう、向きを変えた 2 つを重ねる。
+    let q = vec2<f32>(mm.x * 0.8 - mm.y * 0.6, mm.x * 0.6 + mm.y * 0.8);
+    return value_noise(mm / 3.4) * 0.03 + value_noise(q / 2.3 + vec2<f32>(5.0, 1.0)) * 0.025;
+}
+
 // 紙の高さ（mm）。繊維と、段ボールの段。
 fn paper_height(mm: vec2<f32>, amp: f32) -> f32 {
     var h = fibers(mm / globals.grain.x) * amp;
@@ -208,12 +220,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     var n = n0;
     var grain = 0.5;
+
     let footprint = max(length(dmx), length(dmy));
     let det = dmx.x * dmy.y - dmy.x * dmx.y;
+    var t_mm = vec3<f32>(0.0);
+    var b_mm = vec3<f32>(0.0);
+    if abs(det) > 1e-12 {
+        t_mm = normalize((dpx * dmy.y - dpy * dmx.y) / det);
+        b_mm = normalize((dpy * dmx.x - dpx * dmy.x) / det);
+    }
     let fade = 1.0 - smoothstep(0.35, 1.2, footprint / globals.grain.x);
     if in.kind < 1.5 && abs(det) > 1e-12 && fade > 0.0 {
-        let t_mm = normalize((dpx * dmy.y - dpy * dmx.y) / det);
-        let b_mm = normalize((dpy * dmx.x - dpx * dmy.x) / det);
         let e = globals.grain.x * 0.25;
         let gx = (paper_height(mm + vec2<f32>(e, 0.0), amp) - paper_height(mm - vec2<f32>(e, 0.0), amp)) / (2.0 * e);
         let gy = (paper_height(mm + vec2<f32>(0.0, e), amp) - paper_height(mm - vec2<f32>(0.0, e), amp)) / (2.0 * e);
@@ -261,6 +278,38 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let fc = env_brdf(vec3<f32>(0.04), globals.coat.y, nv0) * globals.coat.x;
         color = color * (1.0 - fc) + radiance(r0, globals.coat.y) * fc;
     }
+    // 箔（いちばん上。金属として、景色を箔の色で映す。拡散の色はほとんどない）。
+    var foil = vec4<f32>(0.0);
+    if in.kind < 0.5 {
+        foil = textureSample(finish_front, art_sampler, in.uv);
+    } else if in.kind < 1.5 {
+        foil = textureSample(finish_back, art_sampler, in.uv);
+    }
+    if foil.r > 0.003 {
+        let kind = u32(clamp(floor(foil.g * 255.0 / 32.0), 0.0, 7.0));
+        let spec = globals.foils[kind];
+        // 箔は紙に押し付けるので、紙のきめを少し拾い、押したときの小さなうねりも持つ。
+        // うねりで映る景色がずれて、明るい所と暗い所ができる（箔らしいきらめき）。
+        var nf = normalize(mix(n0, n, 0.35));
+        if dot(t_mm, t_mm) > 0.5 {
+            let e = 0.4;
+            let hx = foil_height(mm + vec2<f32>(e, 0.0)) - foil_height(mm - vec2<f32>(e, 0.0));
+            let hy = foil_height(mm + vec2<f32>(0.0, e)) - foil_height(mm - vec2<f32>(0.0, e));
+            nf = normalize(nf - (hx * t_mm + hy * b_mm) / (2.0 * e));
+        }
+        let nvf = max(dot(nf, v), 1e-4);
+        let rf = reflect(-v, nf);
+        var f0 = spec.rgb;
+        if kind == 6u {
+            // ホログラム: 見る向きと場所で、虹の色が流れる。
+            let phase = dot(rf, vec3<f32>(0.9, 1.3, 0.7)) * 3.0 + (mm.x * 0.7 + mm.y * 0.3) * 0.03 + value_noise(mm / 0.8) * 0.12;
+            let rainbow = 0.5 + 0.5 * cos(2.0 * PI * (phase + vec3<f32>(0.0, 0.33, 0.67)));
+            f0 = mix(f0, rainbow, 0.65);
+        }
+        // 箔の細かい凹凸で散る光（どの向きから見ても、箔の色が沈みすぎないように）。
+        let metal = radiance(rf, spec.a) * env_brdf(f0, spec.a, nvf) + f0 * irradiance(nf) * 0.22;
+        color = mix(color, metal, foil.r);
+    }
     color = color * globals.env.z;
     return vec4<f32>(to_srgb(clamp(neutral(color), vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
 }
@@ -280,6 +329,7 @@ struct Globals {
     coat: [f32; 4],
     grain: [f32; 4],
     sheet: [f32; 4],
+    foils: [[f32; 4]; 8],
 }
 
 /// 箱の見た目のうち、視点のほかに描くたびに渡すもの。
@@ -328,6 +378,23 @@ fn grain_values(paper: Paper) -> ([f32; 4], [f32; 2]) {
         Paper::Kraft => ([0.35, 0.03, 0.035, 0.12], [0.0, 0.0]),
         Paper::Corrugated => ([0.35, 0.03, 0.035, 0.12], [4.0, 0.03]),
     }
+}
+
+/// 箔の種類ごとの、映り込みの色（線形の反射率）と粗さ。並びは `Foil::ALL` と同じ。ホログラムは銀を土台に、描くときに虹色を足す。
+fn foil_values() -> [[f32; 4]; 8] {
+    let mut out = [[0.0f32; 4]; 8];
+    for (slot, foil) in out.iter_mut().zip(Foil::ALL) {
+        *slot = match foil {
+            Foil::Gold => [1.0, 0.71, 0.29, 0.18],
+            Foil::Silver => [0.95, 0.95, 0.96, 0.16],
+            Foil::Copper => [0.95, 0.56, 0.40, 0.18],
+            Foil::RedGold => [1.0, 0.62, 0.30, 0.18],
+            Foil::MatteGold => [1.0, 0.71, 0.29, 0.42],
+            Foil::MatteSilver => [0.92, 0.92, 0.93, 0.42],
+            Foil::Hologram => [0.92, 0.92, 0.94, 0.06],
+        };
+    }
+    out
 }
 
 /// コートの、強さ、粗さ、色の深まり。
@@ -390,6 +457,8 @@ pub struct BoxRenderer {
     /// 紙の表の絵と、裏の絵。
     front: wgpu::TextureView,
     back: wgpu::TextureView,
+    /// 加工の版の絵（表と裏）。R が箔の量、G が箔の種類。
+    finish: [wgpu::TextureView; 2],
     sampler: wgpu::Sampler,
     env_layout: wgpu::BindGroupLayout,
     env_bind: wgpu::BindGroup,
@@ -451,6 +520,18 @@ impl BoxRenderer {
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
@@ -523,7 +604,8 @@ impl BoxRenderer {
         });
         let front = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let back = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
-        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &front, &back);
+        let finish = [Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0])];
+        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &[&front, &back, &finish[0], &finish[1]]);
         // 景色は、左右はつながっているので繰り返し、上下は端で止める。
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("box environment"),
@@ -547,6 +629,7 @@ impl BoxRenderer {
             art_bind,
             front,
             back,
+            finish,
             sampler,
             env_layout,
             env_bind,
@@ -634,10 +717,34 @@ impl BoxRenderer {
             coat: coat_values(look.material.coat),
             grain,
             sheet: [look.sheet[0].max(1.0), look.sheet[1].max(1.0), flute[0], flute[1]],
+            foils: foil_values(),
         }
     }
 
-    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, front: &wgpu::TextureView, back: &wgpu::TextureView) -> wgpu::BindGroup {
+    /// 色ではない値の絵（加工の版）を、そのままの数で送る。
+    fn upload_plain(rs: &egui_wgpu::RenderState, w: u32, h: u32, rgba: &[u8]) -> wgpu::TextureView {
+        let tex = texture(&rs.device, "box finish", [w, h], wgpu::TextureFormat::Rgba8Unorm, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        rs.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            rgba,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// 加工の版の絵を差し替える（None なら加工なし）。
+    pub fn set_finish(&mut self, rs: &egui_wgpu::RenderState, back: bool, w: usize, h: usize, rgba: Option<&[u8]>) {
+        let view = match rgba {
+            Some(rgba) if w > 0 && h > 0 && rgba.len() == w * h * 4 && w <= rs.device.limits().max_texture_dimension_2d as usize && h <= rs.device.limits().max_texture_dimension_2d as usize => Self::upload_plain(rs, w as u32, h as u32, rgba),
+            _ => Self::upload_plain(rs, 1, 1, &[0, 0, 0, 0]),
+        };
+        self.finish[back as usize] = view;
+        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1]]);
+    }
+
+    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, views: &[&wgpu::TextureView; 4]) -> wgpu::BindGroup {
+        let [front, back, finish_front, finish_back] = *views;
         rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("box art"),
             layout,
@@ -645,6 +752,8 @@ impl BoxRenderer {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(front) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(back) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(finish_front) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(finish_back) },
             ],
         })
     }
@@ -661,7 +770,7 @@ impl BoxRenderer {
         } else {
             self.front = view;
         }
-        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &self.front, &self.back);
+        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1]]);
     }
 
     fn ensure_target(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2]) {
@@ -810,5 +919,34 @@ impl BoxRenderer {
             }
         }
         Ok(rgba)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// シェーダーは、起動したときに GPU の部品が読む。書き間違いは起動して初めて分かるので、ここで読んで確かめる。
+    #[test]
+    fn シェーダーを読めて_型が合っている() {
+        let module = naga::front::wgsl::parse_str(SHADER).unwrap_or_else(|e| panic!("{}", e.emit_to_string(SHADER)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
+    }
+
+    #[test]
+    fn 逆行列() {
+        let m: Mat4 = [[2.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.5, 0.0], [0.0, 0.0, 4.0, 0.0], [1.0, 2.0, 3.0, 1.0]];
+        let p = pakenoba_core::math::mat4_mul(&m, &invert(&m));
+        for (i, col) in p.iter().enumerate() {
+            for (j, v) in col.iter().enumerate() {
+                assert!((v - if i == j { 1.0 } else { 0.0 }).abs() < 1e-5, "{p:?}");
+            }
+        }
+    }
+
+    /// 描くたびに送る値の並びが、シェーダーの並び（16 バイトずつ）と合う。
+    #[test]
+    fn 送る値の大きさ() {
+        assert_eq!(std::mem::size_of::<Globals>() % 16, 0);
     }
 }

@@ -70,6 +70,9 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "project.new", summary: "Start a new project (in a new tab when the current one has content).", args: schema!(; required: []), read_only: false },
     CommandInfo { name: "project.open", summary: "Open a project file (.pknb). AI can only open files inside the allowed folders.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
     CommandInfo { name: "project.save_as", summary: "Save the project to a new file (.pknb). AI can only write inside the allowed folders and never overwrites an existing file.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "finish.add", summary: "Add foil stamping to an artwork layer (image, text or shape). The foil takes the artwork's shape and moves with it; hide the artwork to stamp foil without ink. foil: gold (default), silver, copper, red_gold, matte_gold, matte_silver, hologram. Returns the finish id.", args: schema!("id": r#"{"type":"integer"}"#, "foil": r#"{"type":"string"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "finish.set", summary: "Change a finish layer: foil type, visibility or name.", args: schema!("id": r#"{"type":"integer"}"#, "foil": r#"{"type":"string"}"#, "visible": r#"{"type":"boolean"}"#, "name": r#"{"type":"string"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "finish.delete", summary: "Remove a finish layer.", args: schema!("id": r#"{"type":"integer"}"#; required: ["id"]), read_only: false },
     CommandInfo { name: "material.set", summary: "Set the paper (coated_board, coated, matte_coated, uncoated, kraft, corrugated) and the coating on the outside (none, matte_varnish, gloss_varnish, matte_pp, gloss_pp, soft_touch_pp). Either can be left out.", args: schema!("paper": r#"{"type":"string"}"#, "coat": r#"{"type":"string"}"#; required: []), read_only: false },
     CommandInfo { name: "shape.set", summary: "Change the box type: tuck_box, gable, pillow, or prism (with sides 3, 5, 6 or 8). Placed artwork comes off the box (undo brings it back). Returns the new panel names.", args: schema!("kind": r#"{"type":"string","enum":["tuck_box","gable","pillow","prism"]}"#, "sides": r#"{"type":"integer"}"#; required: ["kind"]), read_only: false },
     CommandInfo { name: "shape.dimensions", summary: "Set inside dimensions in mm (width, depth, height, thickness of the paper; bulge in degrees for pillow; roof for gable; glue_flap, dust_flap, tuck_flap for the tuck-end box, a number or \"auto\"). Values are kept in range. Not undoable.", args: schema!("width": r#"{"type":"number"}"#, "depth": r#"{"type":"number"}"#, "height": r#"{"type":"number"}"#, "thickness": r#"{"type":"number"}"#, "bulge": r#"{"type":"number"}"#, "roof": r#"{"type":"number"}"#, "glue_flap": "{}", "dust_flap": "{}", "tuck_flap": "{}"; required: []), read_only: false },
@@ -216,6 +219,7 @@ impl App {
             "file": self.file.path.as_ref().map(|p| p.display().to_string()),
             "shape": { "summary": self.shape_summary(), "sides": d.sides, "w": d.w, "d": d.d, "h": d.h, "paper_mm": d.t },
             "material": { "paper": self.material.paper.key(), "coat": self.material.coat.key() },
+            "finishes": self.finishes_json(),
             "panels": self.template.panels.iter().map(|p| p.name).collect::<Vec<_>>(),
             "layers": (0..self.decals.len()).map(|i| self.layer_json(i)).collect::<Vec<_>>(),
             "selected": self.selection().iter().map(|&i| self.decals[i].layer.id).collect::<Vec<_>>(),
@@ -753,6 +757,35 @@ mod tests {
         assert!(app.run_command("agent:test", "layer.blend.set", json!({ "ids": [ids[1]], "blend": "sparkle" })).is_err());
         assert!(app.run_command("agent:test", "layer.visible", json!({ "ids": [999], "visible": false })).is_err());
         assert!(app.run_command("agent:test", "no.such", Value::Null).is_err());
+    }
+
+    #[test]
+    fn 柄に箔を押し_種類を変え_外せて_元に戻せる() {
+        let mut app = app();
+        let id = i64::from(app.decals[0].layer.id);
+        let added = app.run_command("agent:test", "finish.add", json!({ "id": id, "foil": "silver" })).unwrap();
+        let finish = added["id"].as_i64().unwrap();
+        assert!(app.decals.iter().all(|d| i64::from(d.layer.id) != finish), "加工の印は、柄の印と重ならない");
+        assert_eq!(app.finishes.len(), 1);
+        assert_eq!(app.finishes[0].foil, pakenoba_core::material::Foil::Silver);
+        // 加工の版の絵には、柄の形のところに箔が入る（柄を隠しても）。
+        app.run_command("agent:test", "layer.visible", json!({ "ids": [id], "visible": false })).unwrap();
+        let back = app.decals[0].back;
+        let map = app.finish_map(back).expect("加工の版");
+        assert!(map.chunks_exact(4).any(|p| p[0] > 200 && p[1] == super::super::finishes::foil_code(pakenoba_core::material::Foil::Silver)));
+        app.run_command("agent:test", "finish.set", json!({ "id": finish, "foil": "hologram" })).unwrap();
+        assert_eq!(app.finishes[0].foil, pakenoba_core::material::Foil::Hologram);
+        let inspect = app.run_command("agent:test", "doc.inspect", Value::Null).unwrap();
+        assert_eq!(inspect["finishes"][0]["foil"], "hologram");
+        assert!(app.run_command("agent:test", "finish.set", json!({ "id": finish, "foil": "glitter" })).is_err());
+        app.run_command("agent:test", "finish.delete", json!({ "id": finish })).unwrap();
+        assert!(app.finishes.is_empty());
+        app.run_command("agent:test", "edit.undo", Value::Null).unwrap();
+        assert_eq!(app.finishes.len(), 1);
+        // 案件に保存して開き直しても残る。
+        let project = app.project().unwrap();
+        assert_eq!(project.finishes.len(), 1);
+        assert_eq!(project.finishes[0].link, app.decals[0].layer.id);
     }
 
     #[test]

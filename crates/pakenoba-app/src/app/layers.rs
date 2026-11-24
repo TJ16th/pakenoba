@@ -315,6 +315,9 @@ impl App {
                     continue;
                 }
                 face_caption(ui, if back { t!("Back (inside of the box)") } else { t!("Front (outside of the box)") });
+                if !filtering {
+                    self.finish_rows(ui, back);
+                }
                 if rows.is_empty() && self.bases[back as usize].is_none() {
                     face_caption(ui, if filtering { t!("No layers match the filter") } else { t!("No artwork") });
                 }
@@ -337,6 +340,55 @@ impl App {
         // 一覧の下に、いちばん下のボタン（PhotoCraft と同じ）。
         line(ui);
         egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| self.layer_buttons(ui));
+    }
+
+    /// 加工のレイヤー（箔押し）の行。紙の面ごとに、柄の上に並べる（刷ったあとに押すので、いちばん上）。
+    fn finish_rows(&mut self, ui: &mut egui::Ui, back: bool) {
+        let rows: Vec<usize> = (0..self.finishes.len()).rev().filter(|&i| self.finish_link(i).map_or(!back, |l| self.decals[l].back == back)).collect();
+        for index in rows {
+            let finish = self.finishes[index].clone();
+            let selected = self.finish_selected == Some(index) && self.selected.is_none();
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::click());
+            let painter = ui.painter().clone();
+            let eye = egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, ROW_H));
+            painter.rect_filled(eye, 0.0, super::theme::EYE_COLUMN);
+            let body = egui::Rect::from_min_max(egui::pos2(eye.right(), rect.top()), rect.max);
+            if selected {
+                painter.rect_filled(body, 0.0, super::theme::SELECTED);
+            } else if response.hovered() {
+                painter.rect_filled(body, 0.0, super::theme::HOVER);
+            }
+            painter.hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, super::theme::ROW_LINE));
+            painter.vline(eye.right(), rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
+            if ui.put(egui::Rect::from_center_size(eye.center(), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !finish.hidden)).clicked() {
+                self.person("finish.set", serde_json::json!({ "id": finish.id, "visible": finish.hidden }));
+            }
+            let cy = rect.center().y;
+            let x = eye.right() + 6.0;
+            // 小さな絵のかわりに、箔の色の四角と光の印。
+            let swatch = super::finishes::foil_swatch(finish.foil);
+            let thumb = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
+            painter.rect_filled(thumb, 2.0, egui::Color32::from_rgb(swatch[0], swatch[1], swatch[2]));
+            icons::draw_foil(&painter, thumb.center(), egui::Stroke::new(1.3, egui::Color32::from_gray(40)));
+            let name_rect = egui::Rect::from_min_max(egui::pos2(thumb.right() + 6.0, rect.top() + 2.0), egui::pos2(rect.right() - 6.0, rect.bottom() - 2.0));
+            let label = self.finish_label(index);
+            let missing = self.finish_link(index).is_none();
+            ui.scope_builder(egui::UiBuilder::new().max_rect(name_rect).layout(egui::Layout::top_down(egui::Align::LEFT)), |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.add(egui::Label::new(egui::RichText::new(label).color(super::theme::TEXT)).truncate().selectable(false));
+                let kind = if missing { t!("Foil (the linked artwork is gone)") } else { t!("Foil stamping") };
+                ui.add(egui::Label::new(egui::RichText::new(kind).small().color(super::theme::MUTED)).truncate().selectable(false));
+            });
+            if response.clicked() {
+                self.select_finish(Some(index));
+            }
+            response.context_menu(|ui| {
+                if ui.button(t!("Remove the foil")).clicked() {
+                    self.person("finish.delete", serde_json::json!({ "id": finish.id }));
+                    ui.close();
+                }
+            });
+        }
     }
 
     /// 絞り込みの段（PhotoCraft の「種類」の段と同じ形）: 名前で探す欄と、種類のボタン。
@@ -786,6 +838,17 @@ impl App {
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
                     self.cmd_group();
                 }
+                let foil = icons::bare_button(ui, size, false, artwork.is_some(), t!("Add foil stamping in the shape of the selected artwork"), icons::draw_foil);
+                egui::Popup::menu(&foil).show(|ui| {
+                    ui.set_min_width(200.0);
+                    ui.weak(t!("Foil stamping"));
+                    for f in pakenoba_core::material::Foil::ALL {
+                        if ui.button(f.label()).clicked() {
+                            self.add_foil(f);
+                            ui.close();
+                        }
+                    }
+                });
                 let adjust = icons::bare_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
                 egui::Popup::menu(&adjust).show(|ui| {
                     ui.set_min_width(240.0);
