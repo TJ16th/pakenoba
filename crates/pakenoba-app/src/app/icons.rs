@@ -155,11 +155,15 @@ pub(super) fn draw_adjust(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.add(Shape::convex_polygon(half, stroke.color, Stroke::NONE));
 }
 
-/// 加工（箔押し）。4 本の光の筋の星。
+/// 加工（箔押し、エンボスなど）。浮き出した版の形。
 pub(super) fn draw_foil(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    // 浮き出した版（外の四角、内の四角、角をつなぐ斜めの線）。生成AIの道具の「きらめき」と見分けられるように。
     let p = |x: f32, y: f32| c + vec2(x, y);
-    let star = vec![p(0.0, -7.0), p(1.6, -1.6), p(7.0, 0.0), p(1.6, 1.6), p(0.0, 7.0), p(-1.6, 1.6), p(-7.0, 0.0), p(-1.6, -1.6), p(0.0, -7.0)];
-    painter.add(Shape::line(star, stroke));
+    painter.rect_stroke(Rect::from_min_max(p(-7.0, -7.0), p(7.0, 7.0)), 1.5, stroke, StrokeKind::Middle);
+    painter.rect_stroke(Rect::from_min_max(p(-3.0, -3.0), p(3.0, 3.0)), 0.5, stroke, StrokeKind::Middle);
+    for (a, b) in [((-7.0, -7.0), (-3.0, -3.0)), ((7.0, -7.0), (3.0, -3.0)), ((7.0, 7.0), (3.0, 3.0)), ((-7.0, 7.0), (-3.0, 3.0))] {
+        painter.line_segment([p(a.0, a.1), p(b.0, b.1)], stroke);
+    }
 }
 
 /// フォルダ（グループ）。

@@ -305,7 +305,9 @@ impl App {
         // 紙の表と裏に分けて、上に重なっているものから並べる。
         let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
         // 一覧だけを流し、いちばん下のボタンは欄の底に残す。
-        let list_height = (ui.available_height() - 34.0).max(60.0);
+        // ボタンの帯の高さ: 線、上下の余白、ボタン、行の間（2 つ）。足りないと、ボタンが欄の外へはみ出す。
+        let footer = 1.0 + 4.0 + 26.0 + ui.spacing().item_spacing.y * 2.0 + 4.0;
+        let list_height = (ui.available_height() - footer).max(60.0);
         egui::ScrollArea::vertical().id_salt("layer-list").max_height(list_height).min_scrolled_height(list_height).auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             line(ui);
