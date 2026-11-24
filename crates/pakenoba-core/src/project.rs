@@ -640,7 +640,37 @@ pub struct Project {
     pub back_base: Option<Asset>,
     /// 操作の記録（古い順）。`history/log.jsonl` に、1 行 1 件で入れる。
     pub log: Vec<LogEntry>,
+    /// 残した版（古い順）。`versions/` に入れる。
+    pub versions: Vec<Version>,
 }
+
+/// 残した版。その時点の案件（設定のテキストと、指している素材とマスク）。
+/// 素材とマスクは中身の印で入れるので、いまの案件と同じ中身なら、ファイルは増えない。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Version {
+    /// 名前（自動の版は「エージェントの依頼の前」など）。
+    pub name: String,
+    /// いつ残したか（ISO 8601 の、その土地の時刻）。
+    pub time: String,
+    /// 自動で残した版（新しい 10 個だけ残す）。名前を付けて残した版は、使う人が消すまで残る。
+    pub auto: bool,
+    /// その時点の案件（記録と版は持たない）。
+    pub project: Project,
+}
+
+/// 版の一覧のファイルの 1 行。
+#[derive(Serialize, Deserialize)]
+struct VersionEntry {
+    file: String,
+    name: String,
+    time: String,
+    #[serde(default)]
+    auto: bool,
+}
+
+const VERSIONS_INDEX: &str = "versions/index.json";
+/// 自動の版を残す数。
+pub const AUTO_VERSIONS: usize = 10;
 
 /// 操作の記録の 1 件。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1192,14 +1222,41 @@ impl Project {
 
     /// 案件を、案件のファイルの形で書き出す。
     pub fn write<W: Write + Seek>(&self, out: W) -> Result<(), Error> {
+        let mut zip = ZipWriter::new(out);
+        let mut written: Vec<String> = Vec::new();
+        self.write_parts(&mut zip, MANIFEST, &mut written)?;
+        if !self.log.is_empty() {
+            let mut lines = String::new();
+            for entry in &self.log[self.log.len().saturating_sub(LOG_LIMIT)..] {
+                lines.push_str(&serde_json::to_string(entry).map_err(|e| Error::Broken(e.to_string()))?);
+                lines.push('\n');
+            }
+            zip.start_file(LOG_FILE, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+            zip.write_all(lines.as_bytes())?;
+        }
+        if !self.versions.is_empty() {
+            let mut index = Vec::new();
+            for (n, version) in self.versions.iter().enumerate() {
+                let file = format!("versions/{:03}.toml", n + 1);
+                version.project.write_parts(&mut zip, &file, &mut written)?;
+                index.push(VersionEntry { file, name: version.name.clone(), time: version.time.clone(), auto: version.auto });
+            }
+            let text = serde_json::to_string_pretty(&index).map_err(|e| Error::Broken(e.to_string()))?;
+            zip.start_file(VERSIONS_INDEX, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+            zip.write_all(text.as_bytes())?;
+        }
+        let mut out = zip.finish().map_err(zip_error)?;
+        out.flush()?;
+        Ok(())
+    }
+
+    /// 設定のテキストを `manifest` の名前で書き、素材とマスクのファイルを書く（`written` にあるものは書かない）。
+    fn write_parts<W: Write + Seek>(&self, zip: &mut ZipWriter<W>, manifest: &str, written: &mut Vec<String>) -> Result<(), Error> {
         let tpl = self.shape.template();
         self.check(&tpl)?;
         let text = toml::to_string(&self.manifest(&tpl)).map_err(|e| Error::Broken(t!("Could not make the settings text: {e}")))?;
-
-        let mut zip = ZipWriter::new(out);
-        zip.start_file(MANIFEST, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+        zip.start_file(manifest, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
         zip.write_all(text.as_bytes())?;
-        let mut written: Vec<String> = Vec::new();
         for asset in self.assets.iter().chain(&self.base).chain(&self.back_base) {
             let file = asset.file();
             if written.contains(&file) {
@@ -1222,17 +1279,6 @@ impl Project {
             zip.write_all(&mask.data)?;
             written.push(file);
         }
-        if !self.log.is_empty() {
-            let mut lines = String::new();
-            for entry in &self.log[self.log.len().saturating_sub(LOG_LIMIT)..] {
-                lines.push_str(&serde_json::to_string(entry).map_err(|e| Error::Broken(e.to_string()))?);
-                lines.push('\n');
-            }
-            zip.start_file(LOG_FILE, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
-            zip.write_all(lines.as_bytes())?;
-        }
-        let mut out = zip.finish().map_err(zip_error)?;
-        out.flush()?;
         Ok(())
     }
 
@@ -1242,28 +1288,10 @@ impl Project {
             zip::result::ZipError::Io(e) => Error::Io(e),
             _ => Error::NotProject,
         })?;
-        let text = {
-            let entry = zip.by_name(MANIFEST).map_err(|e| match e {
-                zip::result::ZipError::Io(e) => Error::Io(e),
-                _ => Error::NotProject,
-            })?;
-            let mut bytes = Vec::new();
-            entry.take(MANIFEST_LIMIT + 1).read_to_end(&mut bytes).map_err(|e| Error::Broken(t!("Could not extract the settings text: {e}")))?;
-            if bytes.len() as u64 > MANIFEST_LIMIT {
-                return Err(Error::Broken(t!("The settings text is too large").to_owned()));
-            }
-            String::from_utf8(bytes).map_err(|_| Error::Broken(t!("The characters of the settings text cannot be read").to_owned()))?
-        };
-        let table: toml::Table = toml::from_str(&text).map_err(|e| Error::Broken(t!("Could not read the settings text: {}", e.message())))?;
-        if table.get("format").and_then(|v| v.as_str()) != Some(FORMAT) {
-            return Err(Error::NotProject);
-        }
-        let version = table.get("version").and_then(|v| v.as_integer()).ok_or_else(|| Error::Broken(t!("The format version is missing").to_owned()))?;
-        match u32::try_from(version) {
-            Ok(1) => from_v1(table, &mut zip),
-            Ok(found) if found > VERSION => Err(Error::Newer(found)),
-            _ => Err(Error::Broken(t!("The format version ({version}) is not valid"))),
-        }
+        let mut opened = read_manifest(&mut zip, MANIFEST)?;
+        opened.project.log = read_log(&mut zip, &mut opened.problems);
+        opened.project.versions = read_versions(&mut zip, &mut opened.problems);
+        Ok(opened)
     }
 
     /// 案件を、ファイルに保存する。別の名前で書ききってから入れ替えるので、途中で止まっても、前のファイルが残る。
@@ -1275,6 +1303,56 @@ impl Project {
     pub fn open(path: &Path) -> Result<Opened, Error> {
         Project::read(BufReader::with_capacity(1 << 20, File::open(path)?))
     }
+}
+
+/// 設定のテキスト（`name`）と、それが指す素材とマスクを読む。
+fn read_manifest<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Opened, Error> {
+    let text = {
+        let entry = zip.by_name(name).map_err(|e| match e {
+            zip::result::ZipError::Io(e) => Error::Io(e),
+            _ => Error::NotProject,
+        })?;
+        let mut bytes = Vec::new();
+        entry.take(MANIFEST_LIMIT + 1).read_to_end(&mut bytes).map_err(|e| Error::Broken(t!("Could not extract the settings text: {e}")))?;
+        if bytes.len() as u64 > MANIFEST_LIMIT {
+            return Err(Error::Broken(t!("The settings text is too large").to_owned()));
+        }
+        String::from_utf8(bytes).map_err(|_| Error::Broken(t!("The characters of the settings text cannot be read").to_owned()))?
+    };
+    let table: toml::Table = toml::from_str(&text).map_err(|e| Error::Broken(t!("Could not read the settings text: {}", e.message())))?;
+    if table.get("format").and_then(|v| v.as_str()) != Some(FORMAT) {
+        return Err(Error::NotProject);
+    }
+    let version = table.get("version").and_then(|v| v.as_integer()).ok_or_else(|| Error::Broken(t!("The format version is missing").to_owned()))?;
+    match u32::try_from(version) {
+        Ok(1) => from_v1(table, zip),
+        Ok(found) if found > VERSION => Err(Error::Newer(found)),
+        _ => Err(Error::Broken(t!("The format version ({version}) is not valid"))),
+    }
+}
+
+/// 残した版を読む。読めない版は外して知らせる（案件そのものは開く）。
+fn read_versions<R: Read + Seek>(zip: &mut ZipArchive<R>, problems: &mut Vec<String>) -> Vec<Version> {
+    let Ok(bytes) = read_entry(zip, VERSIONS_INDEX) else { return Vec::new() };
+    let Ok(index) = serde_json::from_slice::<Vec<VersionEntry>>(&bytes) else {
+        problems.push(t!("The list of saved versions could not be read, so the versions were left out").to_owned());
+        return Vec::new();
+    };
+    let mut versions = Vec::new();
+    for entry in index {
+        if !entry.file.starts_with("versions/") {
+            continue;
+        }
+        match read_manifest(zip, &entry.file) {
+            Ok(opened) => {
+                let mut project = opened.project;
+                (project.log, project.versions) = (Vec::new(), Vec::new());
+                versions.push(Version { name: entry.name, time: entry.time, auto: entry.auto, project });
+            }
+            Err(e) => problems.push(t!("The version \"{}\" could not be read, so it was left out ({e})", entry.name)),
+        }
+    }
+    versions
 }
 
 /// 操作の記録を読む。ないときは空。読めない行は飛ばして、知らせる。
@@ -1546,8 +1624,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     }
     tidy_groups(&mut decals);
 
-    let log = read_log(zip, &mut problems);
-    Ok(Opened { project: Project { shape, assets, decals, base, back_base, log }, problems })
+    Ok(Opened { project: Project { shape, assets, decals, base, back_base, log: Vec::new(), versions: Vec::new() }, problems })
 }
 
 /// グループの入れ子とクリッピングマスクの決まりに合うように、印を直す（読むとき、並べ替えたあと）。
@@ -1749,7 +1826,7 @@ mod tests {
             LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
             LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
         ];
-        Project { shape, assets, decals, base, back_base, log }
+        Project { shape, assets, decals, base, back_base, log, versions: Vec::new() }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -1776,6 +1853,20 @@ mod tests {
             zip.by_name(&name).unwrap().read_to_end(&mut bytes).unwrap();
             out.start_file(name, SimpleFileOptions::default()).unwrap();
             out.write_all(&bytes).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    /// ZIP の中の 1 つのファイルを、別の中身に入れ替える。
+    fn with_file(bytes: &[u8], target: &str, content: &[u8]) -> Vec<u8> {
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
+        let mut out = ZipWriter::new(Cursor::new(Vec::new()));
+        for name in names {
+            let mut data = Vec::new();
+            zip.by_name(&name).unwrap().read_to_end(&mut data).unwrap();
+            out.start_file(name.as_str(), SimpleFileOptions::default()).unwrap();
+            out.write_all(if name == target { content } else { &data }).unwrap();
         }
         out.finish().unwrap().into_inner()
     }
@@ -1823,7 +1914,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() };
+        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -2032,6 +2123,36 @@ mod tests {
     }
 
     #[test]
+    fn 版は_素材を共有して入り_開くと戻る() {
+        let mut project = sample(Kind::TuckBox);
+        let mut older = project.clone();
+        older.log.clear();
+        older.decals.truncate(1);
+        project.versions = vec![
+            Version { name: "はじめ".to_owned(), time: "2026-11-24T14:00:00+09:00".to_owned(), auto: false, project: older.clone() },
+            Version { name: "依頼の前".to_owned(), time: "2026-11-24T14:05:00+09:00".to_owned(), auto: true, project: older },
+        ];
+        let bytes = bytes_of(&project);
+        let opened = Project::read(Cursor::new(&bytes)).unwrap();
+        assert!(opened.problems.is_empty(), "{:?}", opened.problems);
+        let versions = &opened.project.versions;
+        assert_eq!(versions.len(), 2);
+        assert_eq!((versions[0].name.as_str(), versions[0].auto, versions[1].auto), ("はじめ", false, true));
+        assert_eq!(versions[0].project.decals.len(), 1);
+        assert_eq!(versions[0].project.assets.len(), project.assets.len());
+        assert_eq!(opened.project.decals.len(), project.decals.len());
+        // 素材のファイルは、版があっても増えない。
+        let without = Project { versions: Vec::new(), ..project.clone() };
+        let count = |b: &[u8]| ZipArchive::new(Cursor::new(b)).unwrap().file_names().filter(|n| n.as_ref().unwrap().starts_with("assets/")).count();
+        assert_eq!(count(&bytes), count(&bytes_of(&without)));
+        // 読めない版は外して知らせ、案件は開く。
+        let broken = with_file(&bytes, "versions/001.toml", b"format = 1");
+        let opened = Project::read(Cursor::new(&broken)).unwrap();
+        assert_eq!(opened.project.versions.len(), 1);
+        assert_eq!(opened.problems.len(), 1);
+    }
+
+    #[test]
     fn 調整はjsonと行き来できる() {
         let adjust = Adjustment::new(AdjustKind::Levels { black: 10, white: 240, gamma: 125 });
         let json = adjustment_to_json(&adjust);
@@ -2152,7 +2273,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() };
+        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -2222,6 +2343,7 @@ mod tests {
             base: Some(Asset::new("型紙に描いた絵.psd", fake_file(13, 1500), [0.0, 0.0], "2026-11-22T00:32:00+09:00")),
             back_base: None,
             log: Vec::new(),
+            versions: Vec::new(),
         }
     }
 

@@ -1,4 +1,4 @@
-//! 操作の記録の窓（表示 → 操作の記録）。新しい順に、いつ、誰が、何をしたかを並べる。
+//! 履歴の窓（表示 → 履歴）。「操作の記録」のタブに、新しい順に、いつ、誰が、何をしたかを並べる。「版」のタブは versions.rs。
 //!
 //! あとで、エージェントの欄の隣の「履歴」のタブに移す（docs/agent-and-mcp.md の 4 章）。
 
@@ -45,6 +45,8 @@ pub(super) fn command_label(name: &str) -> String {
         "project.new" => t!("New project"),
         "project.open" => t!("Opened a project"),
         "project.save_as" => t!("Saved as"),
+        "version.restore" => t!("Went back to a version"),
+        "version.keep" => t!("Kept a version"),
         "edit.undo" => t!("Undo"),
         "edit.redo" => t!("Redo"),
         other => return other.to_owned(),
@@ -79,7 +81,15 @@ impl App {
         }
         let mut open = true;
         let mut record = self.settings.record_log;
-        egui::Window::new(t!("Operation history")).open(&mut open).default_size([420.0, 460.0]).show(ctx, |ui| {
+        egui::Window::new(t!("History")).open(&mut open).default_size([460.0, 480.0]).show(ctx, |ui| {
+            // 「操作の記録」と「版」のタブ。
+            if let Some(tab) = super::icons::panel_tabs(ui, &[t!("Operation history"), t!("Versions")], self.version_ui.tab) {
+                self.version_ui.tab = tab;
+            }
+            if self.version_ui.tab == 1 {
+                self.versions_tab(ui);
+                return;
+            }
             ui.horizontal(|ui| {
                 ui.checkbox(&mut record, t!("Record operations")).on_hover_text(t!("The history is saved in the project file. To give the file to someone without it, use File → Save Without History…"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

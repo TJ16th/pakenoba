@@ -35,6 +35,7 @@ mod commands_doc;
 pub(crate) mod mcp;
 mod agent;
 mod dialog;
+mod versions;
 mod oplog;
 
 use pakenoba_i18n::t;
@@ -537,6 +538,10 @@ struct App {
     settings: settings::Settings,
     /// 操作の記録（古い順。案件のファイルに入る）。
     log: Vec<pakenoba_core::project::LogEntry>,
+    /// 残した版（古い順。案件のファイルに入る）。
+    versions: Vec<pakenoba_core::project::Version>,
+    /// 版の窓の状態（名前を付けて残す、消す確認）。
+    version_ui: versions::VersionUi,
     /// まとめて呼んだコマンドの最中（`Some`）。中の値は、もう元に戻す記録を取ったか。
     undo_batch: Option<bool>,
     /// いま実行しているコマンドを呼んだのは誰か（`person`、`agent:<名前>`、`mcp:<名前>`）。
@@ -696,6 +701,8 @@ impl App {
                 settings
             },
             log: Vec::new(),
+            versions: Vec::new(),
+            version_ui: Default::default(),
             undo_batch: None,
             actor: "person".to_owned(),
             allowed: Vec::new(),

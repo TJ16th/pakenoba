@@ -352,6 +352,9 @@ impl App {
             return;
         };
         self.agent.input.clear();
+        // 頼む前の状態を、自動の版に残す（履歴の窓の「版」から、見比べたり戻したりできる）。
+        let short: String = request.chars().take(24).collect();
+        self.keep_version(&t!("Before: {short}"), true);
         let doc = self.run_command("person", "doc.inspect", Value::Null).unwrap_or_default();
         let language = pakenoba_i18n::current();
         let system = format!("{}\nYou are the assistant inside the PAKENOBA app. Reply in the user's language (the app is set to \"{language}\"). Keep replies short and say what you changed. Save or export only when the user asks.", super::mcp::INSTRUCTIONS);

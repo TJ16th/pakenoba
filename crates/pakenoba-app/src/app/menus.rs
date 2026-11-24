@@ -55,6 +55,7 @@ impl App {
         });
         self.about_window(ui.ctx());
         self.log_window(ui.ctx());
+        self.version_dialogs(ui.ctx());
     }
 
     /// 「ファイル」の中の、書き出しの項目。押すと「出力」の工程に移り、その種類を選ぶ。
@@ -188,7 +189,7 @@ impl App {
             if check(ui, true, self.agent.open, t!("Agent"), "", "") {
                 self.agent.open = !self.agent.open;
             }
-            if check(ui, true, self.log_open, t!("Operation history"), "", "") {
+            if check(ui, true, self.log_open, t!("History"), "", "") {
                 self.log_open = !self.log_open;
             }
             ui.separator();

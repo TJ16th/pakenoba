@@ -1022,3 +1022,34 @@ blend	Color	カラー
 	Hide the key	キーを伏せる
 	Show the key	キーを見せる
 	{} keys usually start with "{}". Check that this is the right key.	{} のキーは、ふつう「{}」で始まります。正しいキーか確かめてください。
+	A deleted version cannot be brought back.	消した版は、元に戻せません。
+	Before each request to the agent, a version is kept automatically (the newest {AUTO_VERSIONS}).	エージェントに頼む前に、自動で版を残します（新しい {AUTO_VERSIONS} 個）。
+	Before going back to "{}"	「{}」に戻す前
+	Before: {short}	依頼の前: {short}
+	Could not keep a version: {e}	版を残せませんでした: {e}
+	Delete the version "{}"?	版「{}」を消しますか
+	Delete this version	この版を消す
+	Go back to this	この版に戻す
+	History	履歴
+	Keep	残す
+	Keep a version	版を残す
+	Keep a version…	版を残す…
+	Keep the project as it is now, with a name	いまの案件を、名前を付けて残す
+	Kept the version "{}".	版「{}」を残しました。
+	Make the project like this version (Ctrl+Z undoes it)	案件をこの版の状態にする（Ctrl+Z で元に戻せます）
+	Named versions stay until you delete them. They are saved in the project file.	名前を付けた版は、消すまで残ります。案件のファイルに入ります。
+	No versions yet.	まだ版はありません。
+	Open this version in a new tab to compare	この版を新しいタブで開いて見比べる
+	Opened the version "{}" in a new tab. Save it to keep it as its own project.	版「{}」を新しいタブで開きました。別の案件として残すなら、保存してください。
+	The list of saved versions could not be read, so the versions were left out	版の一覧を読めなかったので、版を外しました
+	The version "{}" could not be read, so it was left out ({e})	版「{}」を読めなかったので、外しました（{e}）
+	Versions	版
+	Went back to a version	版に戻した
+	Went back to the version "{}". Ctrl+Z undoes it.	版「{}」に戻しました。Ctrl+Z で元に戻せます。
+	auto	自動
+	e.g. First draft for the client	例: 客先への初稿
+	{when} · {layers} layer(s)	{when} ・ レイヤー {layers} 個
+	{} (version)	{}（版）
+	Kept a version	版を残した
+	Could not keep a version	版を残せませんでした
+	"name" is missing	「name」がありません

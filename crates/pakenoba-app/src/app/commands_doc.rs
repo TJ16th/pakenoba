@@ -196,7 +196,7 @@ impl App {
                 if !self.pristine() && !self.open_tab() {
                     return Err(t!("Could not open a new tab").to_owned());
                 }
-                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() });
+                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
                 self.file.path = None;
                 self.mark_saved();
                 Ok(Value::Null)
@@ -310,6 +310,14 @@ impl App {
                 let path = self.checked_path(args, true)?;
                 let pages = self.print_file(&path)?;
                 Ok(json!({ "path": path.display().to_string(), "sheets": pages }))
+            }
+            "version.list" => Ok(Value::Array(self.versions.iter().map(|v| json!({ "name": v.name, "time": v.time, "auto": v.auto, "layers": v.project.decals.len() })).collect())),
+            "version.keep" => {
+                let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| t!("\"name\" is missing").to_owned())?.to_owned();
+                if !self.keep_version(&name, false) {
+                    return Err(t!("Could not keep a version").to_owned());
+                }
+                Ok(json!({ "versions": self.versions.len() }))
             }
             "render.preview" => {
                 let back = match args.get("side").and_then(Value::as_str).unwrap_or("front") {

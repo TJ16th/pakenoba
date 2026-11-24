@@ -45,6 +45,8 @@ pub(super) enum FileAction {
     ImportDieline,
     /// 操作の記録を外して、名前を付けて保存する（人に渡すとき）。
     SaveWithoutLog,
+    /// 名前を付けて版を残す。
+    KeepVersion,
 }
 
 /// 裏で進めている保存。
@@ -67,7 +69,7 @@ pub(super) struct FileState {
     /// 案件のファイルの場所。まだ保存していなければ None。
     pub path: Option<PathBuf>,
     /// 最後に保存した（または開いた）ときの、状態の印。
-    saved: u64,
+    pub(super) saved: u64,
     saving: Option<Saving>,
     /// 保存していない変更があるときに、確認を待っている操作。
     pub(super) pending: Option<Then>,
@@ -81,7 +83,7 @@ pub(super) struct FileState {
     /// いまウィンドウに出している題。
     title: String,
     /// 名前を付けて保存するときに、はじめに入れておく名前。
-    suggest: String,
+    pub(super) suggest: String,
     /// 画面を撮って確かめるとき用。ファイルを選ぶダイアログを出さずに、この場所を答えにする。
     answer_open: Option<PathBuf>,
     answer_save: Option<PathBuf>,
@@ -173,7 +175,7 @@ impl App {
                 Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()), log: self.log.clone() })
+        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()), log: self.log.clone(), versions: self.versions.clone() })
     }
 
     /// 状態の印。案件のファイルに入るもの（型、寸法、柄、素材、展開図の絵）から作る。
@@ -202,6 +204,10 @@ impl App {
                 Some(Source::Adjustment) => 6u8.hash(&mut hasher),
                 None => 2u8.hash(&mut hasher),
             }
+        }
+        // 版を残した、消した、も保存していない変更に数える（版は案件のファイルに入るため）。
+        for version in &self.versions {
+            (&version.name, &version.time).hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -296,6 +302,7 @@ impl App {
         self.refit_bases();
 
         self.log = project.log;
+        self.versions = project.versions;
         self.ensure_ids();
 
         // 前の案件の、途中の操作や履歴は持ち越さない。
@@ -510,7 +517,7 @@ impl App {
     /// 起動したときと同じ、まっさらな案件にする（差し込み箱、柄も素材もなし）。型を選ぶところから始める。
     pub(super) fn new_now(&mut self) {
         let shape = Dims::for_shape(0, self.dims.t).shape();
-        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() });
+        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
         self.file.path = None;
         // タブで並ぶので、2 つ目からは番号を付ける（「名前なし 2」）。
         let n = self.tabs.next_untitled();
@@ -669,6 +676,7 @@ impl App {
             pick(ui, !saving, t!("Save"), "Ctrl+S", FileAction::Save);
             pick(ui, !saving, t!("Save As…"), "Ctrl+Shift+S", FileAction::SaveAs);
             pick(ui, !saving, t!("Save Without History…"), "", FileAction::SaveWithoutLog);
+            pick(ui, true, t!("Keep a version…"), "", FileAction::KeepVersion);
             ui.separator();
             pick(ui, !saving, t!("Import dieline artwork (PSD)…"), "", FileAction::ImportDieline);
             self.export_items(ui);
@@ -725,6 +733,7 @@ impl App {
             FileAction::SaveAs => {
                 self.save_as(ctx, Then::Nothing);
             }
+            FileAction::KeepVersion => self.version_ui.naming = Some(String::new()),
             FileAction::SaveWithoutLog => {
                 // 外した記録は、保存を取りやめたときだけ戻す（保存したファイルと、開いている案件をそろえる）。
                 let kept = std::mem::take(&mut self.log);

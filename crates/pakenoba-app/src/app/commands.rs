@@ -80,6 +80,8 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "export.psd", summary: "Save the dieline as a layered PSD (and the back as <name>_back.psd when there is artwork on the back). AI can only write inside the allowed folders and never overwrites.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
     CommandInfo { name: "export.pdf", summary: "Save the full-size dieline as a PDF tiled on A4 or A3 sheets. AI can only write inside the allowed folders and never overwrites.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
     CommandInfo { name: "render.preview", summary: "Look at the flat dieline with the artwork as a PNG (front or back side, longest edge up to max pixels). Use it to check how the design looks.", args: schema!("side": r#"{"type":"string","enum":["front","back"]}"#, "max": r#"{"type":"integer"}"#; required: []), read_only: true },
+    CommandInfo { name: "version.list", summary: "List the kept versions of the project (oldest first): name, time, whether it was kept automatically, and the number of layers.", args: schema!(; required: []), read_only: true },
+    CommandInfo { name: "version.keep", summary: "Keep the project as it is now as a named version, so the user can compare or go back to it later.", args: schema!("name": r#"{"type":"string"}"#; required: ["name"]), read_only: false },
     CommandInfo { name: "edit.undo", summary: "Undo the last change.", args: schema!(; required: []), read_only: false },
     CommandInfo { name: "edit.redo", summary: "Redo the change that was undone.", args: schema!(; required: []), read_only: false },
 ];
