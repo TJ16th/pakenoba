@@ -218,6 +218,72 @@ fn picture_thumb(placed: &Placed) -> Vec<u8> {
     out
 }
 
+/// 加工（箔、エンボス、ニス、白インキ）の小さな絵。もとの柄の形を、加工の色で塗って、暗い市松模様の上に置く。
+/// 箔には斜めの光沢を、ホログラムには虹色を、エンボスには左上からの光の陰影を付けて、平らな色の四角と見分けられるようにする。
+/// `placed` がなければ（もとの柄が見つからない）、四角いっぱいに塗る。
+fn finish_thumb(placed: Option<&Placed>, kind: pakenoba_core::material::FinishKind, foil: pakenoba_core::material::Foil) -> Vec<u8> {
+    use pakenoba_core::material::{FinishKind, Foil};
+    let picture = placed.map(|p| crate::effects::shown(p, false));
+    let size = placed.map_or([1.0, 1.0], |p| p.size);
+    let [x0, y0, w, h] = fit(size);
+    let base = match kind {
+        FinishKind::Foil => super::finishes::foil_swatch(foil),
+        FinishKind::Emboss => [170, 170, 170],
+        FinishKind::SpotUv => [150, 205, 245],
+        FinishKind::White => [250, 250, 250],
+    }
+    .map(f32::from);
+    let matte = matches!(foil, Foil::MatteGold | Foil::MatteSilver);
+    let alpha_at = |x: f32, y: f32| -> f32 {
+        let (fx, fy) = ((x - x0) / w, (y - y0) / h);
+        if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+            return 0.0;
+        }
+        picture.as_ref().map_or(1.0, |pic| pic.sample([(fx - 0.5) * size[0], (0.5 - fy) * size[1]], size)[3])
+    };
+    let n = THUMB_PX as f32;
+    let mut out = vec![0u8; THUMB_PX * THUMB_PX * 4];
+    for y in 0..THUMB_PX {
+        for x in 0..THUMB_PX {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let checker = if ((x / 6) + (y / 6)) % 2 == 0 { 58.0 } else { 46.0 };
+            let a = alpha_at(px, py);
+            // 斜め（左上から右下）の位置 0〜1。
+            let t = (px + py) / (2.0 * n);
+            let color = match kind {
+                FinishKind::Foil if foil == Foil::Hologram => {
+                    let hue = (t * 1.6 + 0.1).fract() * 6.0;
+                    let rgb = [(hue - 3.0).abs() - 1.0, 2.0 - (hue - 2.0).abs(), 2.0 - (hue - 4.0).abs()].map(|v| v.clamp(0.0, 1.0));
+                    rgb.map(|v| 150.0 + 100.0 * v)
+                }
+                FinishKind::Foil => {
+                    // 光の帯: 斜めの中ほどが明るく、端が暗い。つや消しは控えめに。
+                    let sheen = (1.0 - ((t - 0.42) * 3.2).abs()).max(0.0);
+                    let k = if matte { 0.85 + 0.25 * sheen } else { 0.7 + 0.6 * sheen };
+                    base.map(|c| (c * k).min(255.0))
+                }
+                FinishKind::Emboss => {
+                    // 形の縁の左上が明るく、右下が暗い（浮き出し）。
+                    let d = 1.5;
+                    let slope = alpha_at(px - d, py - d) - alpha_at(px + d, py + d);
+                    base.map(|c| (c - 70.0 * slope).clamp(0.0, 255.0))
+                }
+                FinishKind::SpotUv => {
+                    let gloss = if (t - 0.3).abs() < 0.06 { 1.25 } else { 1.0 };
+                    base.map(|c| (c * gloss).min(255.0))
+                }
+                FinishKind::White => base,
+            };
+            let o = (y * THUMB_PX + x) * 4;
+            for i in 0..3 {
+                out[o + i] = (color[i] * a + checker * (1.0 - a)).round() as u8;
+            }
+            out[o + 3] = 255;
+        }
+    }
+    out
+}
+
 /// マスクの小さな絵（白が見せる所。柄の外は暗い灰色）。
 fn mask_thumb_pixels(placed: &Placed) -> Vec<u8> {
     let mut out = vec![0u8; THUMB_PX * THUMB_PX * 4];
@@ -367,17 +433,16 @@ impl App {
             }
             let cy = rect.center().y;
             let x = eye.right() + 6.0;
-            // 小さな絵のかわりに、箔の色の四角と光の印。
             use pakenoba_core::material::FinishKind;
-            let swatch = match finish.kind {
-                FinishKind::Foil => super::finishes::foil_swatch(finish.foil),
-                FinishKind::Emboss => [150, 150, 150],
-                FinishKind::SpotUv => [170, 215, 245],
-                FinishKind::White => [250, 250, 250],
-            };
+            // 小さな絵: もとの柄の形を、加工の色と光沢で塗ったもの。右下に、加工の印を小さく添える。
             let thumb = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
-            painter.rect_filled(thumb, 2.0, egui::Color32::from_rgb(swatch[0], swatch[1], swatch[2]));
-            icons::draw_foil(&painter, thumb.center(), egui::Stroke::new(1.3, egui::Color32::from_gray(40)));
+            let pixels = finish_thumb(self.finish_link(index).map(|l| &self.decals[l]), finish.kind, finish.foil);
+            let id = self.thumb_texture(ui.ctx(), (index, 2), pixels);
+            painter.image(id, thumb, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+            let badge = egui::Rect::from_center_size(thumb.right_bottom() - egui::vec2(4.0, 4.0), egui::vec2(13.0, 13.0));
+            painter.rect_filled(badge, 3.0, egui::Color32::from_gray(30));
+            painter.rect_stroke(badge, 3.0, egui::Stroke::new(1.0, egui::Color32::from_gray(90)), egui::StrokeKind::Inside);
+            icons::draw_foil_small(&painter, badge.center(), egui::Stroke::new(1.0, egui::Color32::from_gray(230)));
             let name_rect = egui::Rect::from_min_max(egui::pos2(thumb.right() + 6.0, rect.top() + 2.0), egui::pos2(rect.right() - 6.0, rect.bottom() - 2.0));
             let label = self.finish_label(index);
             let missing = self.finish_link(index).is_none();

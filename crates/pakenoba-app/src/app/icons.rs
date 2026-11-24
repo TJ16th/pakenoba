@@ -166,6 +166,13 @@ pub(super) fn draw_foil(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     }
 }
 
+/// 加工の印の小さいもの（レイヤーの小さな絵の角に添える。外の四角と内の四角だけ）。
+pub(super) fn draw_foil_small(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.rect_stroke(Rect::from_min_max(p(-4.0, -4.0), p(4.0, 4.0)), 1.0, stroke, StrokeKind::Middle);
+    painter.rect_stroke(Rect::from_min_max(p(-1.5, -1.5), p(1.5, 1.5)), 0.3, stroke, StrokeKind::Middle);
+}
+
 /// フォルダ（グループ）。
 pub(super) fn draw_folder(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     let p = |x: f32, y: f32| c + vec2(x, y);
