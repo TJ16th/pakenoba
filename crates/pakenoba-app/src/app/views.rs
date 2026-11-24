@@ -485,7 +485,9 @@ impl App {
             self.select_only(decal_under.map(|(index, _)| index));
         }
         // カーソルの下の柄は、ほかの表示でも光らせる。
-        if response.hovered() && self.grab.is_none() {
+        // 箱を回したり展開図をずらしたりしている間（ボタンを押している間）は光らせない（目障りで、描き直しも増えるので）。
+        let pressing = ui.input(|i| i.pointer.any_down());
+        if response.hovered() && self.grab.is_none() && !pressing && !response.dragged() {
             self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
         if let Some(t) = self.transforming.filter(|_| response.dragged()) {
@@ -498,7 +500,7 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-        } else if decal_under.is_some() && response.hovered() {
+        } else if decal_under.is_some() && response.hovered() && !pressing {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
 
@@ -740,7 +742,9 @@ impl App {
             self.select_only(decal_under.map(|(index, _)| index));
         }
         // カーソルの下の柄は、ほかの表示でも光らせる。
-        if response.hovered() && self.grab.is_none() {
+        // 箱を回したり展開図をずらしたりしている間（ボタンを押している間）は光らせない（目障りで、描き直しも増えるので）。
+        let pressing = ui.input(|i| i.pointer.any_down());
+        if response.hovered() && self.grab.is_none() && !pressing && !response.dragged() {
             self.hover_now = self.hover_now.or(decal_under.map(|(index, _)| index));
         }
         if let Some(t) = self.transforming.filter(|_| response.dragged()) {
@@ -753,7 +757,7 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
         } else if self.tool == Tool::Shape && hit.is_some() && response.hovered() && decal_under.is_none() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-        } else if decal_under.is_some() && response.hovered() {
+        } else if decal_under.is_some() && response.hovered() && !pressing {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
 
