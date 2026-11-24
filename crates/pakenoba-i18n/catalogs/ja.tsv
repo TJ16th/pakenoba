@@ -1199,3 +1199,23 @@ blend	Color	カラー
 	{guides} (paper colour, for viewing)	{guides}（紙の色。確認用）
 	{project}_assembled.psd	{project}_組み立て向き.psd
 	{stem} (from the assembled view).psd	{stem}（組み立て向きから）.psd
+	Images for generative AI (ControlNet, Firefly)	生成AI用の画像（ControlNet、Firefly）
+	Choose a folder for the images for generative AI	生成AI用の画像を置くフォルダを選ぶ
+	Choose the generated image	生成した絵を選ぶ
+	Could not save the images for generative AI: {e}	生成AI用の画像を保存できませんでした: {e}
+	Even out the brightness of the faces	面ごとの明るさをそろえる
+	Generated	生成した絵
+	Images	画像
+	It goes onto the front of the sheet as dieline artwork (Ctrl+Z to undo). Faces that cannot be seen in the image stay as they are.	紙の表の展開図の絵に重ねます（Ctrl+Z で戻せます）。絵に写っていない面は、そのままです。
+	No face of the box could be found in the image.	絵の中に、箱の面が見つかりませんでした。
+	No view.json was found beside the image. Save the images for generative AI first, and keep view.json in the same folder as the generated image.	絵の隣に view.json がありません。先に生成AI用の画像を保存し、生成した絵と同じフォルダに view.json を置いてください。
+	Put a generated image on the faces…	生成した絵を面へ貼る…
+	Put the image on {faces} face(s). Press Ctrl+Z to undo.	{faces} 面に貼りました。Ctrl+Z で戻せます。
+	Save the images for generative AI…	生成AI用の画像を保存…
+	Saved {} files in {}.	{} 個のファイルを {} に保存しました。
+	Saves the box as you see it now as images to hand to generative AI: a shaded reference, line art, depth, normals, a mask and one colour per face, plus view.json (the camera). Turn the box in the middle to choose the angle.	いま見えている向きの箱を、生成AIに渡す画像にして保存します。確認用の絵、線画、奥行き、面の向き、マスク、面ごとの塗り分けと、カメラを書いた view.json です。向きは、まん中の箱を回して決めます。
+	The image is {iw} x {ih}, but the view was {} x {}. Use an image with the same width-to-height ratio (generate at the same size, or scale it).	絵は {iw} x {ih} ですが、書き出したのは {} x {} です。縦横の比が同じ絵を使ってください（同じ大きさで生成するか、拡大縮小してください）。
+	The view file does not match the current box (the shape or the dimensions have changed since it was written).	view.json が、いまの箱と合いません（書き出したあとに、型か寸法が変わっています）。
+	Then generate with ComfyUI (ControlNet), Firefly (composition reference) or another tool, at the same width-to-height ratio, and put the result back on the faces you can see. The camera is read from view.json in the same folder as the image (or the images saved last).	次に、ComfyUI（ControlNet）や Firefly（構図の参照）などで、同じ縦横の比で生成し、見えている面へ貼り戻します。カメラは、絵と同じフォルダの view.json（なければ、最後に保存したもの）から読みます。
+	This is not a view file written by PAKENOBA (view.json).	パケノバが書いた view.json ではありません。
+	{stem} (on the faces).psd	{stem}（面へ貼った絵）.psd

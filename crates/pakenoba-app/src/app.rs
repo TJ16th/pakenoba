@@ -40,6 +40,7 @@ pub(crate) mod mcp;
 mod agent;
 mod dialog;
 mod versions;
+mod viewgen;
 mod oplog;
 
 use pakenoba_i18n::t;
@@ -583,6 +584,8 @@ struct App {
     movie: Option<outputs::MovieJob>,
     /// 別のスレッドで動いている書き出し（型紙の PSD、入稿用の PDF）。
     export_job: Option<export::ExportJob>,
+    /// 最後に書き出した、生成AI用の画像のフォルダとカメラ。
+    last_view: Option<(PathBuf, viewgen::ViewSpec)>,
     /// 外のアプリで開いている素材と、最後に見た時刻。
     edits: Vec<edit::EditJob>,
     edit_polled: f64,
@@ -744,6 +747,7 @@ impl App {
             solid_aspect: 16.0 / 9.0,
             movie: None,
             export_job: None,
+            last_view: None,
             fonts: Default::default(),
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),

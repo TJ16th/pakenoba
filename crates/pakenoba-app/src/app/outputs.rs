@@ -25,9 +25,11 @@ use crate::paint::{Canvas, Marks, paint};
 use crate::print::{Paper, PrintSettings, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
-pub(super) const OUTPUTS: [(&str, bool); 7] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true)];
+pub(super) const OUTPUTS: [(&str, bool); 8] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true), ("Images for generative AI (ControlNet, Firefly)", true)];
 /// 入稿用の PDF の出力の番号。
 pub(super) const READY_OUTPUT: usize = 6;
+/// 生成AI用の画像の出力の番号。
+pub(super) const VIEW_OUTPUT: usize = 7;
 
 /// 画像の大きさ（16:9）。
 const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160 (4K)", [3840, 2160])];
@@ -51,11 +53,15 @@ pub(super) struct OutputSettings {
     pub dpi: u32,
     /// 塗り足しの幅（mm。0 なら付けない）。型紙の PSD と入稿用の PDF。
     pub bleed: f32,
+    /// 生成AI用の画像の大きさ（`viewgen::VIEW_SIZES` の番号）。
+    pub view_size: usize,
+    /// 生成した絵を面へ貼るとき、面ごとの明るさをそろえる。
+    pub even_faces: bool,
 }
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0 }
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0, view_size: 0, even_faces: true }
     }
 }
 
@@ -347,6 +353,86 @@ impl App {
         Ok(pages)
     }
 
+    /// 生成AI用の画像の設定と、書き出し、生成した絵を面へ貼る操作。
+    fn view_settings(&mut self, ui: &mut egui::Ui) {
+        ui.label(t!("Saves the box as you see it now as images to hand to generative AI: a shaded reference, line art, depth, normals, a mask and one colour per face, plus view.json (the camera). Turn the box in the middle to choose the angle."));
+        ui.horizontal(|ui| {
+            ui.label(t!("Size"));
+            let label = |i: usize| format!("{} x {}", super::viewgen::VIEW_SIZES[i][0], super::viewgen::VIEW_SIZES[i][1]);
+            egui::ComboBox::from_id_salt("view-size").selected_text(label(self.output.view_size)).show_ui(ui, |ui| {
+                for i in 0..super::viewgen::VIEW_SIZES.len() {
+                    ui.selectable_value(&mut self.output.view_size, i, label(i));
+                }
+            });
+        });
+        if ui.button(t!("Save the images for generative AI…")).clicked() {
+            self.export_view();
+        }
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(t!("Then generate with ComfyUI (ControlNet), Firefly (composition reference) or another tool, at the same width-to-height ratio, and put the result back on the faces you can see. The camera is read from view.json in the same folder as the image (or the images saved last)."));
+        ui.checkbox(&mut self.output.even_faces, t!("Even out the brightness of the faces"));
+        if ui.button(t!("Put a generated image on the faces…")).clicked() {
+            self.import_view_image();
+        }
+        ui.small(t!("It goes onto the front of the sheet as dieline artwork (Ctrl+Z to undo). Faces that cannot be seen in the image stay as they are."));
+    }
+
+    /// 生成AI用の画像を、選んだフォルダの中に、新しいフォルダを作って書く。
+    pub(super) fn export_view(&mut self) {
+        let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| t!("PAKENOBA").to_owned(), |s| s.to_string_lossy().into_owned());
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let dir = match self.answer_export.take() {
+            Some(answer) => answer,
+            None => {
+                let mut dialog = rfd::FileDialog::new().set_title(t!("Choose a folder for the images for generative AI"));
+                if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
+                    dialog = dialog.set_directory(dir);
+                }
+                let Some(folder) = dialog.pick_folder() else { return };
+                folder.join(format!("{project}_view_{stamp}"))
+            }
+        };
+        let spec = self.view_spec(super::viewgen::VIEW_SIZES[self.output.view_size]);
+        match self.write_view(&dir, &spec) {
+            Ok(files) => {
+                self.last_view = Some((dir.clone(), spec));
+                self.say(t!("Saved {} files in {}.", files.len(), dir.display()));
+            }
+            Err(e) => self.say(t!("Could not save the images for generative AI: {e}")),
+        }
+    }
+
+    /// 生成した絵を選んでもらい、面へ貼る。カメラは、絵の隣の view.json か、最後に書き出したもの。
+    pub(super) fn import_view_image(&mut self) {
+        let image = match self.answer_replace.take() {
+            Some(answer) => answer,
+            None => {
+                let mut dialog = rfd::FileDialog::new().set_title(t!("Choose the generated image")).add_filter(t!("Images"), &["png", "jpg", "jpeg", "psd"]);
+                if let Some((dir, _)) = &self.last_view {
+                    dialog = dialog.set_directory(dir);
+                }
+                let Some(path) = dialog.pick_file() else { return };
+                path
+            }
+        };
+        let spec = match super::viewgen::find_view_json(&image) {
+            Some(json) => match std::fs::read_to_string(&json).map_err(|e| e.to_string()).and_then(|text| serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())).and_then(|v| super::viewgen::ViewSpec::from_json(&v)) {
+                Ok(spec) => spec,
+                Err(e) => return self.say(t!("Could not read {}: {e}", json.display())),
+            },
+            None => match &self.last_view {
+                Some((_, spec)) => spec.clone(),
+                None => return self.say(t!("No view.json was found beside the image. Save the images for generative AI first, and keep view.json in the same folder as the generated image.")),
+            },
+        };
+        let even = self.output.even_faces;
+        match self.apply_view_image(&image, &spec, even) {
+            Ok(faces) => self.say(t!("Put the image on {faces} face(s). Press Ctrl+Z to undo.")),
+            Err(e) => self.say(e),
+        }
+    }
+
     /// 書き出しの細かさを選ぶ（型紙の PSD と入稿用の PDF で共通）。画素の数と、細かさの足りない画像も出す。
     fn resolution_choice(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -477,6 +563,7 @@ impl App {
                     ui.small(t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
                 }
                 super::peek::PEEK_OUTPUT => self.peek_settings(ui),
+                VIEW_OUTPUT => self.view_settings(ui),
                 READY_OUTPUT => {
                     ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
                     let plates = self.plate_names();
@@ -536,10 +623,14 @@ impl App {
 
     /// 出力の工程で、16:9 の画像を選んでいるとき、立体の表示の上に、画像に入る範囲の枠を描く。
     pub(super) fn shot_frame(&self, ui: &egui::Ui, rect: egui::Rect) {
-        if self.output_kind != 1 {
-            return;
-        }
-        let target = 16.0 / 9.0;
+        let target = match self.output_kind {
+            1 => 16.0 / 9.0,
+            VIEW_OUTPUT => {
+                let [w, h] = super::viewgen::VIEW_SIZES[self.output.view_size];
+                w as f32 / h as f32
+            }
+            _ => return,
+        };
         let aspect = rect.width() / rect.height();
         let frame = if aspect > target { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.height() * target, rect.height())) } else { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), rect.width() / target)) };
         let painter = ui.painter().with_clip_rect(rect);
