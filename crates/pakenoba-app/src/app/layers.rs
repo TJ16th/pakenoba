@@ -1250,6 +1250,17 @@ impl App {
                             }
                         });
                     });
+                    // 効果（柄の下に行として並ぶもの）。
+                    ui.separator();
+                    ui.weak(t!("Effect (this artwork)"));
+                    let can_tile = artwork.is_some_and(|i| self.decals[i].layer.tile.is_none() && is_artwork(&self.decals[i].picture));
+                    if ui.add_enabled(can_tile, egui::Button::new(t!("Repeat as tiles"))).on_hover_text(t!("Fills the panel (or the whole sheet) with copies of the artwork")).clicked()
+                        && let Some(i) = artwork
+                    {
+                        self.change_layer(i, |layer| layer.tile = Some(Default::default()));
+                        (self.adjust_focus, self.effect_focus) = (None, Some((i, Effect::Tile)));
+                        ui.close();
+                    }
                 });
                 let can_mask = artwork.is_some_and(|i| self.decals[i].layer.mask.is_none());
                 let mask = icons::bare_button(ui, size, false, can_mask, t!("Add a layer mask to the selected artwork"), icons::draw_mask);

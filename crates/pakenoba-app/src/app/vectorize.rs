@@ -503,18 +503,6 @@ impl App {
             self.cancel_trace();
         }
     }
-
-    /// プロパティの、画像トレースの入り口。
-    pub(super) fn vectorize_controls(&mut self, ui: &mut egui::Ui, index: usize, enabled: bool) {
-        ui.separator();
-        let traced = self.decals[index].layer.traced.is_some();
-        let label = if traced { t!("Trace again…") } else { t!("Image Trace…") };
-        ui.add_enabled_ui(enabled && self.trace_session.is_none(), |ui| {
-            if ui.button(label).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
-                self.open_trace(index);
-            }
-        });
-    }
 }
 
 /// トレースして、プレビューの絵（結果、アウトライン、アウトラインと元の画像）まで作る。

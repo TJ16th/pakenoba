@@ -37,12 +37,21 @@ pub struct Transforming {
     pub handle: Handle,
     pub start: Decal,
     pub pressed: P2,
+    /// 柄の見えている部分（`visible::of`）。枠とつまみは、この範囲に付く。
+    pub area: [f32; 4],
 }
 
-/// 柄の四隅（展開図の座標）。
-pub fn corners(decal: &Decal, tpl: &Template) -> [P2; 4] {
+/// 柄の見えている部分の四隅（展開図の座標）。`area` は `visible::of` の範囲。
+pub fn corners(decal: &Decal, tpl: &Template, area: [f32; 4]) -> [P2; 4] {
     let place = decal.place(tpl);
-    CORNERS.map(|s| place.point([s[0] * decal.size[0] * 0.5, s[1] * decal.size[1] * 0.5]))
+    CORNERS.map(|s| place.point(area_point(decal, area, s)))
+}
+
+/// 見えている部分の角（`sign` は `CORNERS` の符号）の、柄の座標（mm）。
+fn area_point(decal: &Decal, area: [f32; 4], sign: [f32; 2]) -> P2 {
+    let x = if sign[0] < 0.0 { area[0] } else { area[2] };
+    let y = if sign[1] < 0.0 { area[1] } else { area[3] };
+    [x * decal.size[0] * 0.5, y * decal.size[1] * 0.5]
 }
 
 /// 画面の点 `p` が、どのつまみの上か。`screen` は画面での四隅。
@@ -67,32 +76,34 @@ pub fn apply(t: &Transforming, tpl: &Template, at: P2, free: bool, from_center: 
     let place = t.start.place(tpl);
     match t.handle {
         Handle::Corner(i) => {
+            // 見えている部分の角を動かす。向かいの角（Alt なら見えている部分の中心）は動かさない。
             let q = place.inverse().point(at);
-            let half = [t.start.size[0] * 0.5, t.start.size[1] * 0.5];
             let s = CORNERS[i];
-            let corner = [s[0] * half[0], s[1] * half[1]];
-            let anchor = if from_center { [0.0, 0.0] } else { [-corner[0], -corner[1]] };
+            let corner = area_point(&t.start, t.area, s);
+            let opposite = area_point(&t.start, t.area, [-s[0], -s[1]]);
+            let middle = [(corner[0] + opposite[0]) * 0.5, (corner[1] + opposite[1]) * 0.5];
+            let anchor = if from_center { middle } else { opposite };
             let reach = [corner[0] - anchor[0], corner[1] - anchor[1]];
-            // 新しい角の場所（柄の座標）。比率を保つときは、もとの対角線の上に寄せる。
-            let new_corner = if free {
-                // 向かいの角を越えないようにする。
-                let min = |r: f32, sign: f32| sign * (sign * r).max(MIN_MM * if from_center { 0.5 } else { 1.0 });
-                [anchor[0] + min(q[0] - anchor[0], s[0]), anchor[1] + min(q[1] - anchor[1], s[1])]
+            // 見えている部分が MIN_MM より小さくならない倍率。
+            let span = if from_center { 2.0 } else { 1.0 };
+            let least = |r: f32| MIN_MM / (r.abs() * span).max(1e-3);
+            let (fx, fy) = if free {
+                let f = |k: usize| if reach[k].abs() < 1e-6 { 1.0 } else { ((q[k] - anchor[k]) / reach[k]).max(least(reach[k])) };
+                (f(0), f(1))
             } else {
                 let length = reach[0] * reach[0] + reach[1] * reach[1];
-                let f = (((q[0] - anchor[0]) * reach[0] + (q[1] - anchor[1]) * reach[1]) / length.max(1e-6)).max(MIN_MM / t.start.size[0].min(t.start.size[1]).max(MIN_MM));
-                [anchor[0] + reach[0] * f, anchor[1] + reach[1] * f]
+                let f = (((q[0] - anchor[0]) * reach[0] + (q[1] - anchor[1]) * reach[1]) / length.max(1e-6)).max(least(reach[0]).max(least(reach[1])).min(1.0));
+                (f, f)
             };
-            let (size, middle) = if from_center {
-                ([2.0 * new_corner[0].abs(), 2.0 * new_corner[1].abs()], [0.0, 0.0])
-            } else {
-                ([(new_corner[0] - anchor[0]).abs(), (new_corner[1] - anchor[1]).abs()], [(new_corner[0] + anchor[0]) * 0.5, (new_corner[1] + anchor[1]) * 0.5])
-            };
-            decal.size = [size[0].max(MIN_MM), size[1].max(MIN_MM)];
-            decal.set_center(tpl, place.point(middle));
+            decal.size = [(t.start.size[0] * fx).max(MIN_MM * 0.1), (t.start.size[1] * fy).max(MIN_MM * 0.1)];
+            // 動かさない点が、同じ場所に残るように、中心をずらす。
+            decal.set_center(tpl, place.point([anchor[0] * (1.0 - fx), anchor[1] * (1.0 - fy)]));
         }
         Handle::Turn => {
-            let c = t.start.center(tpl);
+            // 見えている部分の中心のまわりで回す。
+            let mid = [(t.area[0] + t.area[2]) * 0.25 * t.start.size[0], (t.area[1] + t.area[3]) * 0.25 * t.start.size[1]];
+            let c = place.point(mid);
+            let start_center = t.start.center(tpl);
             let a0 = (t.pressed[1] - c[1]).atan2(t.pressed[0] - c[0]);
             let a1 = (at[1] - c[1]).atan2(at[0] - c[0]);
             let mut angle = t.start.angle + (a1 - a0);
@@ -101,6 +112,10 @@ pub fn apply(t: &Transforming, tpl: &Template, at: P2, free: bool, from_center: 
                 angle = (angle / step).round() * step;
             }
             decal.angle = (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            let turn = angle - t.start.angle;
+            let (sin, cos) = turn.sin_cos();
+            let d = [start_center[0] - c[0], start_center[1] - c[1]];
+            decal.set_center(tpl, [c[0] + d[0] * cos - d[1] * sin, c[1] + d[0] * sin + d[1] * cos]);
         }
     }
     decal
@@ -167,6 +182,32 @@ mod tests {
     use super::*;
     use pakenoba_core::math::Affine;
 
+    const FULL: [f32; 4] = [-1.0, -1.0, 1.0, 1.0];
+
+    #[test]
+    fn 余白のある柄は_見えている部分の角で大きさを変え_回す() {
+        let tpl = tuck();
+        let start = sample(&tpl);
+        // 右半分だけが見える。
+        let area = [0.0, -1.0, 1.0, 1.0];
+        let before = corners(&start, &tpl, area);
+        // 見えている部分の左下は、柄の中心。
+        let c = start.center(&tpl);
+        assert!((before[0][0] - c[0]).abs() < 1e-3);
+        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2], area };
+        let out = apply(&t, &tpl, [before[2][0] + 20.0, before[2][1] + 20.0], false, false, false);
+        let after = corners(&out, &tpl, area);
+        // 向かいの角（見えている部分の左下）は動かず、見えている部分が 2 倍になる。
+        assert!((after[0][0] - before[0][0]).abs() < 1e-3 && (after[0][1] - before[0][1]).abs() < 1e-3, "{before:?} {after:?}");
+        assert!((out.size[0] - 80.0).abs() < 1e-2, "{:?}", out.size);
+        // 回すと、見えている部分の中心は動かない。
+        let mid = |d: &Decal| d.place(&tpl).point([d.size[0] * 0.25, 0.0]);
+        let t = Transforming { index: 0, handle: Handle::Turn, start, pressed: [c[0] + 50.0, c[1]], area };
+        let turned = apply(&t, &tpl, [c[0], c[1] + 50.0], false, false, false);
+        let (m0, m1) = (mid(&start), mid(&turned));
+        assert!((m0[0] - m1[0]).abs() < 1e-3 && (m0[1] - m1[1]).abs() < 1e-3, "{m0:?} {m1:?}");
+    }
+
     fn tuck() -> Template {
         Template::tuck_box(80.0, 50.0, 120.0, 0.5)
     }
@@ -180,12 +221,12 @@ mod tests {
     fn 角を引くと_比率を保って大きくなり_向かいの角は動かない() {
         let tpl = tuck();
         let start = sample(&tpl);
-        let before = corners(&start, &tpl);
-        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
+        let before = corners(&start, &tpl, FULL);
+        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2], area: FULL };
         let out = apply(&t, &tpl, [before[2][0] + 40.0, before[2][1] + 5.0], false, false, false);
         assert!((out.size[0] / out.size[1] - 2.0).abs() < 1e-4, "{:?}", out.size);
         assert!(out.size[0] > 40.0);
-        let after = corners(&out, &tpl);
+        let after = corners(&out, &tpl, FULL);
         assert!((after[0][0] - before[0][0]).abs() < 1e-3 && (after[0][1] - before[0][1]).abs() < 1e-3);
     }
 
@@ -193,8 +234,8 @@ mod tests {
     fn shift_で比率を外し_alt_で中心を保つ() {
         let tpl = tuck();
         let start = sample(&tpl);
-        let before = corners(&start, &tpl);
-        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
+        let before = corners(&start, &tpl, FULL);
+        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2], area: FULL };
         let free = apply(&t, &tpl, [before[2][0] + 20.0, before[2][1]], true, false, true);
         assert!((free.size[0] - 60.0).abs() < 1e-3 && (free.size[1] - 20.0).abs() < 1e-3, "{:?}", free.size);
         let centered = apply(&t, &tpl, [before[2][0] + 10.0, before[2][1] + 5.0], true, true, true);
@@ -207,8 +248,8 @@ mod tests {
     fn 向かいの角を越えても_裏返らずに小さく止まる() {
         let tpl = tuck();
         let start = sample(&tpl);
-        let before = corners(&start, &tpl);
-        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2] };
+        let before = corners(&start, &tpl, FULL);
+        let t = Transforming { index: 0, handle: Handle::Corner(2), start, pressed: before[2], area: FULL };
         for free in [false, true] {
             let out = apply(&t, &tpl, [before[0][0] - 30.0, before[0][1] - 30.0], free, false, free);
             assert!(out.size[0] >= MIN_MM && out.size[1] >= MIN_MM && out.size[0] < 5.0, "{:?}", out.size);
@@ -220,7 +261,7 @@ mod tests {
         let tpl = tuck();
         let start = sample(&tpl);
         let c = start.center(&tpl);
-        let t = Transforming { index: 0, handle: Handle::Turn, start, pressed: [c[0] + 30.0, c[1]] };
+        let t = Transforming { index: 0, handle: Handle::Turn, start, pressed: [c[0] + 30.0, c[1]], area: FULL };
         let quarter = apply(&t, &tpl, [c[0], c[1] + 30.0], false, false, false);
         assert!((quarter.angle - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
         let snapped = apply(&t, &tpl, [c[0] + 30.0, c[1] + 9.0], true, false, true);

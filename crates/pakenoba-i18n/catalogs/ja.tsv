@@ -343,8 +343,6 @@
 	Moved to the front of the sheet.	紙の表へ移しました。
 	On panels: {}	かかっている面: {}
 	Crosses {seams} seam(s).	合わせ目を {seams} 回またいでいます。
-	Delete this artwork	この柄を消す
-	Locked artwork cannot be deleted	ロックしている柄は消せません
 	Layers	レイヤー
 	Guides (cut lines, fold lines, glue flaps)	ガイド（切り線、折り線、のりしろ）
 	Back (inside of the box)	裏（箱の内側）
@@ -719,7 +717,6 @@ blend	Color	カラー
 	Artwork {number} uses an adjustment this version does not know ("{}"), so it was removed	柄 {number} は、この版が知らない調整（「{}」）を使っているので、その調整を外しました
 	Black point	黒の点
 	Brightness	明るさ
-	Brightness, colors, background removal and subject selection are in "Adjust" at the bottom of the Layers panel. They can be changed later.	明るさ、色、背景を透明にする、被写体を選択は、レイヤーの欄のいちばん下の「調整」にあります。あとから直せます。
 	Brightness/Contrast	明るさ・コントラスト
 	Close the group	グループを閉じる
 	Colors	色の数
@@ -747,7 +744,6 @@ blend	Color	カラー
 	Hide (black)	隠す（黒）
 	High quality (downloads a 176 MB model the first time)	高画質（初回に 176 MB のモデルを取ってくる）
 	Hue/Saturation	色相・彩度
-	Image tools	画像の道具
 	Invert mask	マスクを反転
 	Invert	階調の反転
 	Layer {number} is a kind this version does not know ("{other}"), so it was removed	レイヤー {number} は、この版が知らない種類（「{other}」）なので、外しました
@@ -1386,3 +1382,7 @@ blend	Color	カラー
 	Could not keep the dieline file: {e}	型の線のファイルを残せませんでした: {e}
 	Could not read the dieline file of this box type: {e}	この型の、型の線のファイルを読めませんでした: {e}
 	This box type cannot be kept because the settings cannot be saved.	設定を保存できないので、この型を残せません。
+	Apps for editing	編集に使うアプリ
+	Vectors (SVG)	ベクター（SVG）
+	Effect (this artwork)	効果（この柄）
+	Fills the panel (or the whole sheet) with copies of the artwork	柄を並べて、面（または展開図ぜんたい）を埋めます

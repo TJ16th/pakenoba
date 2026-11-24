@@ -176,26 +176,18 @@ impl App {
         }
     }
 
-    /// 右の欄の、外のアプリで編集するボタンと、開くアプリの設定。
-    pub(super) fn edit_controls(&mut self, ui: &mut egui::Ui, index: usize) {
-        let picture = self.decals[index].picture.clone();
-        if !matches!(picture, Picture::Image { .. }) {
-            return;
-        }
-        let editing = self.is_editing(&picture);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(if editing { t!("Open in the other app again") } else { t!("Edit in another app") }).on_hover_text(t!("Ctrl+E. You can also double-click the artwork. Saving there updates the box")).clicked() {
-                self.edit_selected();
-            }
-            if editing
-                && let Some(asset) = self.asset_of(&picture)
-                && ui.small_button(t!("Stop editing")).on_hover_text(t!("Deletes the working file. The picture on the box stays as it is")).clicked()
-            {
-                self.stop_edit(asset);
+    /// 環境設定の、外のアプリで編集するときに開くアプリ（画像とベクターで別々）。
+    pub(super) fn editor_apps_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(t!("Apps for editing"), |ui| {
+            ui.set_min_width(300.0);
+            for vector in [false, true] {
+                self.editor_app_row(ui, vector);
             }
         });
-        // ベクター（SVG）と画像で、開くアプリを別々に覚える。
-        let vector = matches!(picture, Picture::Image { vector: true, .. });
+    }
+
+    fn editor_app_row(&mut self, ui: &mut egui::Ui, vector: bool) {
+        ui.label(egui::RichText::new(if vector { t!("Vectors (SVG)") } else { t!("Images") }).strong());
         let (tip, title) = if vector { (t!("VectorCraft, Illustrator, Affinity and others"), t!("Choose the app for editing vectors (SVG)")) } else { (t!("PhotoCraft, Photoshop, Affinity and others"), t!("Choose the app for editing images")) };
         let current = if vector { self.settings.vector_editor.clone() } else { self.settings.editor.clone() };
         let app = current.as_ref().and_then(|p| p.file_stem()).map_or_else(|| t!("the system default app").to_owned(), |n| n.to_string_lossy().into_owned());

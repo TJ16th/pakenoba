@@ -7,7 +7,6 @@ use pakenoba_i18n::t;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use eframe::egui;
 
 use pakenoba_core::project;
 
@@ -359,41 +358,6 @@ impl App {
         placed.decal = decal;
         (self.art_dirty, self.back_dirty) = (true, true);
         self.say(t!("Applied \"{}\". It is a new asset, \"{name}\", and the original asset is unchanged. Press Ctrl+Z to undo.", how.label()));
-    }
-
-    /// 右の欄の、画像の調整。画像の柄を選んでいるときに出す。
-    pub(super) fn adjust_controls(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
-        if !matches!(
-            self.decals.get(index).map(|d| &d.picture),
-            Some(Picture::Image { vector: false, .. })
-        ) {
-            return;
-        }
-        let mut chosen = None;
-        egui::CollapsingHeader::new(t!("Image tools"))
-            .id_salt("adjust")
-            .show(ui, |ui| {
-                ui.add_enabled_ui(
-                    !locked && !self.is_editing(&self.decals[index].picture),
-                    |ui| {
-                        if ui
-                            .button(t!("Trim margins"))
-                            .on_hover_text(
-                                t!("Cuts away the transparent area around the picture. It stays where it appears now"),
-                            )
-                            .clicked()
-                        {
-                            chosen = Some(Adjust::Trim);
-                        }
-                        ui.weak(t!("Brightness, colors, background removal and subject selection are in \"Adjust\" at the bottom of the Layers panel. They can be changed later."));
-                    },
-                );
-                let enabled = !locked && !self.is_editing(&self.decals[index].picture);
-                self.vectorize_controls(ui, index, enabled);
-            });
-        if let Some(how) = chosen {
-            self.adjust_decal(index, how);
-        }
     }
 }
 

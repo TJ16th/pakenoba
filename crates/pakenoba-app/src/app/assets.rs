@@ -341,17 +341,40 @@ impl App {
                 }
             }
         }
-        // 画像トレース（画像の柄と、トレースで作った柄）。
+        // 外のアプリで編集（画像とベクターの柄）。
+        let picture = self.decals[index].picture.clone();
+        let image = matches!(picture, Picture::Image { .. });
+        let editing = image && self.is_editing(&picture);
+        if image {
+            ui.separator();
+            let label = if editing { t!("Open in the other app again") } else { t!("Edit in another app") };
+            if ui.add(egui::Button::new(label).shortcut_text("Ctrl+E")).on_hover_text(t!("Ctrl+E. You can also double-click the artwork. Saving there updates the box")).clicked() {
+                self.edit_selected();
+                ui.close();
+            }
+            if editing
+                && let Some(asset) = self.asset_of(&picture)
+                && ui.button(t!("Stop editing")).on_hover_text(t!("Deletes the working file. The picture on the box stays as it is")).clicked()
+            {
+                self.stop_edit(asset);
+                ui.close();
+            }
+        }
+        // 画像の道具（画像の柄と、トレースで作った柄）。
         let raster = matches!(self.decals[index].picture, Picture::Image { vector: false, .. });
         let traced = self.decals[index].layer.traced.is_some();
+        let free = !self.decals[index].layer.locked && !editing;
         if raster || traced {
             ui.separator();
             let label = if traced { t!("Trace again…") } else { t!("Image Trace…") };
-            let enabled = !self.decals[index].layer.locked && self.trace_session.is_none();
-            if ui.add_enabled(enabled, egui::Button::new(label)).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
+            if ui.add_enabled(free && self.trace_session.is_none(), egui::Button::new(label)).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
                 self.open_trace(index);
                 ui.close();
             }
+        }
+        if raster && ui.add_enabled(free, egui::Button::new(t!("Trim margins"))).on_hover_text(t!("Cuts away the transparent area around the picture. It stays where it appears now")).clicked() {
+            self.adjust_decal(index, super::adjust::Adjust::Trim);
+            ui.close();
         }
         ui.separator();
         if ui.button(t!("Delete")).clicked() {

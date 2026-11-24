@@ -641,6 +641,11 @@ impl Painter<'_> {
 
     /// 選んでいる柄の枠と、カーソルの下の柄の枠。描画モードやグループに関係なく、いちばん上に描く。
     fn marks(&self, decal: &Placed, picked: bool, target: &mut [u8]) {
+        // 枠は、柄の見えている部分に付ける（透明な余白は囲まない）。
+        let area = crate::app::visible::of(decal);
+        let mut seen = decal.clone();
+        seen.decal = crate::app::visible::trim(&decal.decal, self.tpl, area).0;
+        let decal = &seen;
         self.each_pixel(decal, target, 4, false, |_, px, q, from_edge| {
             let color = if picked && from_edge < 0.6 {
                 // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。

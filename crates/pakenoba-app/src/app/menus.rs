@@ -98,6 +98,7 @@ impl App {
             ui.menu_button(t!("Preferences"), |ui| {
                 ui.set_min_width(200.0);
                 self.language_menu(ui);
+                self.editor_apps_menu(ui);
                 self.ai_folders_menu(ui);
             });
         });
@@ -266,6 +267,12 @@ impl App {
                 && let Some(i) = raster
             {
                 self.open_trace(i);
+            }
+            let plain = single.filter(|&i| matches!(self.decals[i].picture, Picture::Image { vector: false, .. }) && !self.is_editing(&self.decals[i].picture));
+            if item(ui, plain.is_some() && !locked, t!("Trim margins"), "", t!("Select image artwork (not vector, not locked)"))
+                && let Some(i) = plain
+            {
+                self.adjust_decal(i, super::adjust::Adjust::Trim);
             }
             ui.separator();
             if item(ui, index.is_some(), t!("Delete"), "Delete", why) {

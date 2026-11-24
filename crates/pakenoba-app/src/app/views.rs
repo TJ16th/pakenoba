@@ -201,7 +201,9 @@ impl App {
 
     /// 柄 `index` の縁を、面ごとに分けて線で描く。`to_screen(パネル, 展開図の点)` で画面の点へ。
     fn paint_outline(&self, painter: &egui::Painter, index: usize, to_screen: impl Fn(usize, [f32; 2]) -> Option<Pos2>) {
-        let decal = &self.decals[index];
+        // 見えている部分の縁を描く。
+        let (decal, _) = super::visible::trim(&self.decals[index].decal, &self.template, super::visible::of(&self.decals[index]));
+        let decal = &decal;
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         let corners = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]];
         const STEPS: usize = 24;
@@ -240,13 +242,28 @@ const SNAP_REACH: f32 = 8.0;
 
 /// 柄を、置かれているパネルの中央と端に吸い付かせる。`ppm` は、画面での 1 mm の大きさ（点）。
 /// Ctrl（Mac では Command）を押している間は吸い付かない。吸い付いた先の補助線を `guides` に足す。
-fn snap(guides: &mut Vec<(usize, [f32; 2], [f32; 2])>, template: &pakenoba_core::template::Template, decal: Decal, ppm: f32, ui: &egui::Ui) -> Decal {
+/// 吸い付くのは、柄の見えている部分（`area`）の中央と端。
+fn snap(guides: &mut Vec<(usize, [f32; 2], [f32; 2])>, template: &pakenoba_core::template::Template, decal: Decal, area: [f32; 4], ppm: f32, ui: &egui::Ui) -> Decal {
     if ui.input(|i| i.modifiers.command) || !ppm.is_finite() || ppm <= 0.0 {
         return decal;
     }
-    let found = pakenoba_core::surface::snap_to_panel(template, &decal, (SNAP_REACH / ppm).min(10.0));
+    let (seen, _) = super::visible::trim(&decal, template, area);
+    let found = pakenoba_core::surface::snap_to_panel(template, &seen, (SNAP_REACH / ppm).min(10.0));
     guides.extend(found.guides);
-    found.decal
+    // 見えている部分が動いたぶんだけ、柄を動かす。
+    let (from, to) = (seen.center(template), found.decal.center(template));
+    let mut out = decal;
+    out.panel = found.decal.panel;
+    let c = decal.center(template);
+    out.set_center(template, [c[0] + to[0] - from[0], c[1] + to[1] - from[1]]);
+    out
+}
+
+/// 柄を拾う範囲（見えている部分）と、その中心の柄の座標での位置。`spots_on` と同じ並び。
+fn visible_spots(decals: &[Placed], template: &pakenoba_core::template::Template, back: bool) -> (Vec<usize>, Vec<Decal>, Vec<[f32; 2]>) {
+    let (ids, places) = spots_on(decals, back);
+    let (trimmed, offsets) = ids.iter().zip(&places).map(|(&i, d)| super::visible::trim(d, template, super::visible::of(&decals[i]))).unzip();
+    (ids, trimmed, offsets)
 }
 
 /// 柄の置かれた面の上での、画面の 1 mm の大きさ（点）。
@@ -414,11 +431,12 @@ impl App {
         // 紙の表（箱の外側）に当たったら表の柄、裏（内側）に当たったら裏の柄を探す。
         // 手のひらの道具では、柄をつかまない（どこをドラッグしても箱が回る）。
         let hand = self.tool == Tool::Hand;
-        let sides = [spots_on(&self.decals, false), spots_on(&self.decals, true)];
+        // 拾う範囲は、柄の見えている部分（透明な余白は拾わない）。つかんだ位置は、柄の座標に直す。
+        let sides = [visible_spots(&self.decals, template, false), visible_spots(&self.decals, template, true)];
         let surface = &self.surface;
         let decal_at = |(panel, at, back): (usize, [f32; 2], bool)| {
-            let (ids, places) = &sides[back as usize];
-            surface.decal_at(template, places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab))
+            let (ids, places, offsets) = &sides[back as usize];
+            surface.decal_at(template, places, panel, at).filter(|_| !hand).map(|(i, g)| (ids[i], [g[0] + offsets[i][0], g[1] + offsets[i][1]]))
         };
         let decal_under = hit.and_then(decal_at);
         // 選んでいる柄の、大きさと回転のつまみ。柄の置かれた面を広げた平面の上で、展開図の座標のまま計算する。
@@ -427,9 +445,10 @@ impl App {
         let world = template.world_at(self.fold);
         let frame_of = |d: &Decal| world.then_after(&placements[d.panel].at(d.center(template)));
 
-        let quad_of = |d: &Decal| {
+        let quad_of = |placed: &Placed| {
+            let d = &placed.decal;
             let frame = frame_of(d);
-            let pts: Option<Vec<Pos2>> = transform::corners(d, template).iter().map(|c| project(&mvp, rect, frame.point([c[0], c[1], 0.0]))).collect();
+            let pts: Option<Vec<Pos2>> = transform::corners(d, template, super::visible::of(placed)).iter().map(|c| project(&mvp, rect, frame.point([c[0], c[1], 0.0]))).collect();
             pts.map(|v| [v[0], v[1], v[2], v[3]])
         };
         let knobs = self.knob_target(None).and_then(|i| quad_of(&self.decals[i]).map(|q| (i, q)));
@@ -441,7 +460,7 @@ impl App {
             let start = self.decals[index].decal;
             if let Some(pressed) = press.and_then(|p| { let (o, d) = ray(p); transform::ray_to_sheet(&frame_of(&start), o, d) }) {
                 self.history.record(self.snapshot());
-                self.transforming = Some(Transforming { index, handle, start, pressed });
+                self.transforming = Some(Transforming { index, handle, start, pressed, area: super::visible::of(&self.decals[index]) });
             }
         }
         if response.drag_started() && self.transforming.is_none() && !brushing {
@@ -475,12 +494,13 @@ impl App {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at, back))) => {
                     // 柄は、置かれている側の面の上だけを動く（表の柄は外側、裏の柄は内側）。
+                    let area = self.decals.get(index).map_or(super::visible::FULL, super::visible::of);
                     if let Some(decal) = self.decals.get_mut(index).filter(|decal| decal.back == back) {
                         // 立体の上では、向きを面ごとの「上」にそろえて保つ（同じ面に戻れば、同じ向きに戻る）。
                         let before = decal.center(template);
                         self.surface.drag_on_solid(template, decal, back, panel, at, grab);
                         let ppm = px_per_mm(&mvp, rect, &frame_of(&decal.decal));
-                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, ppm, ui);
+                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, area, ppm, ui);
                         self.move_along(index, before);
                         self.art_dirty = true;
                     }
@@ -571,7 +591,7 @@ impl App {
         });
         let candidate = candidate.map(|mut placed| {
             let ppm = px_per_mm(&mvp, rect, &frame_of(&placed.decal));
-            placed.decal = snap(&mut self.snap_guides, template, placed.decal, ppm, ui);
+            placed.decal = snap(&mut self.snap_guides, template, placed.decal, super::visible::of(&placed), ppm, ui);
             placed
         });
 
@@ -720,20 +740,20 @@ impl App {
         }
         // 表の表示では表の柄、裏の表示では裏の柄を扱う。手のひらの道具では、柄をつかまない。
         let hand = self.tool == Tool::Hand;
-        let (ids, places) = spots_on(&self.decals, back);
+        let (ids, places, offsets) = visible_spots(&self.decals, template, back);
         let surface = &self.surface;
-        let decal_at = |(panel, at): (usize, [f32; 2])| surface.decal_at(template, &places, panel, at).filter(|_| !hand).map(|(i, grab)| (ids[i], grab));
+        let decal_at = |(panel, at): (usize, [f32; 2])| surface.decal_at(template, &places, panel, at).filter(|_| !hand).map(|(i, g)| (ids[i], [g[0] + offsets[i][0], g[1] + offsets[i][1]]));
         let decal_under = hit.and_then(decal_at);
         // 選んでいる柄の、大きさと回転のつまみ（画面での四隅）。
         let to_screen = |p: [f32; 2]| pos2(image.left() + (if back { template.max[0] - p[0] } else { p[0] - template.min[0] }) * scale, image.top() + (template.max[1] - p[1]) * scale);
-        let knobs = self.knob_target(back).map(|i| (i, transform::corners(&self.decals[i], template).map(to_screen)));
+        let knobs = self.knob_target(back).map(|i| (i, transform::corners(&self.decals[i], template, super::visible::of(&self.decals[i])).map(to_screen)));
         let handle_under = |p: Pos2| knobs.and_then(|(i, quad)| transform::handle_at(quad, p).map(|h| (i, h, quad)));
         let press = ui.input(|i| i.pointer.press_origin());
         // マスクを筆で描いている間は、柄をつかまず、箱も回さない。
         let brushing = self.brush_target().is_some();
         if response.drag_started() && !brushing && let Some((index, handle, _)) = press.and_then(handle_under) {
             self.history.record(self.snapshot());
-            self.transforming = Some(Transforming { index, handle, start: self.decals[index].decal, pressed: to_sheet(press.unwrap_or_default()) });
+            self.transforming = Some(Transforming { index, handle, start: self.decals[index].decal, pressed: to_sheet(press.unwrap_or_default()), area: super::visible::of(&self.decals[index]) });
         }
         if response.drag_started() && self.transforming.is_none() && !brushing {
             let pressed = press.and_then(under);
@@ -762,10 +782,11 @@ impl App {
         } else if response.dragged() && !brushing {
             match (self.grab, hit) {
                 (Some((index, grab)), Some((panel, at))) => {
+                    let area = self.decals.get(index).map_or(super::visible::FULL, super::visible::of);
                     if let Some(decal) = self.decals.get_mut(index) {
                         let before = decal.center(template);
                         self.surface.drag(template, decal, panel, at, grab);
-                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, scale, ui);
+                        decal.decal = snap(&mut self.snap_guides, template, decal.decal, area, scale, ui);
                         self.move_along(index, before);
                         self.art_dirty = true;
                     }
@@ -849,7 +870,7 @@ impl App {
             self.asset_decal(asset, panel, at, back, 0.0)
         });
         let candidate = candidate.map(|mut placed| {
-            placed.decal = snap(&mut self.snap_guides, template, placed.decal, scale, ui);
+            placed.decal = snap(&mut self.snap_guides, template, placed.decal, super::visible::of(&placed), scale, ui);
             placed
         });
 
@@ -861,7 +882,7 @@ impl App {
         }
         // 大きさと回転のつまみ（動かしたあとの場所で）。
         if let Some(i) = self.knob_target(back) {
-            let quad = transform::corners(&self.decals[i], template).map(to_screen);
+            let quad = transform::corners(&self.decals[i], template, super::visible::of(&self.decals[i])).map(to_screen);
             transform::paint(&painter.with_clip_rect(area.intersect(rect)), quad, visuals.selection.bg_fill);
         }
         if let Some(index) = self.hover_shown(decal_under.map(|(i, _)| i), Some(back)) {

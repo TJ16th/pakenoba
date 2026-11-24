@@ -34,6 +34,7 @@ mod splash;
 mod tabs;
 mod home;
 mod transform;
+pub(crate) mod visible;
 mod views;
 mod layers;
 mod theme;

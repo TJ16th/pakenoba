@@ -395,18 +395,13 @@ impl App {
         if seams > 0 {
             ui.small(t!("Crosses {seams} seam(s)."));
         }
-        self.tile_properties(ui, index, locked, false);
         self.effect_list(ui, index);
-        // 中身ごとの設定（文字、図形）、柄だけの調整、画像の道具、外のアプリで直す。
+        // 中身ごとの設定（文字、図形）と、柄だけの調整。
+        // 操作（画像トレース、余白の切り詰め、外のアプリで編集、消す）は、レイヤーの右クリックと「柄」のメニューにある。
+        // タイルを足すのは、レイヤーの欄の ◐ のメニュー。
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
         self.adjust_properties(ui, index, locked);
-        self.adjust_controls(ui, index, locked);
-        self.edit_controls(ui, index);
-        ui.add_space(4.0);
-        if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
-            self.cmd_delete();
-        }
     }
 
     /// ベクターの柄の、色ごとの見せ方（表示、塗り、線）と、線だけの表示。素材の SVG は変えない。
