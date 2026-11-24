@@ -761,6 +761,40 @@ mod tests {
     }
 
     #[test]
+    fn ベクターで隠した色には_白押しをしない() {
+        use pakenoba_core::project::{ColorStyle, VectorStyle};
+        let mut app = app();
+        // 左半分が赤、右半分が青の SVG（40 × 20 mm）。
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" viewBox="0 0 40 20"><rect x="0" y="0" width="20" height="20" fill="#ff0000"/><rect x="20" y="0" width="20" height="20" fill="#0000ff"/></svg>"##;
+        let (w, h, rgba) = crate::vector::decode_svg(svg).unwrap();
+        let rgba = std::sync::Arc::new(rgba);
+        crate::vector::remember_svg(&rgba, svg);
+        let panel = app.template.panels.iter().position(|p| p.name == "正面").unwrap();
+        let decal = pakenoba_core::surface::Decal { panel, at: [0.5, 0.5], size: [40.0, 20.0], angle: 0.0 };
+        let layer = pakenoba_core::project::Layer { vector: Some(VectorStyle { colors: vec![ColorStyle { hidden: true, ..ColorStyle::new([0, 0, 255]) }], ..Default::default() }), ..Default::default() };
+        app.decals.push(crate::paint::Placed { decal, picture: crate::paint::Picture::Image { w, h, rgba, vector: true }, back: false, layer });
+        let index = app.decals.len() - 1;
+        app.select_only(Some(index));
+        app.add_finish(pakenoba_core::material::FinishKind::White, false);
+        // 隠した色を除いた絵は別のスレッドで作るので、できるまで待つ。
+        let center = app.decals[index].center(&app.template);
+        let at = |app: &App, dx: f32| {
+            let maps = app.finish_maps(false).unwrap();
+            let f = crate::art::Frame::screen(&app.template);
+            let [x, y] = f.to_px([center[0] + dx, center[1]]);
+            maps[1][(y as usize * app.sheet.w + x as usize) * 4 + 2]
+        };
+        for _ in 0..100 {
+            if !crate::effects::busy() && at(&app, 10.0) == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(at(&app, -10.0) > 200, "見えている赤の所には白押し");
+        assert_eq!(at(&app, 10.0), 0, "隠した青の所には白押しをしない");
+    }
+
+    #[test]
     fn 白押しを選んだまま_同じ柄にエンボスを足せる() {
         let mut app = app();
         app.select_only(Some(0));

@@ -1248,7 +1248,7 @@ impl App {
             }
             None => {
                 chosen = self.selection();
-                (base, Marks { selected: &chosen, hover: self.hover_decal })
+                (base, Marks { selected: &chosen, hover: None })
             }
         };
         if self.art_dirty {

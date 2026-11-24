@@ -208,8 +208,8 @@ impl App {
         // 運んでいる間とつかんでいる間は、強調しない（描き直しを増やさない）。
         let now = if self.carry.is_some() || self.grab.is_some() { None } else { now };
         if now != self.hover_decal {
+            // 枠は、柄の絵を描き直さずに、表示の上に線で重ねる（すぐ出て、すぐ消える）。
             self.hover_decal = now;
-            (self.art_dirty, self.back_dirty) = (true, true);
             ctx.request_repaint();
         }
     }

@@ -186,6 +186,53 @@ pub(super) fn projection(ortho: bool, fov: f32, aspect: f32, dist: f32, radius: 
 }
 
 /// 立体の点を、表示 `rect` の上の点へ。視点の後ろなら `None`。
+/// カーソルの下の柄の枠の色（パケノバの水色）。
+const HOVER_COLOR: Color32 = Color32::from_rgb(38, 178, 170);
+
+impl App {
+    /// 枠を出す柄: この表示でカーソルの下にある柄、なければ、ほかの表示で見つけた柄。選んでいる柄や、ボタンを押している間は出さない。
+    /// `back` は展開図の表示の面（立体の表示では None）。
+    fn hover_shown(&self, here: Option<usize>, back: Option<bool>) -> Option<usize> {
+        let index = here.or(self.hover_decal)?;
+        let placed = self.decals.get(index)?;
+        let pressing = self.grab.is_some() || self.transforming.is_some() || self.carry.is_some();
+        (!pressing && !self.is_selected(index) && back.is_none_or(|b| b == placed.back)).then_some(index)
+    }
+
+    /// 柄 `index` の縁を、面ごとに分けて線で描く。`to_screen(パネル, 展開図の点)` で画面の点へ。
+    fn paint_outline(&self, painter: &egui::Painter, index: usize, to_screen: impl Fn(usize, [f32; 2]) -> Option<Pos2>) {
+        let decal = &self.decals[index];
+        let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
+        let corners = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]];
+        const STEPS: usize = 24;
+        for piece in self.surface.layout(&self.template, decal) {
+            let outline = &self.template.panels[piece.panel].outline;
+            for e in 0..4 {
+                let (a, b) = (corners[e], corners[(e + 1) % 4]);
+                // 縁を細かく分け、そのパネルの中にある所だけを結ぶ（面をまたぐ柄は、面ごとに描く）。
+                let mut run: Vec<Pos2> = Vec::new();
+                for k in 0..=STEPS {
+                    let t = k as f32 / STEPS as f32;
+                    let q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                    let p = piece.place.point(q);
+                    match pakenoba_core::template::inside(outline, p).then(|| to_screen(piece.panel, p)).flatten() {
+                        Some(s) => run.push(s),
+                        None => {
+                            if run.len() > 1 {
+                                painter.add(egui::Shape::line(std::mem::take(&mut run), egui::Stroke::new(2.0, HOVER_COLOR)));
+                            }
+                            run.clear();
+                        }
+                    }
+                }
+                if run.len() > 1 {
+                    painter.add(egui::Shape::line(run, egui::Stroke::new(2.0, HOVER_COLOR)));
+                }
+            }
+        }
+    }
+}
+
 /// 吸い付きの補助線の色（イラストレーターのスマートガイドに近い、目立つ桃色）。
 const SNAP_COLOR: Color32 = Color32::from_rgb(255, 64, 200);
 /// 吸い付く距離（画面の点）。
@@ -543,6 +590,11 @@ impl App {
         if let Some(quad) = self.knob_target(None).and_then(|i| quad_of(&self.decals[i])) {
             transform::paint(&painter, quad, ui.visuals().selection.bg_fill);
         }
+        // カーソルの下の柄の枠（柄の絵は描き直さずに、線で重ねる）。
+        if let Some(index) = self.hover_shown(decal_under.map(|(i, _)| i), None) {
+            let to_screen = |panel: usize, p: [f32; 2]| project(&mvp, rect, world.then_after(&placements[panel].at(p)).point([p[0], p[1], 0.0]));
+            self.paint_outline(&painter, index, to_screen);
+        }
         // 吸い付いた先の補助線。丸めた面にも沿うよう、細かく分けて描く。
         for &(panel, a, b) in &self.snap_shown {
             let points: Vec<Pos2> = (0..=32)
@@ -792,6 +844,9 @@ impl App {
         if let Some(i) = self.knob_target(back) {
             let quad = transform::corners(&self.decals[i], template).map(to_screen);
             transform::paint(&painter.with_clip_rect(area.intersect(rect)), quad, visuals.selection.bg_fill);
+        }
+        if let Some(index) = self.hover_shown(decal_under.map(|(i, _)| i), Some(back)) {
+            self.paint_outline(&painter.with_clip_rect(area.intersect(rect)), index, |_, p| Some(to_screen(p)));
         }
         // 吸い付いた先の補助線。
         for &(_, a, b) in &self.snap_shown {

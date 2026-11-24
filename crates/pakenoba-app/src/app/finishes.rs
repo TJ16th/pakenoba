@@ -163,7 +163,8 @@ impl App {
             let Some(link) = self.finish_link(index).filter(|&i| !finish.hidden && self.decals[i].back == back) else { continue };
             // 柄の形だけを使う。隠していても、不透明度や描画モードを変えていても、形はそのまま。
             let mut shape = self.decals[link].clone();
-            shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, ..Layer::default() };
+            // ベクターの色ごと・パスごとの表示（隠した所には加工しない）と、タイルの並びは、形として引き継ぐ。
+            shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, vector: shape.layer.vector.clone(), tile: shape.layer.tile, ..Layer::default() };
             let mut layer = vec![0u8; w * h * 4];
             paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::screen(w, h, &mut layer));
             let map = map.get_or_insert_with(|| [0u8, 0, 0, 128].repeat(w * h));
@@ -227,7 +228,8 @@ impl App {
             let finish = &self.finishes[index];
             let Some(link) = self.finish_link(index).filter(|&i| !finish.hidden && self.decals[i].back == back) else { continue };
             let mut shape = self.decals[link].clone();
-            shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, ..Layer::default() };
+            // ベクターの色ごと・パスごとの表示（隠した所には加工しない）と、タイルの並びは、形として引き継ぐ。
+            shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, vector: shape.layer.vector.clone(), tile: shape.layer.tile, ..Layer::default() };
             let mut layer = vec![0u8; w * h * 4];
             paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::at(frame, &mut layer));
             let (name, rgb) = plate_name(finish);

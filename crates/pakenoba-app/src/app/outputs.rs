@@ -70,7 +70,11 @@ pub(super) struct MovieJob {
     frame: u32,
     total: u32,
     yaw: f32,
-    send: Option<mpsc::SyncSender<Vec<u8>>>,
+    /// 書き出しのあいだ隠している、選んだ柄の枠とガイド（終わったら戻す）。
+    kept: Option<(Option<usize>, Vec<usize>, bool)>,
+    /// 描いたが、まだ渡せていないコマ（渡し口が詰まっているとき。画面を止めないよう、待たずに次の画面で渡す）。
+    pending: Option<(u32, Vec<u8>)>,
+    send: Option<mpsc::SyncSender<(u32, Vec<u8>)>>,
     writer: Option<JoinHandle<Result<(), String>>>,
     path: PathBuf,
 }
@@ -207,8 +211,9 @@ impl App {
         let Some(path) = self.ask_output(t!("Save the box-opening video"), t!("GIF animation"), "gif", t!("box-opening")) else { return };
         let size = MOVIE_SIZES[self.output.movie_size].1;
         let total = ((self.output.movie_seconds * MOVIE_FPS as f32).round() as u32).max(10);
-        // コマを受け取って GIF にまとめるスレッド。描く側を待たせすぎないよう、4 コマまでためる。
-        let (send, receive) = mpsc::sync_channel::<Vec<u8>>(4);
+        // コマを受け取って GIF にまとめる。色を 256 色に絞るのが重いので、何人かで手分けして絞り、書く係が順に並べて書く。
+        let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).saturating_sub(1).clamp(1, 6);
+        let (send, receive) = mpsc::sync_channel::<(u32, Vec<u8>)>(workers * 2);
         let file_path = path.clone();
         let writer = std::thread::Builder::new()
             .name("pakenoba-movie".to_owned())
@@ -216,17 +221,43 @@ impl App {
                 let file = std::fs::File::create(&file_path).map_err(|e| e.to_string())?;
                 let mut encoder = gif::Encoder::new(std::io::BufWriter::new(file), size[0] as u16, size[1] as u16, &[]).map_err(|e| e.to_string())?;
                 encoder.set_repeat(gif::Repeat::Infinite).map_err(|e| e.to_string())?;
-                for mut rgba in receive {
-                    let mut frame = gif::Frame::from_rgba_speed(size[0] as u16, size[1] as u16, &mut rgba, 10);
-                    frame.delay = (100 / MOVIE_FPS) as u16;
-                    encoder.write_frame(&frame).map_err(|e| e.to_string())?;
+                let receive = std::sync::Arc::new(std::sync::Mutex::new(receive));
+                let (done_send, done) = mpsc::channel::<(u32, gif::Frame<'static>)>();
+                let mut pool = Vec::new();
+                for _ in 0..workers {
+                    let (receive, done_send) = (receive.clone(), done_send.clone());
+                    pool.push(std::thread::spawn(move || {
+                        loop {
+                            let next = receive.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                            let Ok((index, mut rgba)) = next else { return };
+                            let mut frame = gif::Frame::from_rgba_speed(size[0] as u16, size[1] as u16, &mut rgba, 10);
+                            frame.delay = (100 / MOVIE_FPS) as u16;
+                            if done_send.send((index, frame)).is_err() {
+                                return;
+                            }
+                        }
+                    }));
+                }
+                drop(done_send);
+                // 手分けした結果は、終わった順に届く。番号の順に並べて書く。
+                let mut waiting = std::collections::BTreeMap::new();
+                let mut next = 0u32;
+                for (index, frame) in done {
+                    waiting.insert(index, frame);
+                    while let Some(frame) = waiting.remove(&next) {
+                        encoder.write_frame(&frame).map_err(|e| e.to_string())?;
+                        next += 1;
+                    }
+                }
+                for worker in pool {
+                    let _ = worker.join();
                 }
                 Ok(())
             })
             .map_err(|e| e.to_string());
         match writer {
             Ok(writer) => {
-                self.movie = Some(MovieJob { frame: 0, total, yaw: self.yaw, send: Some(send), writer: Some(writer), path });
+                self.movie = Some(MovieJob { frame: 0, total, yaw: self.yaw, kept: None, pending: None, send: Some(send), writer: Some(writer), path });
                 self.say(t!("Exporting the video…"));
             }
             Err(e) => self.say(t!("Could not export the video: {e}")),
@@ -235,42 +266,68 @@ impl App {
 
     /// 動画のコマを 1 つ描いて渡す。描き終わったら、書き終わるのを待って知らせる。画面の更新ごとに呼ぶ。
     pub(super) fn movie_frame(&mut self, ctx: &egui::Context) {
-        let Some(job) = &self.movie else { return };
+        let Some(job) = &mut self.movie else { return };
         ctx.request_repaint();
+        // 前の画面で渡せなかったコマがあれば、待たずに渡してみる（詰まっていれば、次の画面でまた）。
+        if let Some((index, rgba)) = job.pending.take() {
+            match job.send.as_ref().map(|send| send.try_send((index, rgba))) {
+                Some(Err(mpsc::TrySendError::Full(back))) => {
+                    job.pending = Some(back);
+                    return;
+                }
+                Some(Err(mpsc::TrySendError::Disconnected(_))) | None => job.frame = job.total,
+                Some(Ok(())) => {}
+            }
+        }
         if job.frame < job.total {
             let (frame, total, yaw0) = (job.frame, job.total, job.yaw);
             let Some(rs) = self.render_state.clone() else { return };
+            // 柄の絵は、はじめに 1 回だけ、選んだ枠とガイドを消して作り直す（コマごとに作り直さない）。
+            if self.movie.as_ref().is_some_and(|job| job.kept.is_none()) {
+                let kept = self.clean_art(ctx, &rs);
+                if let Some(job) = self.movie.as_mut() {
+                    job.kept = Some(kept);
+                }
+            }
             let (open, swing) = movie_pose(frame, total, self.output.movie_turn);
             let size = MOVIE_SIZES[self.output.movie_size].1;
             let background = BACKGROUNDS[self.output.background.min(1)].1;
-            let kept = self.clean_art(ctx, &rs);
             let rendered = self.render_box(&rs, size, [open, 0.0], yaw0 + swing, background, true);
-            self.restore_marks(kept);
             let job = self.movie.as_mut().expect("movie job present");
             match rendered {
                 Ok(rgba) => {
-                    if job.send.as_ref().is_some_and(|send| send.send(rgba).is_err()) {
-                        job.frame = job.total;
-                    } else {
-                        job.frame += 1;
+                    match job.send.as_ref().map(|send| send.try_send((frame, rgba))) {
+                        Some(Ok(())) => {}
+                        Some(Err(mpsc::TrySendError::Full(back))) => job.pending = Some(back),
+                        _ => job.frame = job.total,
                     }
+                    job.frame = (job.frame + 1).min(job.total);
                     let progress = t!("Exporting the video… frame {} of {}", job.frame, job.total);
                     self.say(progress);
                 }
                 Err(e) => {
-                    self.movie = None;
+                    let kept = self.movie.take().and_then(|job| job.kept);
+                    if let Some(kept) = kept {
+                        self.restore_marks(kept);
+                    }
                     return self.say(t!("Could not export the video: {e}"));
                 }
             }
             return;
         }
-        // 描き終わった。渡し口を閉じて、書き終わるのを待つ。
-        let job = self.movie.as_mut().expect("movie job present");
+        // 描き終わった。渡し口を閉じて、書き終わるのを待つ（待つあいだも、画面は止めない）。
+        if job.pending.is_some() {
+            return;
+        }
         job.send = None;
         if job.writer.as_ref().is_some_and(|w| !w.is_finished()) {
+            self.say(t!("Finishing the video…"));
             return;
         }
         let job = self.movie.take().expect("movie job present");
+        if let Some(kept) = job.kept {
+            self.restore_marks(kept);
+        }
         let result = job.writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err(t!("Exporting stopped partway").to_owned())));
         match result {
             Ok(()) => self.say(t!("Saved {} ({} frames)", job.path.display(), job.total)),
