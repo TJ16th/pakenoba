@@ -435,9 +435,9 @@ impl App {
                     }
                     for (blocking, text) in &self.problems {
                         if *blocking {
-                            ui.colored_label(egui::Color32::from_rgb(240, 120, 100), t!("Problem: {text}"));
+                            ui.colored_label(super::theme::BAD, t!("Problem: {text}"));
                         } else {
-                            ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("Note: {text}"));
+                            ui.colored_label(super::theme::WARN, t!("Note: {text}"));
                         }
                     }
                     ui.small(t!("Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline."));
@@ -502,26 +502,18 @@ impl App {
         let Some(sides) = self.pending_shape else { return };
         let name = SHAPES.iter().find(|(s, _)| *s == sides).map_or(t!("another box type"), |(_, name)| pakenoba_i18n::tr(name));
         let count = self.decals.len();
-        let response = egui::Modal::new(egui::Id::unique("confirm-shape")).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.strong(t!("Change the box type to \"{name}\"?"));
-            ui.add_space(4.0);
+        let buttons = [super::dialog::Button::accept(t!("Change box type"), true), super::dialog::Button::cancel(t!("Cancel"))];
+        let picked = super::dialog::show(ctx, "confirm-shape", &t!("Change the box type to \"{name}\"?"), 400.0, &buttons, |ui| {
             ui.label(t!("Changing the box type changes the panels, so {count} placed piece(s) of artwork will come off the box."));
             ui.label(t!("Even after changing, Ctrl+Z gets the previous box type and artwork back."));
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let change = ui.button(t!("Change box type")).clicked();
-                let cancel = ui.button(t!("Cancel")).clicked();
-                (change, cancel)
-            })
-            .inner
         });
-        let (change, cancel) = response.inner;
-        if change {
-            self.pending_shape = None;
-            self.set_shape(sides);
-        } else if cancel || response.should_close() {
-            self.pending_shape = None;
+        match picked {
+            Some(0) => {
+                self.pending_shape = None;
+                self.set_shape(sides);
+            }
+            Some(_) => self.pending_shape = None,
+            None => {}
         }
     }
 

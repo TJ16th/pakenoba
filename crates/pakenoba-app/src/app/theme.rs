@@ -33,6 +33,10 @@ pub const FAINT: Color32 = Color32::from_rgb(0x8c, 0x8c, 0x8c);
 /// 強調（accent.solid）。選んでいる切り替え、チェック、主なボタン。
 pub const ACCENT: Color32 = Color32::from_rgb(0x37, 0x8e, 0xf0);
 /// 輪郭だけのボタン（「初期設定に戻す」など）のふち。
+/// 失敗の文字（PhotoCraft の status.bad）。
+pub const BAD: Color32 = Color32::from_rgb(0xec, 0x5b, 0x62);
+/// 注意の文字（PhotoCraft の status.warn）。
+pub const WARN: Color32 = Color32::from_rgb(0xe8, 0xb0, 0x46);
 pub const OUTLINE: Color32 = Color32::from_rgb(0x8b, 0x8b, 0x8b);
 
 /// egui の見た目を、上の色にする。

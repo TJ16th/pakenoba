@@ -398,7 +398,7 @@
 	Discard	捨てる
 	Deletes the backup. This cannot be undone	控えを消します。元に戻せません
 	Decide later	あとで決める
-	Keeps the backup and asks again at the next start	控えは残しておき、次に起動したときにまた聞きます
+	"Decide later" keeps the backups and asks again at the next start.	「あとで決める」を押すと、控えを残して、次に起動したときにまた聞きます。
 # pakenoba-app/src/app/select.rs
 	to the box around all the selected artwork	選んだ柄全体の四角にそろえる
 	to the panel it is on	置いているパネルにそろえる

@@ -740,19 +740,15 @@ impl App {
     /// 作業を止めて確かめるダイアログ。保存していない変更の確認と、知らせ。
     pub(super) fn file_dialogs(&mut self, ctx: &egui::Context) {
         if let Some(notice) = &self.file.notice {
-            let response = egui::Modal::new(egui::Id::unique("file-notice")).show(ctx, |ui| {
-                ui.set_width(460.0);
-                ui.strong(&notice.title);
-                ui.add_space(4.0);
+            let buttons = [super::dialog::Button::accept(t!("Close"), true)];
+            let picked = super::dialog::show(ctx, "file-notice", &notice.title, 460.0, &buttons, |ui| {
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     for line in &notice.lines {
                         ui.label(line);
                     }
                 });
-                ui.add_space(8.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button(t!("Close")).clicked()).inner
             });
-            if response.inner || response.should_close() {
+            if picked.is_some() {
                 self.file.notice = None;
             }
             return;
@@ -760,25 +756,15 @@ impl App {
 
         let Some(then) = self.file.pending.clone() else { return };
         let name = self.project_name();
-        let response = egui::Modal::new(egui::Id::unique("confirm-unsaved")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            ui.strong(t!("\"{name}\" has unsaved changes"));
-            ui.add_space(4.0);
+        let buttons = [super::dialog::Button::accept(t!("Save"), true), super::dialog::Button::alternate(t!("Don't save")), super::dialog::Button::cancel(t!("Cancel"))];
+        let picked = super::dialog::show(ctx, "confirm-unsaved", &t!("\"{name}\" has unsaved changes"), 420.0, &buttons, |ui| {
             ui.label(match then {
                 Then::Close => t!("If you close without saving, the changes will be lost."),
                 Then::CloseTab => t!("If you close this tab without saving, the changes will be lost."),
                 Then::Nothing => "",
             });
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let save = ui.button(t!("Save")).clicked();
-                let discard = ui.button(t!("Don't save")).clicked();
-                let cancel = ui.button(t!("Cancel")).clicked();
-                (save, discard, cancel)
-            })
-            .inner
         });
-        let (save, discard, cancel) = response.inner;
+        let (save, discard, cancel) = (picked == Some(0), picked == Some(1), picked == Some(2));
         if save {
             self.file.pending = None;
             // 保存が終わったら、続きを行う。保存先を選ぶのをやめたときは、何もしない。
@@ -786,7 +772,7 @@ impl App {
         } else if discard {
             self.file.pending = None;
             self.proceed(ctx, then);
-        } else if cancel || response.should_close() {
+        } else if cancel {
             self.file.pending = None;
         }
     }

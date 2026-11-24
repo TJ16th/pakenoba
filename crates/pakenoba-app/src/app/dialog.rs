@@ -15,6 +15,8 @@ use super::theme;
 pub(super) enum Role {
     /// 主なボタン（青で塗る。Enter でも押される）。
     Accept,
+    /// ほかの答え（「保存しない」など）。
+    Alternate,
     /// 取り消し（Esc と × でも押される）。
     Cancel,
 }
@@ -33,16 +35,28 @@ impl<'a> Button<'a> {
     pub fn cancel(label: &'a str) -> Self {
         Button { label, role: Role::Cancel, enabled: true }
     }
+
+    pub fn alternate(label: &'a str) -> Self {
+        Button { label, role: Role::Alternate, enabled: true }
+    }
 }
 
-/// ボタンを並べる順（Windows は主なボタンが先）。
+/// ボタンを並べる順。PhotoCraft（craft-libs の `DialogRole::rank`）と同じ: Windows は主なボタン、ほかの答え、
+/// 取り消しの順。macOS と Linux は、ほかの答え、取り消し、主なボタンの順。
 fn order(buttons: &[Button], windows: bool) -> Vec<usize> {
+    let rank = |role: Role| match (windows, role) {
+        (true, Role::Accept) | (false, Role::Alternate) => 0,
+        (true, Role::Alternate) | (false, Role::Cancel) => 2,
+        (true, Role::Cancel) | (false, Role::Accept) => 3,
+    };
     let mut order: Vec<usize> = (0..buttons.len()).collect();
-    order.sort_by_key(|&i| match (windows, buttons[i].role) {
-        (true, Role::Accept) | (false, Role::Cancel) => 0,
-        _ => 1,
-    });
+    order.sort_by_key(|&i| rank(buttons[i].role));
     order
+}
+
+/// Esc と × で押されるボタン: 取り消し。なければ、ボタンが 1 つだけのとき（知らせの「閉じる」）はそれ。
+fn dismiss(buttons: &[Button]) -> Option<usize> {
+    buttons.iter().position(|b| b.role == Role::Cancel).or((buttons.len() == 1).then_some(0))
 }
 
 /// 窓を出す。押されたボタン（Enter、Esc、× も含む）の番号を返す。
@@ -67,7 +81,7 @@ pub(super) fn show(ctx: &egui::Context, id: &str, title: &str, width: f32, butto
         ui.painter().line_segment([c + egui::vec2(-4.5, -4.5), c + egui::vec2(4.5, 4.5)], stroke);
         ui.painter().line_segment([c + egui::vec2(-4.5, 4.5), c + egui::vec2(4.5, -4.5)], stroke);
         if close_response.clicked() {
-            picked = buttons.iter().position(|b| b.role == Role::Cancel);
+            picked = dismiss(buttons);
         }
         // 中身。
         egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 6, bottom: 4 }).show(ui, |ui| {
@@ -82,9 +96,13 @@ pub(super) fn show(ctx: &egui::Context, id: &str, title: &str, width: f32, butto
                 // 右から置くので、並べる順の逆に置く。
                 for &i in order(buttons, cfg!(windows)).iter().rev() {
                     let b = &buttons[i];
-                    let text = egui::RichText::new(b.label).color(if b.role == Role::Accept && b.enabled { egui::Color32::WHITE } else { theme::TEXT });
+                    let filled = b.role == Role::Accept;
+                    let text = egui::RichText::new(b.label).color(if filled && b.enabled { egui::Color32::WHITE } else { theme::TEXT });
                     let mut button = egui::Button::new(text).min_size(egui::vec2(84.0, 28.0)).corner_radius(4.0);
-                    button = if b.role == Role::Accept { button.fill(theme::ACCENT) } else { button.fill(theme::PANEL).stroke(egui::Stroke::new(1.0, theme::OUTLINE)) };
+                    button = match b.role {
+                        Role::Accept => button.fill(theme::ACCENT),
+                        _ => button.fill(theme::PANEL).stroke(egui::Stroke::new(1.0, theme::OUTLINE)),
+                    };
                     if ui.add_enabled(b.enabled, button).clicked() {
                         picked = Some(i);
                     }
@@ -98,7 +116,7 @@ pub(super) fn show(ctx: &egui::Context, id: &str, title: &str, width: f32, butto
         picked = buttons.iter().position(|b| b.role == Role::Accept && b.enabled);
     }
     if picked.is_none() && escape {
-        picked = buttons.iter().position(|b| b.role == Role::Cancel);
+        picked = dismiss(buttons);
     }
     picked
 }
@@ -112,5 +130,11 @@ mod tests {
         let buttons = [Button::cancel("Cancel"), Button::accept("OK", true)];
         assert_eq!(order(&buttons, true), [1, 0]);
         assert_eq!(order(&buttons, false), [0, 1]);
+        // 保存の確認: Windows は「保存」「保存しない」「キャンセル」、Mac は「保存しない」「キャンセル」「保存」。
+        let buttons = [Button::accept("Save", true), Button::alternate("Don't save"), Button::cancel("Cancel")];
+        assert_eq!(order(&buttons, true), [0, 1, 2]);
+        assert_eq!(order(&buttons, false), [1, 2, 0]);
+        assert_eq!(dismiss(&buttons), Some(2));
+        assert_eq!(dismiss(&[Button::accept("Close", true)]), Some(0));
     }
 }

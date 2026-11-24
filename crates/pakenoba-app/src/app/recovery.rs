@@ -288,34 +288,36 @@ impl App {
         }
         let orphans = self.recovery.orphans.clone();
         let mut chosen: Option<(usize, bool)> = None;
-        let response = egui::Modal::new(egui::Id::unique("recovery")).show(ctx, |ui| {
-            ui.set_width(480.0);
-            ui.strong(t!("A project was left unsaved last time"));
-            ui.add_space(4.0);
+        // 「あとで決める」は、控えを残して閉じる取り消し（Esc と × も同じ）。
+        let buttons = [super::dialog::Button::cancel(t!("Decide later"))];
+        let picked = super::dialog::show(ctx, "recovery", t!("A project was left unsaved last time"), 500.0, &buttons, |ui| {
             ui.label(t!("These are backups PAKENOBA kept when it stopped partway. You can open and save them again."));
-            ui.add_space(6.0);
+            ui.small(egui::RichText::new(t!("\"Decide later\" keeps the backups and asks again at the next start.")).color(super::theme::FAINT));
             for (index, orphan) in orphans.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(orphan.name());
-                        let when = file::show_time(&orphan.when).map_or_else(String::new, |t| t!("Backup time: {t}"));
-                        let place = orphan.original.as_ref().map_or_else(|| t!("a project that has never been saved").to_owned(), |p| p.display().to_string());
-                        ui.small(format!("{place}\n{when}"));
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(t!("Open")).clicked() {
-                            chosen = Some((index, true));
-                        }
-                        if ui.button(t!("Discard")).on_hover_text(t!("Deletes the backup. This cannot be undone")).clicked() {
-                            chosen = Some((index, false));
-                        }
+                // 控え 1 つずつを、沈んだ色の行に。
+                egui::Frame::new().fill(super::theme::SUNKEN).corner_radius(4.0).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(orphan.name());
+                            let when = file::show_time(&orphan.when).map_or_else(String::new, |t| t!("Backup time: {t}"));
+                            let place = orphan.original.as_ref().map_or_else(|| t!("a project that has never been saved").to_owned(), |p| p.display().to_string());
+                            ui.small(egui::RichText::new(format!("{place}\n{when}")).color(super::theme::MUTED));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(egui::Button::new(egui::RichText::new(t!("Open")).color(egui::Color32::WHITE)).fill(super::theme::ACCENT).min_size(egui::vec2(64.0, 26.0))).clicked() {
+                                chosen = Some((index, true));
+                            }
+                            let discard = egui::Button::new(egui::RichText::new(t!("Discard")).color(super::theme::BAD)).fill(super::theme::PANEL).stroke(egui::Stroke::new(1.0, super::theme::OUTLINE)).min_size(egui::vec2(64.0, 26.0));
+                            if ui.add(discard).on_hover_text(t!("Deletes the backup. This cannot be undone")).clicked() {
+                                chosen = Some((index, false));
+                            }
+                        });
                     });
                 });
-                ui.separator();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.button(t!("Decide later")).on_hover_text(t!("Keeps the backup and asks again at the next start")).clicked()).inner
         });
-        let later = response.inner || response.should_close();
+        let later = picked.is_some();
         match chosen {
             Some((index, open)) => {
                 let orphan = self.recovery.orphans.remove(index);

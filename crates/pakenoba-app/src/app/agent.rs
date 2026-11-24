@@ -541,7 +541,7 @@ impl App {
                     });
                 }
                 if let Some(e) = &turn.error {
-                    ui.colored_label(egui::Color32::from_rgb(240, 120, 100), e);
+                    ui.colored_label(super::theme::BAD, e);
                 }
                 if k == last && turn.history_after == Some(depth) && ui.small_button(t!("Undo this request")).clicked() {
                     undo = true;
@@ -611,7 +611,7 @@ impl App {
                 }
             });
             if typed && !looks_right {
-                ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("{} keys usually start with \"{}\". Check that this is the right key.", provider.name(), provider.key_prefix()));
+                ui.colored_label(super::theme::WARN, t!("{} keys usually start with \"{}\". Check that this is the right key.", provider.name(), provider.key_prefix()));
             } else {
                 ui.small(egui::RichText::new(t!("Create a key in the {} developer console and paste it here.", provider.name())).color(super::theme::FAINT));
             }
@@ -624,7 +624,7 @@ impl App {
                 }
                 zeroize::Zeroize::zeroize(&mut dialog.text);
             }
-            Some(super::dialog::Role::Cancel) => zeroize::Zeroize::zeroize(&mut dialog.text),
+            Some(_) => zeroize::Zeroize::zeroize(&mut dialog.text),
             None => self.agent.key_dialog = Some(dialog),
         }
     }
