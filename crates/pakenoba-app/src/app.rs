@@ -538,6 +538,9 @@ struct App {
     mask_job: Option<layers::MaskJob>,
     /// レイヤーの欄で選んだ、柄の調整（柄の番号と、調整の番号）。プロパティで、その調整を開く。
     adjust_focus: Option<(usize, usize)>,
+    /// ごみ箱へ運んでいる、柄だけに効く調整（柄の番号、調整の番号）と、ごみ箱のボタンの場所。
+    adjust_drag: Option<(usize, usize)>,
+    trash_rect: Option<egui::Rect>,
     /// 調整した絵ができた回数の、最後に見た値（変わったら描き直す）。
     effects_seen: u64,
     /// レイヤーの絞り込み。
@@ -728,6 +731,8 @@ impl App {
             brush: None,
             mask_job: None,
             adjust_focus: None,
+            adjust_drag: None,
+            trash_rect: None,
             effects_seen: 0,
             thumbs: Default::default(),
             layer_filter: Default::default(),
@@ -1340,7 +1345,11 @@ impl App {
             self.undo();
         }
         if plain && (delete || backspace) && self.workspace == Workspace::Design {
-            self.cmd_delete();
+            // 調整の行を選んでいれば、その調整だけを消す。
+            match self.adjust_focus.filter(|(i, k)| self.selected == Some(*i) && *k < self.decals[*i].layer.adjust.len() && crate::paint::is_artwork(&self.decals[*i].picture)) {
+                Some((i, k)) => self.remove_adjustment(i, k),
+                None => self.cmd_delete(),
+            }
         }
         // Ctrl+E で、選んでいる柄を外のアプリで直す。
         if command && e && self.workspace == Workspace::Design {

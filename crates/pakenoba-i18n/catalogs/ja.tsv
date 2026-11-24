@@ -721,7 +721,6 @@ blend	Color	カラー
 	Brightness	明るさ
 	Brightness, colors, background removal and subject selection are in "Adjust" at the bottom of the Layers panel. They can be changed later.	明るさ、色、背景を透明にする、被写体を選択は、レイヤーの欄のいちばん下の「調整」にあります。あとから直せます。
 	Brightness/Contrast	明るさ・コントラスト
-	Click to change its settings in Properties	押すと、プロパティで数値を直せます
 	Close the group	グループを閉じる
 	Colors	色の数
 	Contrast	コントラスト
@@ -1289,3 +1288,9 @@ blend	Color	カラー
 	The shapes of this vector artwork cannot be read.	このベクターの形を読めませんでした。
 	There is no path there.	そこにはパスがありません。
 	{} shapes	形 {} 個
+	Click to change its settings in Properties. Right-click or drag to the trash to delete	押すと、プロパティでこの調整の設定を変えられます。右クリックか、ごみ箱へドラッグで消せます
+	Delete this adjustment	この調整を削除
+	Hide this adjustment	この調整を隠す
+	Show only this adjustment's settings	この調整の設定だけを出す
+	Show this adjustment	この調整を表示
+	← Settings of this layer	← このレイヤーの設定へ

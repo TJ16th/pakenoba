@@ -271,6 +271,14 @@ impl App {
             ui.weak(t!("Image is locked. Unlock it in the Layers panel to change adjustments or the mask."));
         }
         self.brush_options(ui);
+        // レイヤーの欄で調整の行を選んでいるときは、その調整だけを出す（Photoshop のスマートフィルターと同じ）。
+        if self.adjust_focus.is_some_and(|(i, k)| i == index && k < self.decals[index].layer.adjust.len()) {
+            if ui.small_button(t!("← Settings of this layer")).clicked() {
+                self.adjust_focus = None;
+            }
+            self.adjust_properties(ui, index, locked);
+            return;
+        }
         let earlier = self.snapshot();
         let template = &self.template;
         let ratio_lock = &mut self.ratio_lock;

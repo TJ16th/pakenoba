@@ -867,21 +867,70 @@ impl App {
         for k in (0..n).rev() {
             let a = self.decals[index].layer.adjust[k].clone();
             let focused = self.adjust_focus == Some((index, k));
-            let (toggled, clicked) = self.sub_row(ui, depth, a.on, adjust_label(a.kind), false, focused);
+            let (toggled, clicked, response) = self.sub_row_with(ui, depth, a.on, adjust_label(a.kind), false, focused);
+            self.ensure_ids();
+            let id = self.decals[index].layer.id;
             if toggled {
-                self.ensure_ids();
-                self.person("adjust.toggle", serde_json::json!({ "id": self.decals[index].layer.id, "index": k, "on": !a.on }));
+                self.person("adjust.toggle", serde_json::json!({ "id": id, "index": k, "on": !a.on }));
             }
             if clicked {
                 self.select_only(Some(index));
                 self.adjust_focus = Some((index, k));
             }
+            // 右クリック: 表示の切り替え、順、削除。
+            response.context_menu(|ui| {
+                if ui.button(if a.on { t!("Hide this adjustment") } else { t!("Show this adjustment") }).clicked() {
+                    self.person("adjust.toggle", serde_json::json!({ "id": id, "index": k, "on": !a.on }));
+                    ui.close();
+                }
+                if ui.add_enabled(k + 1 < n, egui::Button::new(t!("Apply later"))).clicked() {
+                    self.person("adjust.move", serde_json::json!({ "id": id, "index": k, "to": k + 1 }));
+                    ui.close();
+                }
+                if ui.add_enabled(k > 0, egui::Button::new(t!("Apply earlier"))).clicked() {
+                    self.person("adjust.move", serde_json::json!({ "id": id, "index": k, "to": k - 1 }));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(t!("Delete this adjustment")).clicked() {
+                    self.remove_adjustment(index, k);
+                    ui.close();
+                }
+            });
+            // ごみ箱へドラッグして消す。
+            if response.drag_started() {
+                self.adjust_drag = Some((index, k));
+            }
+            if response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            if response.drag_stopped() {
+                let over_trash = ui.input(|i| i.pointer.interact_pos()).zip(self.trash_rect).is_some_and(|(p, r)| r.expand(4.0).contains(p));
+                if over_trash && self.adjust_drag == Some((index, k)) {
+                    self.remove_adjustment(index, k);
+                }
+                self.adjust_drag = None;
+            }
         }
+    }
+
+    /// 柄だけに効く調整を 1 つ消す（元に戻せる）。
+    pub(super) fn remove_adjustment(&mut self, index: usize, k: usize) {
+        self.ensure_ids();
+        let id = self.decals[index].layer.id;
+        self.person("adjust.remove", serde_json::json!({ "id": id, "index": k }));
+        self.adjust_focus = None;
     }
 
     /// 柄の下の、小さな行（目と名前）。目を押したか、行を押したかを返す。
     fn sub_row(&mut self, ui: &mut egui::Ui, depth: f32, on: bool, label: &str, heading: bool, focused: bool) -> (bool, bool) {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SUB_H), egui::Sense::click());
+        let (eye, clicked, _) = self.sub_row_with(ui, depth, on, label, heading, focused);
+        (eye, clicked)
+    }
+
+    /// 小さな行の本体。行の応答（右クリックやドラッグに使う）も返す。
+    fn sub_row_with(&mut self, ui: &mut egui::Ui, depth: f32, on: bool, label: &str, heading: bool, focused: bool) -> (bool, bool, egui::Response) {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SUB_H), egui::Sense::click_and_drag());
         let visuals = ui.visuals().clone();
         ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, SUB_H)), 0.0, super::theme::EYE_COLUMN);
         let body = egui::Rect::from_min_max(egui::pos2(rect.left() + EYE_W, rect.top()), rect.max);
@@ -898,9 +947,10 @@ impl App {
             icons::draw_adjust(ui.painter(), egui::pos2(x + 2.0, rect.center().y), egui::Stroke::new(1.0, ink));
         }
         ui.painter().text(egui::pos2(x + if heading { 14.0 } else { 0.0 }, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), ink);
-        let clicked = response.on_hover_text(t!("Click to change its settings in Properties")).clicked();
+        let response = response.on_hover_text(t!("Click to change its settings in Properties. Right-click or drag to the trash to delete"));
+        let clicked = response.clicked();
         ui.advance_cursor_after_rect(rect);
-        (eye.clicked(), clicked && !heading)
+        (eye.clicked(), clicked && !heading, response)
     }
 
     /// 選んでいるベクターの柄の下に、色ごとの行を並べる（目で、その色の形を隠す・見せる）。多すぎるときは 12 色まで。
@@ -966,8 +1016,18 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let deletable = index.is_some_and(|i| !self.decals[i].layer.locked);
-                if icons::bare_button(ui, size, false, deletable, t!("Delete the selected layers"), icons::draw_trash).clicked() {
-                    self.cmd_delete();
+                let trash = icons::bare_button(ui, size, false, deletable || self.adjust_drag.is_some(), t!("Delete the selected layers"), icons::draw_trash);
+                self.trash_rect = Some(trash.rect);
+                // 調整の行を運んでいる間は、ごみ箱を光らせる。
+                if self.adjust_drag.is_some() && trash.contains_pointer() {
+                    ui.painter().rect_stroke(trash.rect, 4.0, egui::Stroke::new(1.5, super::theme::BAD), egui::StrokeKind::Inside);
+                }
+                if trash.clicked() {
+                    // 調整を選んでいれば、その調整だけを消す。
+                    match self.adjust_focus.filter(|(i, k)| Some(*i) == index && *k < self.decals[*i].layer.adjust.len()) {
+                        Some((i, k)) => self.remove_adjustment(i, k),
+                        None => self.cmd_delete(),
+                    }
                 }
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
                     self.cmd_group();
@@ -1408,7 +1468,21 @@ impl App {
                 ui.label(egui::RichText::new(t!("Adjustments (this artwork only)")).strong());
             }
             let n = list.len();
+            // 柄を選んでいるとき（調整を選んでいないとき）は、調整の名前だけを並べる。押すと、その調整だけを出す。
+            if !layer_only && focus.is_none() {
+                for k in (0..n).rev() {
+                    let label = egui::RichText::new(adjust_label(list[k].kind));
+                    if ui.selectable_label(false, if list[k].on { label } else { label.weak() }).on_hover_text(t!("Show only this adjustment's settings")).clicked() {
+                        self.adjust_focus = Some((index, k));
+                    }
+                }
+                return;
+            }
             for k in (0..n).rev() {
+                // 調整を選んでいるときは、その調整だけを出す。
+                if !layer_only && focus != Some(k) {
+                    continue;
+                }
                 let a = &mut list[k];
                 // 調整の見出し（PhotoCraft と同じく、印と名前）。いくつもあるときは、切り替え、順、外すのボタン。
                 let open = layer_only || focus.is_none_or(|f| f == k);
