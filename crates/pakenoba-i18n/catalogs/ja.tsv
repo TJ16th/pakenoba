@@ -1277,3 +1277,5 @@ blend	Color	カラー
 	{} more colors are not listed.	ほかに {} 色あります（一覧には出していません）。
 	Stroke width	線の太さ
 	Scroll to zoom, drag to move, double-click to fit	ホイールで拡大・縮小、ドラッグで移動、ダブルクリックで全体を表示
+	Reset to default size	初期値に戻す
+	Puts the dimensions (and flap lengths) back to the starting size of this box type. Paper thickness stays	寸法（とフラップの長さ）を、この型のはじめの大きさに戻します。紙の厚みはそのままです

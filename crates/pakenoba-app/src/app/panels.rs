@@ -595,6 +595,14 @@ impl App {
                         ui.small(t!("Outside: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
                     }
                     ui.small(t!("Dieline: {:.0} × {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
+                    // はじめの寸法に戻す（紙の厚みは、選んだ紙に合わせたものなので、そのまま）。
+                    let initial = super::Dims::for_shape(d.sides, d.t);
+                    ui.add_space(2.0);
+                    if ui.add_enabled(d != initial, egui::Button::new(t!("Reset to default size"))).on_hover_text(t!("Puts the dimensions (and flap lengths) back to the starting size of this box type. Paper thickness stays")).clicked() {
+                        // 元に戻すで、戻す前の寸法へ戻れるように。
+                        self.history.record(self.snapshot());
+                        self.dims = initial;
+                    }
                 });
                 if self.dims.sides == 0 {
                     boxed(ui, t!("Flaps"), false, |ui| self.flap_settings(ui));
