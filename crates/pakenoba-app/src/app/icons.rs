@@ -269,3 +269,45 @@ pub(super) fn panel_tabs(ui: &mut egui::Ui, tabs: &[&str], active: usize) -> Opt
     draw_menu(ui.painter(), pos2(rect.right() - 14.0, rect.center().y), Stroke::new(1.1, visuals.weak_text_color()));
     clicked
 }
+
+/// 書類のタブ（上の 1 段目）。選んでいるタブは、下の段と同じ灰色で、下の段につながって見える。
+/// `closable` なら右に × を出す。返すのは、タブの反応と、× が押されたか。
+pub fn doc_tab(ui: &mut egui::Ui, text: &str, active: bool, closable: bool, tip: Option<&str>) -> (egui::Response, bool) {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let color = if active { super::theme::TEXT } else { super::theme::MUTED };
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let close_w = if closable { 18.0 } else { 0.0 };
+    let size = egui::vec2(galley.size().x + 24.0 + close_w, 27.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let close_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(16.0, 16.0));
+    let close = closable && ui.interact(close_rect, response.id.with("close"), egui::Sense::click()).on_hover_text(t!("Close this tab")).clicked();
+    let fill = if active {
+        super::theme::PANEL
+    } else if response.hovered() {
+        super::theme::TAB_BAR.gamma_multiply(1.4)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, fill);
+    if active {
+        // 上の縁に、強調の細い線（PhotoCraft の書類のタブと同じ）。
+        painter.hline(rect.x_range().shrink(3.0), rect.top() + 0.5, egui::Stroke::new(2.0, super::theme::ACCENT));
+    }
+    painter.galley(egui::pos2(rect.left() + 12.0, rect.center().y - galley.size().y / 2.0), galley, color);
+    if closable && (response.hovered() || active || ui.rect_contains_pointer(close_rect)) {
+        let hot = ui.rect_contains_pointer(close_rect);
+        if hot {
+            painter.rect_filled(close_rect, 3.0, super::theme::HOVER);
+        }
+        let c = close_rect.center();
+        let stroke = egui::Stroke::new(1.2, if hot { super::theme::TEXT } else { super::theme::FAINT });
+        painter.line_segment([c + egui::vec2(-3.5, -3.5), c + egui::vec2(3.5, 3.5)], stroke);
+        painter.line_segment([c + egui::vec2(-3.5, 3.5), c + egui::vec2(3.5, -3.5)], stroke);
+    }
+    let response = match tip {
+        Some(tip) => response.on_hover_text(tip),
+        None => response,
+    };
+    (response, close)
+}

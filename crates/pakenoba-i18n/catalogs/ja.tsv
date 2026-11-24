@@ -206,7 +206,9 @@
 	{} is already registered.	{} は、すでに登録してあります。
 	Registered {} as an asset folder.	{} を、素材のフォルダとして登録しました。
 	Unregistered {} (the folder's contents are unchanged).	{} の登録を外しました（フォルダの中身は、そのままです）。
-	This project's assets ({mine})	この案件の素材（{mine}）
+	Assets in {name} ({mine})	{name} の素材（{mine}）
+	The assets saved in this project file. They are the ones you can place on the box	この案件のファイルに入っている素材。箱に置けるのは、ここにあるものです
+	Import from	取り込み元
 	Collections	コレクション
 	+ Register…	＋ 登録…
 	Register a folder that holds assets. It can be used from any project	素材を入れているフォルダを登録します。どの案件からも使えます
@@ -306,7 +308,7 @@
 	Saving…	保存しています…
 	There are unsaved changes (Ctrl+S to save)	保存していない変更があります（Ctrl+S で保存）
 	  Assets  	  素材  
-	The screen for finding assets and importing them into this project (press again to go back)	素材を探して、この案件に取り込む画面（もう一度押すと戻ります）
+	The assets of this project, and folders and samples to import from (press again to go back)	この案件の素材と、取り込み元のフォルダと見本（もう一度押すと戻ります）
 	Redo	やり直す
 	{} pieces of artwork	{} 個の柄
 	Align	そろえる
@@ -869,3 +871,80 @@ blend	Color	カラー
 	Transform	変形
 	X	X
 	Y	Y
+
+# コマンドと操作の記録（pakenoba-app/src/app/commands.rs、oplog.rs）
+	"above" is a layer id	「above」はレイヤーの印です
+	"adjustment" is missing	「adjustment」がありません
+	"angle" is a number (degrees)	「angle」は数（度）です
+	"at" is two numbers	「at」は 2 つの数です
+	"ids" (a list of layer ids) is missing	「ids」（レイヤーの印の並び）がありません
+	"panel" is a panel name	「panel」は面の名前です
+	"size" is two numbers above 0 (mm)	「size」は 0 より大きい 2 つの数（mm）です
+	"step" is 1 (up) or -1 (down)	「step」は 1（上へ）か -1（下へ）です
+	"to" is out of range	「to」が範囲の外です
+	"{key}" (a number) is missing	「{key}」（数）がありません
+	"{key}" (text) is missing	「{key}」（文字）がありません
+	"{key}" (true or false) is missing	「{key}」（true か false）がありません
+	Added a mask	マスクを足した
+	Added an adjustment	調整を足した
+	Added an adjustment layer	調整レイヤーを足した
+	Added artwork	柄を置いた
+	Adjustments for one artwork can only be added to artwork. Use adjustment_layer.add instead.	柄だけの調整は、柄にだけ足せます。かわりに adjustment_layer.add を使ってください。
+	Agent ({name})	エージェント（{name}）
+	Changed an adjustment	調整を変えた
+	Changed the blend mode	描画モードを変えた
+	Changed the clipping mask	クリッピングマスクを変えた
+	Changed the fill	塗りを変えた
+	Changed the opacity	不透明度を変えた
+	Changed the stacking order	重なり順を変えた
+	Could not add the adjustment layer	調整レイヤーを足せませんでした
+	Could not make a mask for this artwork	この柄のマスクを作れませんでした
+	Could not make the group	グループを作れませんでした
+	Could not make the group (groups can be nested up to {} levels)	グループを作れませんでした（グループの入れ子は {} 段まで）
+	Deleted a mask	マスクを消した
+	Deleted layers	レイヤーを消した
+	Give at least one of "all", "pixels" and "position"	「all」「pixels」「position」のどれかを書いてください
+	Grouped layers	グループにまとめた
+	Groups and adjustment layers have no position	グループと調整レイヤーには、場所がありません
+	Inverted a mask	マスクを反転した
+	Layer ids are numbers	レイヤーの印は数です
+	Layer {} has no adjustment number {at}	レイヤー {} に、{at} 番の調整はありません
+	Layer {} has no mask	レイヤー {} にはマスクがありません
+	Layer {} is locked	レイヤー {} はロックしています
+	Layer {} is not a group	レイヤー {} はグループではありません
+	Locked or unlocked layers	ロックを変えた
+	MCP ({name})	MCP（{name}）
+	Masks can only be added to artwork	マスクは柄にだけ足せます
+	Moved, resized or rotated	動かした・大きさや向きを変えた
+	Nothing recorded yet. Changes to layers, adjustments, masks and artwork appear here, newest first.	まだ記録はありません。レイヤー、調整、マスク、柄を変えると、新しい順にここに並びます。
+	Only groups can use pass through	「通過」はグループだけで使えます
+	Operation history	操作の記録
+	Record operations	操作を記録する
+	Removed an adjustment	調整を外した
+	Renamed a layer	名前を変えた
+	Reordered adjustments	調整の順を変えた
+	Save Without History…	記録を外して保存…
+	Saving without the operation history. The history of this project was cleared.	操作の記録を外して保存します。この案件の記録は消しました。
+	Selected layers	レイヤーを選んだ
+	Showed or hid layers	表示を切り替えた
+	The history is saved in the project file. To give the file to someone without it, use File → Save Without History…	記録は案件のファイルに入ります。記録なしで人に渡すときは「ファイル」→「記録を外して保存…」を使ってください。
+	The image of layer {} is locked	レイヤー {} の画像はロックしています
+	The operation history could not be read, so it was left out	操作の記録を読めなかったので、外しました
+	The position of layer {} is locked	レイヤー {} の位置はロックしています
+	There is no layer with id {id}	印が {id} のレイヤーはありません
+	There is no panel named "{panel}"	「{panel}」という面はありません
+	This adjustment works on one picture as a whole, so it cannot be an adjustment layer	この調整は 1 枚の絵の全体を見て決めるので、調整レイヤーにはできません
+	Turned a mask on or off	マスクを切り替えた
+	Turned an adjustment on or off	調整を切り替えた
+	Ungrouped	グループを解いた
+	Unknown adjustment "{}"	「{}」という調整は知りません
+	Unknown blend mode "{key}"	「{key}」という描画モードは知りません
+	Unknown command "{name}"	「{name}」というコマンドは知りません
+	Unknown way to make a mask "{other}"	「{other}」というマスクの作り方は知りません
+	You	あなた
+	layer {}	レイヤー {}
+	{bad} line(s) of the operation history could not be read, so they were left out	操作の記録のうち {bad} 行を読めなかったので、外しました
+	{name}: {e} ({} command(s) before it were done)	{name}: {e}（その前の {} 個のコマンドは実行済み）
+	{} item(s)	{} 件
+	Box type	箱の型
+	Preview	プレビュー

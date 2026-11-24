@@ -24,7 +24,7 @@ fn main() -> ExitCode {
     while i < args.len() {
         // 「--」で始まらないものは、開く案件のファイル（ファイルをアプリに関連付けて、ダブルクリックで開くときの渡し方）。
         if !args[i].starts_with("--") {
-            initial.project = Some(std::path::PathBuf::from(&args[i]));
+            initial.project.push(std::path::PathBuf::from(&args[i]));
             i += 1;
             continue;
         }

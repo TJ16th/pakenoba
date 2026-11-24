@@ -414,22 +414,22 @@ impl App {
             self.library.open = false;
             return;
         }
-        egui::Panel::left("library-places").resizable(true).default_size(220.0).size_range(170.0..=360.0).show(ui, |ui| self.library_places(ui));
-        egui::Panel::right("library-detail").resizable(true).default_size(300.0).size_range(220.0..=480.0).show(ui, |ui| self.library_detail(ui));
+        egui::Panel::left("library-places").resizable(true).default_size(220.0).size_range(170.0..=360.0).frame(super::theme::side_frame()).show(ui, |ui| super::panels::boxed(ui, t!("Assets"), true, |ui| self.library_places(ui)));
+        egui::Panel::right("library-detail").resizable(true).default_size(300.0).size_range(220.0..=480.0).frame(super::theme::side_frame()).show(ui, |ui| super::panels::boxed(ui, t!("Preview"), true, |ui| self.library_detail(ui)));
         egui::CentralPanel::default().show(ui, |ui| self.library_list(ui));
     }
 
     /// 左: 場所。
     fn library_places(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.strong(t!("Assets"));
-        ui.add_space(6.0);
         let mut go = None;
         let mine = self.assets.iter().filter(|a| !a.bundled).count();
-        if ui.selectable_label(self.library.place == Place::Project, t!("This project's assets ({mine})")).clicked() {
+        let name = self.project_name();
+        if ui.selectable_label(self.library.place == Place::Project, t!("Assets in {name} ({mine})")).on_hover_text(t!("The assets saved in this project file. They are the ones you can place on the box")).clicked() {
             go = Some(Place::Project);
         }
-        ui.add_space(10.0);
+        ui.add_space(14.0);
+        ui.label(egui::RichText::new(t!("Import from")).color(super::theme::FAINT).small());
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             ui.label(t!("Collections"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

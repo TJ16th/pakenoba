@@ -272,6 +272,8 @@ pub struct Placement {
 /// 柄のレイヤーとしての設定。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Layer {
+    /// レイヤーごとの決まった印（並べ替えても変わらない。コマンドで指すため）。0 はまだ付けていない（アプリが付ける）。
+    pub id: u32,
     /// 柄だけに効く調整（下から順に効かせる）。調整レイヤーでは、下の絵すべてに効く調整。
     pub adjust: Vec<Adjustment>,
     /// レイヤーマスク。
@@ -300,7 +302,7 @@ pub struct Layer {
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal }
+        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal }
     }
 }
 
@@ -636,7 +638,29 @@ pub struct Project {
     pub base: Option<Asset>,
     /// 紙の裏の、展開図まるごとの絵（裏の型紙の PSD に描いたもの）。裏から見た向きのまま持つ。`size` は使わない。
     pub back_base: Option<Asset>,
+    /// 操作の記録（古い順）。`history/log.jsonl` に、1 行 1 件で入れる。
+    pub log: Vec<LogEntry>,
 }
+
+/// 操作の記録の 1 件。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogEntry {
+    /// いつ（ISO 8601 の、その土地の時刻）。
+    pub time: String,
+    /// 誰が。`person`（人が画面で）、`agent:<名前>`、`mcp:<名前>` など。
+    pub actor: String,
+    /// コマンドの名前（例: `layer.blend.set`）。
+    pub command: String,
+    /// 引数の要点（JSON）。絵のデータは入れない。
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub args: serde_json::Value,
+}
+
+/// 操作の記録を、案件のファイルに残す数（新しいものから）。
+pub const LOG_LIMIT: usize = 2000;
+const LOG_FILE: &str = "history/log.jsonl";
+/// 記録の読み込みの上限（壊れたファイルで、メモリーを使い切らないため）。
+const LOG_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// 開いた結果。
 #[derive(Debug)]
@@ -750,6 +774,9 @@ struct BaseEntry {
 
 #[derive(Serialize, Deserialize)]
 struct DecalEntry {
+    /// レイヤーの印（0 なら書かない）。
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    id: u32,
     /// 素材の番号（`[[asset]]` の並びで、0 から）。`builtin` と、どちらか一方を書く。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     asset: Option<usize>,
@@ -1032,6 +1059,10 @@ fn from_hex(text: &str) -> Option<[u8; 3]> {
     Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
 fn is_zero_u8(value: &u8) -> bool {
     *value == 0
 }
@@ -1153,7 +1184,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
+                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
         }
@@ -1190,6 +1221,15 @@ impl Project {
             zip.start_file(file.as_str(), SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
             zip.write_all(&mask.data)?;
             written.push(file);
+        }
+        if !self.log.is_empty() {
+            let mut lines = String::new();
+            for entry in &self.log[self.log.len().saturating_sub(LOG_LIMIT)..] {
+                lines.push_str(&serde_json::to_string(entry).map_err(|e| Error::Broken(e.to_string()))?);
+                lines.push('\n');
+            }
+            zip.start_file(LOG_FILE, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(zip_error)?;
+            zip.write_all(lines.as_bytes())?;
         }
         let mut out = zip.finish().map_err(zip_error)?;
         out.flush()?;
@@ -1235,6 +1275,39 @@ impl Project {
     pub fn open(path: &Path) -> Result<Opened, Error> {
         Project::read(BufReader::with_capacity(1 << 20, File::open(path)?))
     }
+}
+
+/// 操作の記録を読む。ないときは空。読めない行は飛ばして、知らせる。
+fn read_log<R: Read + Seek>(zip: &mut ZipArchive<R>, problems: &mut Vec<String>) -> Vec<LogEntry> {
+    let Ok(entry) = zip.by_name(LOG_FILE) else { return Vec::new() };
+    let mut text = String::new();
+    if entry.take(LOG_BYTES_LIMIT).read_to_string(&mut text).is_err() {
+        problems.push(t!("The operation history could not be read, so it was left out").to_owned());
+        return Vec::new();
+    }
+    let mut log = Vec::new();
+    let mut bad = 0;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<LogEntry>(line) {
+            Ok(entry) => log.push(entry),
+            Err(_) => bad += 1,
+        }
+    }
+    if bad > 0 {
+        problems.push(t!("{bad} line(s) of the operation history could not be read, so they were left out"));
+    }
+    log
+}
+
+/// 調整を JSON にする（コマンドの引数や結果に使う。案件のファイルの書き方と同じ）。
+pub fn adjustment_to_json(adjust: &Adjustment) -> serde_json::Value {
+    serde_json::to_value(AdjustEntry::from(adjust)).unwrap_or_default()
+}
+
+/// JSON から調整を作る。知らない種類なら、理由を返す。
+pub fn adjustment_from_json(value: &serde_json::Value) -> Result<Adjustment, String> {
+    let entry: AdjustEntry = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    entry.to_adjustment().ok_or_else(|| t!("Unknown adjustment \"{}\"", entry.kind))
 }
 
 fn zip_error(e: zip::result::ZipError) -> Error {
@@ -1469,11 +1542,12 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         };
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
         let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend } });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend } });
     }
     tidy_groups(&mut decals);
 
-    Ok(Opened { project: Project { shape, assets, decals, base, back_base }, problems })
+    let log = read_log(zip, &mut problems);
+    Ok(Opened { project: Project { shape, assets, decals, base, back_base, log }, problems })
 }
 
 /// グループの入れ子とクリッピングマスクの決まりに合うように、印を直す（読むとき、並べ替えたあと）。
@@ -1621,6 +1695,7 @@ mod tests {
                     n => Source::Asset(n - 2),
                 };
                 Placement { decal: Decal { panel, at: [0.1 + k / 37.0, 1.0 / 3.0 - k], size: [46.0 + k * 0.1, 14.0 / (k + 1.0)], angle: std::f32::consts::FRAC_PI_2 * k - 0.3 }, back: panel % 3 == 0, source, layer: Layer {
+                    id: panel as u32 + 1,
                     name: (panel % 4 == 1).then(|| format!("名前 {panel}")),
                     hidden: panel % 5 == 2,
                     locked: panel % 7 == 3,
@@ -1670,7 +1745,11 @@ mod tests {
             _ => None,
         };
         let back_base = matches!(kind, Kind::Prism(_)).then(|| Asset::new("裏に描いた絵.psd", fake_file(5, 4000), [0.0, 0.0], "2026-11-22T09:01:00Z"));
-        Project { shape, assets, decals, base, back_base }
+        let log = vec![
+            LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
+            LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
+        ];
+        Project { shape, assets, decals, base, back_base, log }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -1744,7 +1823,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None };
+        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -1796,8 +1875,8 @@ mod tests {
         assert_eq!(project.assets[0].id(), project.assets[3].id());
         let bytes = bytes_of(&project);
         let zip = ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        // 設定のテキストと、中身の違う素材 3 つと、展開図の絵（マスクのファイルは数えない）。
-        assert_eq!(zip.file_names().filter(|n| !n.as_ref().unwrap().starts_with("masks/")).count(), 5);
+        // 設定のテキストと、中身の違う素材 3 つと、展開図の絵（マスクと操作の記録のファイルは数えない）。
+        assert_eq!(zip.file_names().filter(|n| { let n = n.as_ref().unwrap(); !n.starts_with("masks/") && !n.starts_with("history/") }).count(), 5);
         let opened = Project::read(Cursor::new(bytes)).unwrap();
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -1935,11 +2014,38 @@ mod tests {
     }
 
     #[test]
+    fn 操作の記録は_1行1件で入り_開くと戻り_古いものは捨てる() {
+        let mut project = sample(Kind::TuckBox);
+        let opened = Project::read(Cursor::new(bytes_of(&project))).unwrap();
+        assert_eq!(opened.project.log, project.log);
+        assert!(opened.problems.is_empty(), "{:?}", opened.problems);
+        let entry = project.log[0].clone();
+        project.log = vec![entry; LOG_LIMIT + 5];
+        project.log[5].command = "first.kept".to_owned();
+        let opened = Project::read(Cursor::new(bytes_of(&project))).unwrap();
+        assert_eq!(opened.project.log.len(), LOG_LIMIT);
+        assert_eq!(opened.project.log[0].command, "first.kept");
+        // 記録がなければ、ファイルも作らない。
+        project.log.clear();
+        let bytes = bytes_of(&project);
+        assert!(!ZipArchive::new(Cursor::new(&bytes)).unwrap().file_names().any(|n| n.as_ref().unwrap().starts_with("history/")));
+    }
+
+    #[test]
+    fn 調整はjsonと行き来できる() {
+        let adjust = Adjustment::new(AdjustKind::Levels { black: 10, white: 240, gamma: 125 });
+        let json = adjustment_to_json(&adjust);
+        assert_eq!(json["kind"], "levels");
+        assert_eq!(adjustment_from_json(&json).unwrap(), adjust);
+        assert!(adjustment_from_json(&serde_json::json!({ "kind": "nope" })).is_err());
+    }
+
+    #[test]
     fn 展開図の絵も_保存して開ける() {
         // 素材と同じ中身の絵は、ファイルの中に 1 つだけ入り、開くと両方に戻る。
         let project = sample(Kind::Gable);
         let bytes = bytes_of(&project);
-        assert_eq!(ZipArchive::new(Cursor::new(&bytes)).unwrap().file_names().filter(|n| !n.as_ref().unwrap().starts_with("masks/")).count(), 4);
+        assert_eq!(ZipArchive::new(Cursor::new(&bytes)).unwrap().file_names().filter(|n| { let n = n.as_ref().unwrap(); !n.starts_with("masks/") && !n.starts_with("history/") }).count(), 4);
         let opened = Project::read(Cursor::new(bytes)).unwrap();
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project.base, project.base);
@@ -2046,7 +2152,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None };
+        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -2115,6 +2221,7 @@ mod tests {
             ],
             base: Some(Asset::new("型紙に描いた絵.psd", fake_file(13, 1500), [0.0, 0.0], "2026-11-22T00:32:00+09:00")),
             back_base: None,
+            log: Vec::new(),
         }
     }
 

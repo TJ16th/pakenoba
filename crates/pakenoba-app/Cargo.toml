@@ -39,6 +39,7 @@ craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233
 vectorcraft-trace = { git = "https://github.com/storytold/vectorcraft", rev = "db9acab4da715945ea12c865e6ec54a5589588c9" }
 # 案件をまたぐ設定（コレクションの登録）を、人が読める形で覚える。
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "1"
 # ファイルを開く、保存するときの、OS のダイアログ。
 rfd = "0.18"

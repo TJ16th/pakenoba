@@ -390,6 +390,9 @@ impl App {
             }
         }
         if response.drag_stopped() {
+            if self.grab.is_some() {
+                self.log_transform();
+            }
             self.grab = None;
             self.transforming = None;
         }
@@ -624,6 +627,9 @@ impl App {
             }
         }
         if response.drag_stopped() {
+            if self.grab.is_some() {
+                self.log_transform();
+            }
             self.grab = None;
             self.transforming = None;
         }

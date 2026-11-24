@@ -456,22 +456,23 @@ impl App {
             });
         });
         if let Some(which) = lock {
-            self.checkpoint();
-            for &i in &targets {
-                let l = &mut self.decals[i].layer;
-                match which {
-                    0 => l.lock_pixels = !layer.lock_pixels,
-                    1 => l.lock_position = !layer.lock_position,
-                    _ => l.locked = !layer.locked,
-                }
-            }
-            self.grab = None;
-            if self.brush_target().is_none() {
-                self.brush = None;
-            }
+            self.ensure_ids();
+            let ids: Vec<u32> = targets.iter().map(|&i| self.decals[i].layer.id).collect();
+            let args = match which {
+                0 => serde_json::json!({ "ids": ids, "pixels": !layer.lock_pixels }),
+                1 => serde_json::json!({ "ids": ids, "position": !layer.lock_position }),
+                _ => serde_json::json!({ "ids": ids, "all": !layer.locked }),
+            };
+            self.person("layer.lock", args);
         }
         let changed_blend = blend != layer.blend;
-        if live && (changed_blend || opacity != layer.opacity as f32 || fill != layer.fill as f32) {
+        if live && changed_blend {
+            self.ensure_ids();
+            let ids: Vec<u32> = targets.iter().filter(|&&i| !self.decals[i].layer.locked).map(|&i| self.decals[i].layer.id).collect();
+            let blend = if blend == Blend::PassThrough && !groups { Blend::Normal } else { blend };
+            self.person("layer.blend.set", serde_json::json!({ "ids": ids, "blend": blend.key() }));
+            self.editing = false;
+        } else if live && (opacity != layer.opacity as f32 || fill != layer.fill as f32) {
             let earlier = self.snapshot();
             for &i in &targets {
                 let is_group = matches!(self.decals[i].picture, Picture::Group { .. });
@@ -490,11 +491,18 @@ impl App {
                 }
             }
             (self.art_dirty, self.back_dirty) = (true, true);
-            // ドラッグのひと続きは、1 回ぶんにまとめる（数値の欄と同じ）。
-            if !self.editing || changed_blend {
+            // ドラッグのひと続きは、1 回ぶんにまとめる（数値の欄と同じ。記録も 1 件にまとまる）。
+            if !self.editing {
                 self.history.record(earlier);
             }
-            self.editing = !changed_blend;
+            self.editing = true;
+            self.ensure_ids();
+            let ids: Vec<u32> = targets.iter().filter(|&&i| !self.decals[i].layer.locked).map(|&i| self.decals[i].layer.id).collect();
+            if opacity != layer.opacity as f32 {
+                self.log_op("person", "layer.opacity.set", serde_json::json!({ "ids": ids, "opacity": opacity.round() as u8 }));
+            } else {
+                self.log_op("person", "layer.fill.set", serde_json::json!({ "ids": ids, "fill": fill.round() as u8 }));
+            }
         }
     }
 
@@ -518,9 +526,8 @@ impl App {
         painter.hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, super::theme::ROW_LINE));
         painter.vline(eye.right(), rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
         if ui.put(egui::Rect::from_center_size(eye.center(), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !layer.hidden)).clicked() {
-            self.checkpoint();
-            self.decals[index].layer.hidden = !layer.hidden;
-            (self.art_dirty, self.back_dirty) = (true, true);
+            self.ensure_ids();
+            self.person("layer.visible", serde_json::json!({ "ids": [self.decals[index].layer.id], "visible": layer.hidden }));
         }
         let mut x = eye.right() + 6.0 + DEPTH_W * layer.depth as f32;
         let cy = rect.center().y;
@@ -612,10 +619,10 @@ impl App {
                 let text = text.trim().to_owned();
                 self.renaming = None;
                 if !cancel {
-                    let name = (!text.is_empty()).then_some(text);
+                    let name = (!text.is_empty()).then_some(text.clone());
                     if name != self.decals[index].layer.name {
-                        self.checkpoint();
-                        self.decals[index].layer.name = name;
+                        self.ensure_ids();
+                        self.person("layer.rename", serde_json::json!({ "id": self.decals[index].layer.id, "name": text }));
                     }
                 }
             }
@@ -672,26 +679,26 @@ impl App {
         if !matches!(self.decals[index].picture, Picture::Group { .. }) {
             let label = if self.decals[index].layer.clipped { t!("Release clipping mask") } else { t!("Create clipping mask") };
             if ui.button(label).on_hover_text(t!("Show this layer only where the layer below it is visible (Ctrl+Alt+G)")).clicked() {
-                self.toggle_clip(index);
+                self.cmd_clip(index);
                 ui.close();
             }
         }
         match self.decals[index].picture {
             Picture::Group { .. } => {
                 if ui.button(t!("Ungroup")).clicked() {
-                    self.ungroup(index);
+                    self.cmd_ungroup(index);
                     ui.close();
                 }
                 ui.separator();
                 if ui.button(t!("Delete")).clicked() {
-                    self.delete_selected();
+                    self.cmd_delete();
                     ui.close();
                 }
             }
             Picture::Adjustment => {
                 ui.separator();
                 if ui.button(t!("Delete")).clicked() {
-                    self.delete_selected();
+                    self.cmd_delete();
                     ui.close();
                 }
             }
@@ -717,20 +724,20 @@ impl App {
         let all_on = self.decals[index].layer.adjust.iter().any(|a| a.on);
         let toggled_all = self.sub_row(ui, depth, all_on, t!("Adjustments"), true, false).0;
         if toggled_all {
-            self.checkpoint();
-            for a in &mut self.decals[index].layer.adjust {
-                a.on = !all_on;
+            self.ensure_ids();
+            let id = self.decals[index].layer.id;
+            let calls = (0..n).map(|k| ("adjust.toggle".to_owned(), serde_json::json!({ "id": id, "index": k, "on": !all_on }))).collect();
+            if let Err(e) = self.run_batch("person", calls) {
+                self.say(e);
             }
-            (self.art_dirty, self.back_dirty) = (true, true);
         }
         for k in (0..n).rev() {
             let a = self.decals[index].layer.adjust[k].clone();
             let focused = self.adjust_focus == Some((index, k));
             let (toggled, clicked) = self.sub_row(ui, depth, a.on, adjust_label(a.kind), false, focused);
             if toggled {
-                self.checkpoint();
-                self.decals[index].layer.adjust[k].on = !a.on;
-                (self.art_dirty, self.back_dirty) = (true, true);
+                self.ensure_ids();
+                self.person("adjust.toggle", serde_json::json!({ "id": self.decals[index].layer.id, "index": k, "on": !a.on }));
             }
             if clicked {
                 self.select_only(Some(index));
@@ -773,29 +780,29 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let deletable = index.is_some_and(|i| !self.decals[i].layer.locked);
                 if icons::bare_button(ui, size, false, deletable, t!("Delete the selected layers"), icons::draw_trash).clicked() {
-                    self.delete_selected();
+                    self.cmd_delete();
                 }
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
-                    self.group_selected();
+                    self.cmd_group();
                 }
                 let adjust = icons::bare_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
                 egui::Popup::menu(&adjust).show(|ui| {
                     ui.set_min_width(240.0);
                     ui.weak(t!("Adjustment layer (everything below)"));
                     if let Some(kind) = pixel_adjust_menu(ui) {
-                        self.add_adjustment_layer(kind);
+                        self.cmd_adjust_layer(kind);
                         ui.close();
                     }
                     ui.add_enabled_ui(artwork.is_some(), |ui| {
                         ui.menu_button(t!("This artwork only"), |ui| {
                             ui.set_min_width(220.0);
                             if let Some(kind) = pixel_adjust_menu(ui) {
-                                self.add_adjustment(kind);
+                                self.cmd_adjust(kind);
                                 ui.close();
                             }
                             for kind in IMAGE_ADJUST {
                                 if ui.button(adjust_label(kind)).clicked() {
-                                    self.add_adjustment(kind);
+                                    self.cmd_adjust(kind);
                                     ui.close();
                                 }
                             }
@@ -807,15 +814,15 @@ impl App {
                 egui::Popup::menu(&mask).show(|ui| {
                     ui.set_min_width(220.0);
                     if ui.button(t!("Reveal all")).on_hover_text(t!("A white mask that shows everything. Paint black with the brush to hide parts")).clicked() {
-                        self.add_mask(MaskFrom::RevealAll);
+                        self.cmd_mask(MaskFrom::RevealAll);
                         ui.close();
                     }
                     if ui.button(t!("From the subject")).on_hover_text(t!("Finds the main subject with AI on this PC and hides the rest")).clicked() {
-                        self.add_mask(MaskFrom::Subject);
+                        self.cmd_mask(MaskFrom::Subject);
                         ui.close();
                     }
                     if ui.button(t!("From transparency")).on_hover_text(t!("Uses the transparent parts of the picture")).clicked() {
-                        self.add_mask(MaskFrom::Transparency);
+                        self.cmd_mask(MaskFrom::Transparency);
                         ui.close();
                     }
                 });
@@ -1227,6 +1234,22 @@ impl App {
             self.adjust_focus = Some((index, b));
         }
         if list != before {
+            // 記録に残す形（人の操作として）。
+            self.ensure_ids();
+            let id = self.decals[index].layer.id;
+            let logs: Vec<(&str, serde_json::Value)> = if let Some(k) = remove {
+                vec![("adjust.remove", serde_json::json!({ "id": id, "index": k }))]
+            } else if let Some((a, b)) = swap {
+                vec![("adjust.move", serde_json::json!({ "id": id, "index": a, "to": b }))]
+            } else {
+                (0..list.len().min(before.len()))
+                    .filter(|&k| list[k] != before[k])
+                    .map(|k| if list[k].on != before[k].on { ("adjust.toggle", serde_json::json!({ "id": id, "index": k, "on": list[k].on })) } else { ("adjust.set", serde_json::json!({ "id": id, "index": k, "adjustment": pakenoba_core::project::adjustment_to_json(&list[k]) })) })
+                    .collect()
+            };
+            for (name, args) in logs {
+                self.log_op("person", name, args);
+            }
             let earlier = self.snapshot();
             let structural = list.len() != before.len() || list.iter().zip(&before).any(|(a, b)| a.on != b.on || std::mem::discriminant(&a.kind) != std::mem::discriminant(&b.kind));
             for (a, b) in list.iter().zip(&before) {
@@ -1272,10 +1295,10 @@ impl App {
                 ui.small(t!("\"Pass Through\" mixes the contents with what is below as if there were no group. Other blend modes mix the group as one picture."));
                 ui.horizontal(|ui| {
                     if ui.add_enabled(!locked, egui::Button::new(t!("Ungroup"))).clicked() {
-                        self.ungroup(index);
+                        self.cmd_ungroup(index);
                     }
                     if ui.add_enabled(!locked, egui::Button::new(t!("Delete group and contents"))).clicked() {
-                        self.delete_selected();
+                        self.cmd_delete();
                     }
                 });
             }
@@ -1292,7 +1315,7 @@ impl App {
                         }
                         let mut clipped = self.decals[index].layer.clipped;
                         if ui.checkbox(&mut clipped, t!("Clip to layer below")).changed() {
-                            self.toggle_clip(index);
+                            self.cmd_clip(index);
                         }
                     });
                     if super::theme::pill_button(ui, t!("Reset to defaults")).clicked() {
@@ -1313,7 +1336,7 @@ impl App {
                             }
                         });
                         if ui.button(t!("Delete")).clicked() {
-                            self.delete_selected();
+                            self.cmd_delete();
                         }
                     });
                 });
@@ -1372,25 +1395,19 @@ impl App {
                 }
                 ui.close();
             }
+            self.ensure_ids();
+            let id = self.decals[index].layer.id;
             if ui.button(if mask.enabled { t!("Disable mask") } else { t!("Enable mask") }).clicked() {
-                self.checkpoint();
-                if let Some(m) = &mut self.decals[index].layer.mask {
-                    m.enabled = !m.enabled;
-                }
+                self.person("mask.enable", serde_json::json!({ "id": id, "enabled": !mask.enabled }));
                 ui.close();
             }
             if ui.button(t!("Invert mask")).clicked() {
-                self.checkpoint();
-                if let Some(m) = &mut self.decals[index].layer.mask {
-                    m.invert = !m.invert;
-                }
+                self.person("mask.invert", serde_json::json!({ "id": id }));
                 ui.close();
             }
             ui.separator();
             if ui.button(t!("Delete mask")).clicked() {
-                self.checkpoint();
-                self.decals[index].layer.mask = None;
-                self.brush = None;
+                self.person("mask.delete", serde_json::json!({ "id": id }));
                 ui.close();
             }
         });
@@ -1904,6 +1921,7 @@ mod tests {
         app.decals[2].layer.blend = Blend::Multiply;
         app.select_only(Some(2));
         app.add_adjustment_layer(AdjustKind::BrightnessContrast { brightness: 30, contrast: 10 });
+        app.ensure_ids();
         let project = app.project().unwrap();
         // 画面を確かめるための見本（PAKENOBA_SAMPLE に保存先を書いたときだけ）。
         if let Some(path) = std::env::var_os("PAKENOBA_SAMPLE") {

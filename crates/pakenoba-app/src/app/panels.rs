@@ -26,38 +26,61 @@ fn number(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f3
     ui.add_sized([96.0, ui.spacing().interact_size.y], egui::DragValue::new(value).range(range).speed(0.5).max_decimals(1).suffix(format!(" {unit}")))
 }
 
+/// 見出し（タブの帯）つきの灰色の箱（PhotoCraft の欄と同じ形）。`fill` なら、下の端まで伸ばす。
+pub(super) fn boxed<R>(ui: &mut egui::Ui, title: &str, fill: bool, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    super::theme::panel_frame()
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if fill {
+                ui.set_min_height(ui.available_height() - 8.0);
+            }
+            icons::panel_tabs(ui, &[title], 0);
+            super::theme::panel_body().show(ui, add).inner
+        })
+        .inner
+}
+
 impl App {
-    /// 上（メニューバーの下）: 工程の切り替え。左から順に進めば完成する。
+    /// 上（メニューバーの下）は 2 段。
+    /// 1 段目: ホームと、開いている案件のタブ（ブラウザや PhotoCraft の書類のタブと同じ）。
+    /// 2 段目: 選んでいるタブの案件の工程（型、デザイン、出力）と、その案件の素材。左から順に進めば完成する。
     pub(super) fn top_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("workspaces").show(ui, |ui| {
+        let bar = egui::Frame::new().fill(super::theme::BACKGROUND).inner_margin(egui::Margin { left: 4, right: 4, top: 3, bottom: 0 });
+        egui::Panel::top("documents").frame(bar).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                // はじめの画面（ホーム）。Photoshop と同じく、工程の左に置く。
-                if ui.selectable_label(self.home, format!("  {}  ", t!("Home"))).clicked() {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                // はじめの画面（ホーム）。タブの並びの左の端。
+                if icons::doc_tab(ui, t!("Home"), self.home, false, None).0.clicked() {
                     self.home = true;
                     self.library.open = false;
                 }
-                ui.separator();
+                ui.add_space(6.0);
+                self.tab_strip(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.is_saving() {
+                        ui.weak(t!("Saving…"));
+                    }
+                });
+            });
+        });
+        if self.home {
+            return;
+        }
+        let steps = egui::Frame::new().fill(super::theme::PANEL).inner_margin(egui::Margin { left: 6, right: 6, top: 3, bottom: 3 });
+        egui::Panel::top("workspaces").frame(steps).show(ui, |ui| {
+            ui.horizontal(|ui| {
                 for (workspace, label) in [(Workspace::Shape, t!("Structure")), (Workspace::Design, t!("Design")), (Workspace::Output, t!("Output"))] {
-                    // 「素材」の画面やホームを開いているあいだは、どの工程も選んでいない見た目にする。
-                    if ui.selectable_label(!self.library.open && !self.home && self.workspace == workspace, format!("  {label}  ")).clicked() {
+                    // 「素材」を開いているあいだは、どの工程も選んでいない見た目にする。
+                    if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
                         self.go_to(workspace);
                     }
                 }
-                // 開いている案件のタブ（名前と、保存していない変更の印）。
-                ui.add_space(16.0);
+                // 素材は流れの一歩ではないので、細い区切りを入れて、工程の右に置く。
                 ui.separator();
-                self.tab_strip(ui);
-                if self.is_saving() {
-                    ui.weak(t!("Saving…"));
+                if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The assets of this project, and folders and samples to import from (press again to go back)")).clicked() {
+                    self.toggle_library();
                 }
                 // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The screen for finding assets and importing them into this project (press again to go back)")).clicked() {
-                        self.toggle_library();
-                    }
-                });
             });
         });
     }
@@ -78,7 +101,7 @@ impl App {
                             self.align_buttons(ui);
                             ui.separator();
                             if ui.button(t!("Delete")).on_hover_text("Delete").clicked() {
-                                self.delete_selected();
+                                self.cmd_delete();
                             }
                         }
                         Some(index) => {
@@ -86,10 +109,10 @@ impl App {
                             ui.separator();
                             ui.label(t!("Arrange"));
                             if ui.add_enabled(self.neighbor(index, 1).is_some(), egui::Button::new(t!("Bring forward"))).clicked() {
-                                self.reorder_selected(1);
+                                self.cmd_reorder(1);
                             }
                             if ui.add_enabled(self.neighbor(index, -1).is_some(), egui::Button::new(t!("Send backward"))).clicked() {
-                                self.reorder_selected(-1);
+                                self.cmd_reorder(-1);
                             }
                             ui.separator();
                             if ui.add_enabled(!self.decals[index].layer.fixed(), egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
@@ -294,6 +317,7 @@ impl App {
                 self.history.record(earlier);
             }
             self.editing = !moved_side;
+            self.log_transform();
         }
         if moved_side {
             self.back_dirty = true;
@@ -318,16 +342,14 @@ impl App {
         self.edit_controls(ui, index);
         ui.add_space(4.0);
         if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
-            self.delete_selected();
+            self.cmd_delete();
         }
     }
 
     /// 左（型）: 型の一覧。
     pub(super) fn shape_list(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("shape-list").resizable(false).exact_size(180.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.strong(t!("Structure"));
-            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+        egui::Panel::left("shape-list").resizable(false).exact_size(180.0).frame(super::theme::side_frame()).show(ui, |ui| {
+            boxed(ui, t!("Box type"), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (sides, label) in SHAPES {
                     if ui.selectable_label(self.dims.sides == sides, pakenoba_i18n::tr(label)).clicked() && self.dims.sides != sides {
                         if self.decals.is_empty() {
@@ -338,74 +360,74 @@ impl App {
                         }
                     }
                 }
-            });
+            }));
         });
     }
 
     /// 右（型）: 寸法、紙の厚み、型紙の検査。
     pub(super) fn shape_settings(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("shape-settings").resizable(false).exact_size(320.0).show(ui, |ui| {
+        egui::Panel::right("shape-settings").resizable(false).exact_size(320.0).frame(super::theme::side_frame()).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(4.0);
-                ui.strong(t!("Dimensions (inside)"));
+                ui.spacing_mut().item_spacing.y = 4.0;
                 let gable = self.dims.sides == 2;
                 let pillow = self.dims.sides == PILLOW;
                 let prism = self.dims.sides >= 3 && !pillow;
-                let dims = &mut self.dims;
-                egui::Grid::new("dims").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    let row = |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str| {
-                        ui.label(label);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().slider_width = 90.0;
-                            ui.add(egui::Slider::new(value, range.clone()).show_value(false));
-                            number(ui, value, range, unit);
-                        });
-                        ui.end_row();
-                    };
-                    row(ui, if prism { t!("Side") } else if pillow { t!("Horizontal length") } else { t!("Width") }, &mut dims.w, 40.0..=300.0, "mm");
-                    if !prism && !pillow {
-                        row(ui, t!("Depth"), &mut dims.d, 20.0..=200.0, "mm");
-                    }
-                    row(ui, if gable { t!("Body height") } else if pillow { t!("Face height") } else { t!("Height") }, &mut dims.h, 40.0..=300.0, "mm");
-                    if gable {
-                        row(ui, t!("Roof height"), &mut dims.roof, 10.0..=150.0, "mm");
+                boxed(ui, t!("Dimensions (inside)"), false, |ui| {
+                    let dims = &mut self.dims;
+                    egui::Grid::new("dims").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        let row = |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str| {
+                            ui.label(egui::RichText::new(label).color(super::theme::MUTED));
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().slider_width = 90.0;
+                                ui.add(egui::Slider::new(value, range.clone()).show_value(false));
+                                number(ui, value, range, unit);
+                            });
+                            ui.end_row();
+                        };
+                        row(ui, if prism { t!("Side") } else if pillow { t!("Horizontal length") } else { t!("Width") }, &mut dims.w, 40.0..=300.0, "mm");
+                        if !prism && !pillow {
+                            row(ui, t!("Depth"), &mut dims.d, 20.0..=200.0, "mm");
+                        }
+                        row(ui, if gable { t!("Body height") } else if pillow { t!("Face height") } else { t!("Height") }, &mut dims.h, 40.0..=300.0, "mm");
+                        if gable {
+                            row(ui, t!("Roof height"), &mut dims.roof, 10.0..=150.0, "mm");
+                        }
+                        if pillow {
+                            row(ui, t!("Bulge"), &mut dims.bulge, 15.0..=90.0, t!("°"));
+                        }
+                        row(ui, t!("Paper thickness"), &mut dims.t, 0.3..=6.0, "mm");
+                    });
+                    let d = self.dims;
+                    ui.add_space(4.0);
+                    if gable && d.d > d.w {
+                        ui.small(t!("The depth is limited to the width (the side triangles would collide in the middle)."));
                     }
                     if pillow {
-                        row(ui, t!("Bulge"), &mut dims.bulge, 15.0..=90.0, t!("°"));
+                        let psi = d.bulge.clamp(15.0, 90.0).to_radians();
+                        let deepest = d.h * (1.0 - (psi * 0.5).cos()) / psi;
+                        ui.small(t!("Thickest point: about {:.0} mm", deepest * 2.0));
                     }
-                    row(ui, t!("Paper thickness"), &mut dims.t, 0.3..=6.0, "mm");
+                    if !prism && !gable && !pillow {
+                        ui.small(t!("Outside: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
+                    }
+                    ui.small(t!("Dieline: {:.0} × {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
                 });
                 if self.dims.sides == 0 {
-                    self.flap_settings(ui);
+                    boxed(ui, t!("Flaps"), false, |ui| self.flap_settings(ui));
                 }
-                let d = self.dims;
-                if gable && d.d > d.w {
-                    ui.small(t!("The depth is limited to the width (the side triangles would collide in the middle)."));
-                }
-                if pillow {
-                    let psi = d.bulge.clamp(15.0, 90.0).to_radians();
-                    let deepest = d.h * (1.0 - (psi * 0.5).cos()) / psi;
-                    ui.small(t!("Thickest point: about {:.0} mm", deepest * 2.0));
-                }
-                if !prism && !gable && !pillow {
-                    ui.small(t!("Outside: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
-                }
-                ui.small(t!("Dieline: {:.0} × {:.0} mm", self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]));
-                ui.add_space(6.0);
-                ui.separator();
-
-                ui.strong(t!("Dieline check"));
-                if self.problems.is_empty() {
-                    ui.label(t!("No problems were found."));
-                }
-                for (blocking, text) in &self.problems {
-                    if *blocking {
-                        ui.colored_label(egui::Color32::from_rgb(240, 120, 100), t!("Problem: {text}"));
-                    } else {
-                        ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("Note: {text}"));
+                boxed(ui, t!("Dieline check"), false, |ui| {
+                    if self.problems.is_empty() {
+                        ui.label(t!("No problems were found."));
                     }
-                }
-                ui.small(t!("Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline."));
+                    for (blocking, text) in &self.problems {
+                        if *blocking {
+                            ui.colored_label(egui::Color32::from_rgb(240, 120, 100), t!("Problem: {text}"));
+                        } else {
+                            ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("Note: {text}"));
+                        }
+                    }
+                    ui.small(t!("Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline."));
+                });
             });
         });
     }
@@ -414,8 +436,6 @@ impl App {
     /// 決めていないあいだは寸法から決めた長さ（自動）を出し、右に薄く「自動」と出す。
     /// つまみか数を動かすと、その長さに決まる。右の「自動」を押すと、自動に戻る。
     fn flap_settings(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.strong(t!("Flaps"));
         let d = &mut self.dims;
         let auto = TuckFlaps::auto(d.w, d.d, d.h, d.t);
         let ranges = TuckFlaps::ranges(d.w, d.d, d.h, d.t);
@@ -425,7 +445,7 @@ impl App {
             for (i, chosen) in [glue, dust, tuck].into_iter().enumerate() {
                 let range = ranges[i].clone();
                 let mut value = chosen.unwrap_or(auto[i]).clamp(*range.start(), *range.end());
-                ui.label(labels[i]);
+                ui.label(egui::RichText::new(labels[i]).color(super::theme::MUTED));
                 ui.horizontal(|ui| {
                     // 英語の名前でも欄に収まるよう、寸法の行より少し詰める。
                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -451,17 +471,15 @@ impl App {
 
     /// 左（出力）: 出力の種類。
     pub(super) fn output_list(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("output-list").resizable(false).exact_size(240.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.strong(t!("Output"));
-            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+        egui::Panel::left("output-list").resizable(false).exact_size(240.0).frame(super::theme::side_frame()).show(ui, |ui| {
+            boxed(ui, t!("Output"), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                 for (index, (label, ready)) in OUTPUTS.iter().enumerate() {
                     let response = ui.add_enabled(*ready, egui::Button::selectable(self.output_kind == index, pakenoba_i18n::tr(label))).on_disabled_hover_text(t!("Coming later"));
                     if response.clicked() {
                         self.output_kind = index;
                     }
                 }
-            });
+            }));
         });
     }
 

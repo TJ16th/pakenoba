@@ -320,6 +320,8 @@ X（フォルダ）をやめる理由: 利点は「素材を外のアプリで�
 - 同じ日に、`[[decal]]` に `lock_pixels`（画像をロック）と `lock_position`（位置をロック）を足した。偽のときは書かない。
 - 同じ日に、グループの入れ子のために `in_group` を `depth`（入れ子の深さ。0 のときは書かない）に替え、クリッピングマスクの `clipped` を足した。`in_group = true` だけのファイルは、深さ 1 として読む。決まりに合わない深さやクリップは、読むときに直す。
 - 同じ日に、`[[decal]]` に `fill`（塗り、%。100 のときは書かない。グループでは読まない）を足した。
+- 同じ日に、`[[decal]]` に `id`（レイヤーの決まった印。コマンドで指すため。0 のときは書かない。ないとき、重なったときは、開くときに付け直す）を足した。
+- 同じ日に、操作の記録を `history/log.jsonl` として入れるようにした。1 行 1 件の JSON で、`time`（その土地の時刻）、`actor`（`person`、`agent:<名前>`、`mcp:<名前>`）、`command`（コマンドの名前）、`args`（引数の要点。絵は入れない）。新しい 2000 件だけ書く。記録がなければ、ファイルも作らない。読めない行は外して知らせる。「記録を外して保存」では書かない。
 - 同じ日に、調整の種類 `curves`（`points` に入力と出力の組）、`exposure`（`exposure` 100 倍、`offset` 1000 倍、`gamma` 100 倍）、`vibrance`（`vibrance`、`saturation`）、`color_balance`（`shadows`、`midtones`、`highlights` に 3 つずつ、`preserve`）、`black_white`（`weights` に 6 つ）、`photo_filter`（`color`、`density`、`preserve`）、`posterize`（`levels`）、`threshold`（`level`）、`gradient_map`（`from`、`to`、`reverse`）を足した。
 
 ### 設定のテキストの例

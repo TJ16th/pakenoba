@@ -125,6 +125,7 @@ impl App {
             layer: Default::default(),
         });
         self.select_only(Some(self.decals.len() - 1));
+        self.log_added(self.decals.len() - 1);
         (self.art_dirty, self.back_dirty) = (true, true);
         self.say(t!("Placed a shape. Change its form, colors and size in the right panel."));
     }

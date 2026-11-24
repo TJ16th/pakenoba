@@ -51,6 +51,7 @@ doc! {
     cams: [(f32, f32, f32); 3],
     cam_owner: Workspace,
     decals: Vec<Placed>,
+    log: Vec<pakenoba_core::project::LogEntry>,
     selected: Option<usize>,
     extra: Vec<usize>,
     sheet: SheetArt,
@@ -102,6 +103,7 @@ impl Doc {
             cams: app.cams,
             cam_owner: Workspace::Shape,
             decals: Vec::new(),
+            log: Vec::new(),
             selected: None,
             extra: Vec::new(),
             sheet,
@@ -318,27 +320,26 @@ impl App {
             Some(doc) => (doc.label.clone(), doc.dirty, doc.file.path.clone()),
             None => (name.clone(), dirty, if i == active { self.file.path.clone() } else { None }),
         }).collect();
-        ui.spacing_mut().item_spacing.x = 2.0;
         for (i, (label, dirty, path)) in entries.into_iter().enumerate() {
             let text = format!("{label}{}", if dirty { " *" } else { "" });
-            let response = ui.selectable_label(i == active && !self.home && !self.library.open, text);
-            let response = match path {
-                Some(path) => response.on_hover_text(path.display().to_string()),
-                None => response,
+            let tip = match (&path, dirty) {
+                (Some(path), true) => format!("{}\n{}", path.display(), t!("There are unsaved changes (Ctrl+S to save)")),
+                (Some(path), false) => path.display().to_string(),
+                (None, true) => t!("There are unsaved changes (Ctrl+S to save)").to_owned(),
+                (None, false) => String::new(),
             };
-            let response = if dirty { response.on_hover_text(t!("There are unsaved changes (Ctrl+S to save)")) } else { response };
-            if response.clicked() {
+            let (response, closed) = super::icons::doc_tab(ui, &text, i == active && !self.home, true, (!tip.is_empty()).then_some(tip.as_str()));
+            if closed {
+                close = Some(i);
+            } else if response.clicked() {
                 switch = Some(i);
             }
             if response.middle_clicked() {
                 close = Some(i);
             }
-            if ui.small_button("×").on_hover_text(t!("Close this tab")).clicked() {
-                close = Some(i);
-            }
-            ui.add_space(6.0);
         }
-        if ui.small_button("+").on_hover_text(t!("New project in a new tab (Ctrl+N)")).clicked() {
+        ui.add_space(4.0);
+        if ui.add(egui::Button::new("+").frame(false).min_size(egui::vec2(24.0, 24.0))).on_hover_text(t!("New project in a new tab (Ctrl+N)")).clicked() {
             self.request_new();
         }
         if let Some(i) = switch {

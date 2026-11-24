@@ -100,6 +100,7 @@ impl App {
         decal.set_center(&self.template, at);
         self.decals.push(Placed { decal, picture, back, layer: Default::default() });
         self.select_only(Some(self.decals.len() - 1));
+        self.log_added(self.decals.len() - 1);
         self.focus_text = true;
         self.say(t!("Placed text. Type it in the right panel."));
     }

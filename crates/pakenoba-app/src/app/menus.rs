@@ -54,6 +54,7 @@ impl App {
             });
         });
         self.about_window(ui.ctx());
+        self.log_window(ui.ctx());
     }
 
     /// 「ファイル」の中の、書き出しの項目。押すと「出力」の工程に移り、その種類を選ぶ。
@@ -84,7 +85,7 @@ impl App {
             }
             ui.separator();
             if item(ui, design && selected, t!("Delete"), "Delete", t!("Select artwork in the Design step")) {
-                self.delete_selected();
+                self.cmd_delete();
             }
             if item(ui, design && !self.decals.is_empty(), t!("Select all"), "Ctrl+A", t!("Usable in the Design step")) {
                 self.select_all();
@@ -148,6 +149,9 @@ impl App {
                 self.show_guides = !self.show_guides;
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
+            if check(ui, true, self.log_open, t!("Operation history"), "", "") {
+                self.log_open = !self.log_open;
+            }
             ui.separator();
             ui.menu_button(t!("View from"), |ui| {
                 for (label, yaw, pitch) in super::views::VIEW_PRESETS {
@@ -176,10 +180,10 @@ impl App {
         ui.menu_button(t!("Object"), |ui| {
             ui.set_min_width(260.0);
             if item(ui, single.is_some_and(|i| self.neighbor(i, 1).is_some()), t!("Bring forward"), "", why) {
-                self.reorder_selected(1);
+                self.cmd_reorder(1);
             }
             if item(ui, single.is_some_and(|i| self.neighbor(i, -1).is_some()), t!("Send backward"), "", why) {
-                self.reorder_selected(-1);
+                self.cmd_reorder(-1);
             }
             if item(ui, single.is_some() && !locked, t!("Rotate 90°"), "", why) {
                 self.rotate_selected();
@@ -224,7 +228,7 @@ impl App {
             }
             ui.separator();
             if item(ui, index.is_some(), t!("Delete"), "Delete", why) {
-                self.delete_selected();
+                self.cmd_delete();
             }
         });
     }

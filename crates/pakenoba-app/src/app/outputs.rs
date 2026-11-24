@@ -287,9 +287,8 @@ impl App {
 
     /// 右（出力）: 選んだ出力の設定。
     pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("output-settings").resizable(false).exact_size(320.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.strong(pakenoba_i18n::tr(OUTPUTS[self.output_kind].0));
+        egui::Panel::right("output-settings").resizable(false).exact_size(320.0).frame(super::theme::side_frame()).show(ui, |ui| {
+            super::panels::boxed(ui, pakenoba_i18n::tr(OUTPUTS[self.output_kind].0), true, |ui| {
             let ctx = ui.ctx().clone();
             match self.output_kind {
                 0 => {
@@ -387,6 +386,7 @@ impl App {
             }
             ui.add_space(6.0);
             ui.small(t!("This output is for checking the design. It is not production data and does not guarantee die-cutting, trimming or print positions."));
+            });
         });
     }
 

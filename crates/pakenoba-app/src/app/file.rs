@@ -43,6 +43,8 @@ pub(super) enum FileAction {
     SaveAs,
     /// 展開図の絵（PSD）を読み込む。
     ImportDieline,
+    /// 操作の記録を外して、名前を付けて保存する（人に渡すとき）。
+    SaveWithoutLog,
 }
 
 /// 裏で進めている保存。
@@ -171,7 +173,7 @@ impl App {
                 Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()) })
+        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()), log: self.log.clone() })
     }
 
     /// 状態の印。案件のファイルに入るもの（型、寸法、柄、素材、展開図の絵）から作る。
@@ -293,6 +295,9 @@ impl App {
         }
         self.refit_bases();
 
+        self.log = project.log;
+        self.ensure_ids();
+
         // 前の案件の、途中の操作や履歴は持ち越さない。
         self.history = history::History::default();
         (self.selected, self.grab, self.hover, self.preview, self.carry, self.asset_selected, self.pending_shape) = (None, None, None, None, None, None, None);
@@ -367,16 +372,16 @@ impl App {
         true
     }
 
-    /// 開くファイルを選んでもらう。
-    fn ask_open(&mut self) -> Option<PathBuf> {
+    /// 開くファイルを選んでもらう。いくつも選べる（それぞれ新しいタブで開く）。
+    fn ask_open(&mut self) -> Vec<PathBuf> {
         if let Some(answer) = self.file.answer_open.take() {
-            return Some(answer);
+            return vec![answer];
         }
         let mut dialog = rfd::FileDialog::new().set_title(t!("Open project")).add_filter(t!("PAKENOBA project"), &[project::EXTENSION]);
         if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
-        dialog.pick_file()
+        dialog.pick_files().unwrap_or_default()
     }
 
     /// 保存先を選んでもらう。
@@ -406,7 +411,17 @@ impl App {
             self.say(t!("Saving. Open the project when it has finished."));
             return;
         }
-        let Some(path) = path.or_else(|| self.ask_open()) else { return };
+        let paths = match path {
+            Some(path) => vec![path],
+            None => self.ask_open(),
+        };
+        for path in paths {
+            self.open_one(path);
+        }
+    }
+
+    /// 1 つの案件を開く（すでに開いていれば、そのタブへ移る）。
+    fn open_one(&mut self, path: PathBuf) {
         if let Some(index) = self.tab_with(&path) {
             self.switch_tab(index);
             self.home = false;
@@ -495,7 +510,7 @@ impl App {
     /// 起動したときと同じ、まっさらな案件にする（差し込み箱、柄も素材もなし）。型を選ぶところから始める。
     pub(super) fn new_now(&mut self) {
         let shape = Dims::for_shape(0, self.dims.t).shape();
-        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None });
+        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new() });
         self.file.path = None;
         // タブで並ぶので、2 つ目からは番号を付ける（「名前なし 2」）。
         let n = self.tabs.next_untitled();
@@ -653,6 +668,7 @@ impl App {
             ui.separator();
             pick(ui, !saving, t!("Save"), "Ctrl+S", FileAction::Save);
             pick(ui, !saving, t!("Save As…"), "Ctrl+Shift+S", FileAction::SaveAs);
+            pick(ui, !saving, t!("Save Without History…"), "", FileAction::SaveWithoutLog);
             ui.separator();
             pick(ui, !saving, t!("Import dieline artwork (PSD)…"), "", FileAction::ImportDieline);
             self.export_items(ui);
@@ -708,6 +724,15 @@ impl App {
             }
             FileAction::SaveAs => {
                 self.save_as(ctx, Then::Nothing);
+            }
+            FileAction::SaveWithoutLog => {
+                // 外した記録は、保存を取りやめたときだけ戻す（保存したファイルと、開いている案件をそろえる）。
+                let kept = std::mem::take(&mut self.log);
+                if self.save_as(ctx, Then::Nothing) {
+                    self.say(t!("Saving without the operation history. The history of this project was cleared."));
+                } else {
+                    self.log = kept;
+                }
             }
         }
     }

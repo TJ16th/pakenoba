@@ -117,6 +117,7 @@ impl App {
         self.checkpoint();
         self.decals.push(placed);
         self.select_only(Some(self.decals.len() - 1));
+        self.log_added(self.decals.len() - 1);
         self.tool = Tool::Select;
         self.art_dirty = true;
         self.back_dirty = true;
@@ -342,7 +343,7 @@ impl App {
         }
         ui.separator();
         if ui.button(t!("Delete")).clicked() {
-            self.delete_selected();
+            self.cmd_delete();
             ui.close();
         }
     }

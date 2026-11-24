@@ -30,6 +30,8 @@ mod transform;
 mod views;
 mod layers;
 mod theme;
+mod commands;
+mod oplog;
 
 use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
@@ -85,8 +87,8 @@ pub struct Initial {
     pub assets: Option<bool>,
     /// 開発用の情報（パネルの数、描画の方式など）を、下の帯に出す。
     pub debug: bool,
-    /// 起動時に開く案件のファイル（`.pknb`）。
-    pub project: Option<PathBuf>,
+    /// 起動時に開く案件のファイル（`.pknb`）。いくつもあれば、2 つ目からは新しいタブで開く。
+    pub project: Vec<PathBuf>,
     /// 画面を撮って確かめるとき用。ファイルを選ぶダイアログを出さずに、この場所を答えにする（開く、保存する）。
     pub answer_open: Option<PathBuf>,
     pub answer_save: Option<PathBuf>,
@@ -114,7 +116,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: None, answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: Vec::new(), answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
     }
 }
 
@@ -529,6 +531,12 @@ struct App {
     recovery: recovery::Recovery,
     /// 案件をまたいで覚えておく設定（登録したフォルダ）。
     settings: settings::Settings,
+    /// 操作の記録（古い順。案件のファイルに入る）。
+    log: Vec<pakenoba_core::project::LogEntry>,
+    /// まとめて呼んだコマンドの最中（`Some`）。中の値は、もう元に戻す記録を取ったか。
+    undo_batch: Option<bool>,
+    /// 操作の記録の窓を開いている。
+    log_open: bool,
     /// 「素材」の画面。
     library: library::Library,
     /// 箱を描く仕組み（書き出しで、画面とは別に箱を描くため）。
@@ -677,6 +685,9 @@ impl App {
                 }
                 settings
             },
+            log: Vec::new(),
+            undo_batch: None,
+            log_open: false,
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,
             layer_drag: None,
@@ -733,8 +744,12 @@ impl App {
         app.selected = initial.select.filter(|&i| i < app.decals.len());
         // 起動したときの状態は、保存してある状態として扱う（何もしていないのに「未保存」と出さない）。
         app.mark_saved();
-        if let Some(path) = &initial.project {
-            app.open_path(path);
+        for (n, path) in initial.project.iter().enumerate() {
+            if n == 0 {
+                app.open_path(path);
+            } else {
+                app.request_open(Some(path.clone()));
+            }
         }
         app
     }
@@ -778,7 +793,15 @@ impl App {
 
     /// これから柄を変える。変える前の状態を、元に戻せるように覚える。
     fn checkpoint(&mut self) {
-        self.history.record(self.snapshot());
+        match self.undo_batch {
+            // まとめて呼んでいる最中は、最初の 1 回だけ覚える（元に戻すのは、まとめて 1 回ぶん）。
+            Some(true) => {}
+            Some(false) => {
+                self.undo_batch = Some(true);
+                self.history.record(self.snapshot());
+            }
+            None => self.history.record(self.snapshot()),
+        }
     }
 
     fn restore(&mut self, state: Snapshot) {
@@ -874,6 +897,7 @@ impl App {
         let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
         self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false, layer: Default::default() });
         self.select_only(Some(self.decals.len() - 1));
+        self.log_added(self.decals.len() - 1);
     }
 
     /// 画像（PNG）を、この案件の素材に取り込んで、柄として置く。元のファイルの中身も、そのまま持つ（案件のファイルに入れるため）。
@@ -1174,7 +1198,7 @@ impl App {
             self.undo();
         }
         if plain && (delete || backspace) && self.workspace == Workspace::Design {
-            self.delete_selected();
+            self.cmd_delete();
         }
         // Ctrl+E で、選んでいる柄を外のアプリで直す。
         if command && e && self.workspace == Workspace::Design {
@@ -1190,15 +1214,15 @@ impl App {
             if alt {
                 // Ctrl+Alt+G で、クリッピングマスクを作る・外す（Photoshop と同じ）。
                 if let Some(index) = self.selected {
-                    self.toggle_clip(index);
+                    self.cmd_clip(index);
                 }
             } else if shift {
                 let header = self.selected.and_then(|i| if matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. })) { Some(i) } else { crate::paint::group_of(&self.decals, i) });
                 if let Some(header) = header {
-                    self.ungroup(header);
+                    self.cmd_ungroup(header);
                 }
             } else {
-                self.group_selected();
+                self.cmd_group();
             }
         }
         // B で、マスクを筆で描く（選んでいる柄にマスクがあるとき）。

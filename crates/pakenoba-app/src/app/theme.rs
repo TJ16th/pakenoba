@@ -88,6 +88,11 @@ pub fn panel_frame() -> egui::Frame {
     egui::Frame::new().fill(PANEL).inner_margin(egui::Margin { left: 0, right: 0, top: 0, bottom: 8 }).corner_radius(CornerRadius::same(2))
 }
 
+/// 箱を並べる側の欄（暗い溝）。
+pub fn side_frame() -> egui::Frame {
+    egui::Frame::new().fill(BACKGROUND).inner_margin(egui::Margin::same(4))
+}
+
 /// パネルの中身の余白。
 pub fn panel_body() -> egui::Frame {
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6))
