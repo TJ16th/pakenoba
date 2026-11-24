@@ -12,7 +12,7 @@ roof = 45.0
 
 [material]
 paper = "coated_board"
-coat = "gloss_pp"
+coat = "matte_pp"
 
 [[decal]]
 id = 1
@@ -104,6 +104,20 @@ stroke = "#000000"
 stroke_width = 1.5
 radius = 8.0
 
+[[decal]]
+id = 13
+panel = "正面"
+at = [0.5, 0.5]
+size = [86.0, 86.0]
+angle = 0.0
+back = false
+hidden = true
+
+[decal.shape]
+kind = "ellipse"
+fill = "#000000"
+stroke_width = 1.0
+
 [[finish]]
 id = 20
 kind = "foil"
@@ -123,3 +137,8 @@ id = 22
 kind = "foil"
 foil = "matte_silver"
 link = 11
+
+[[finish]]
+id = 23
+kind = "spot_uv"
+link = 13

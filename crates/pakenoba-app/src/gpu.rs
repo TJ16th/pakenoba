@@ -51,6 +51,9 @@ struct Globals {
 // 加工の版（表と裏）。R が箔の量、G が箔の種類（番号 × 32 + 16）。
 @group(1) @binding(3) var finish_front: texture_2d<f32>;
 @group(1) @binding(4) var finish_back: texture_2d<f32>;
+// 加工の版の 2 枚目（表と裏）。R が部分 UV ニスの量、G がそのつや消しの度合い、B が白版の量。
+@group(1) @binding(5) var extra_front: texture_2d<f32>;
+@group(1) @binding(6) var extra_back: texture_2d<f32>;
 @group(2) @binding(0) var env_map: texture_2d<f32>;
 @group(2) @binding(1) var env_sampler: sampler;
 
@@ -184,6 +187,9 @@ fn paper_height(mm: vec2<f32>, amp: f32) -> f32 {
     return h;
 }
 
+// 白いインキの色（線形）。紙の白よりわずかに暗い（白インキは少し透ける）。
+const WHITE_INK: vec3<f32> = vec3<f32>(0.80, 0.80, 0.78);
+
 // 刷った色は、紙の色と掛け合わさる（インキは透ける）。白い紙ではほぼそのまま、クラフト紙では暗く茶色っぽくなる。
 fn ink_on(paper: vec3<f32>) -> vec3<f32> {
     return min(paper / 0.88, vec3<f32>(1.0));
@@ -270,6 +276,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let nv0 = max(dot(n0, v), 1e-4);
     let r0 = reflect(-v, n0);
 
+    var extra = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if in.kind < 0.5 {
+        extra = textureSampleLevel(extra_front, art_sampler, in.uv, 0.0);
+    } else if in.kind < 1.5 {
+        extra = textureSampleLevel(extra_back, art_sampler, in.uv, 0.0);
+    }
     var paper = globals.paper_front;
     var base: vec3<f32>;
     var shade = 1.0;
@@ -280,11 +292,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // 紙の裏（箱の内側の面）。裏に置いた柄が見える。箱の中は、外より暗い。
         paper = globals.paper_back;
         let back = textureSample(back_art, art_sampler, in.uv);
-        base = mix(paper.rgb, back.rgb * ink_on(paper.rgb), back.a);
+        // 白版のある所は、紙の色のかわりに白いインキの上に刷る。
+        let under = mix(paper.rgb, WHITE_INK, extra.b);
+        base = mix(under, back.rgb * ink_on(under), back.a);
         shade = 0.7;
     } else {
         let texel = textureSample(art, art_sampler, in.uv);
-        base = mix(paper.rgb, texel.rgb * ink_on(paper.rgb), texel.a);
+        let under = mix(paper.rgb, WHITE_INK, extra.b);
+        base = mix(under, texel.rgb * ink_on(under), texel.a);
         // コートで色が少し深く（グロス）、または少し白っぽく（マット）見える。
         base = pow(max(base, vec3<f32>(0.0)), vec3<f32>(1.0 + globals.coat.z));
     }
@@ -302,6 +317,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if in.kind < 0.5 && globals.coat.x > 0.0 {
         let fc = env_brdf(vec3<f32>(0.04), globals.coat.y, nv0) * globals.coat.x;
         color = color * (1.0 - fc) + radiance(r0, globals.coat.y) * fc;
+    }
+    // 部分 UV ニス（全体のコートの上の、もう 1 枚の膜）。グロスは景色がくっきり映り、色も少し深く見える。
+    if extra.r > 0.003 && in.kind < 1.5 {
+        let rough_uv = mix(0.035, 0.5, extra.g);
+        let fu = env_brdf(vec3<f32>(0.04), rough_uv, nv0) * extra.r;
+        let deep = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 + 0.08 * (1.0 - extra.g)));
+        color = mix(color, deep, extra.r) * (1.0 - fu) + radiance(r0, rough_uv) * fu;
     }
     // 箔（いちばん上。金属として、景色を箔の色で映す。拡散の色はほとんどない）。
     var foil = vec4<f32>(0.0);
@@ -483,8 +505,9 @@ pub struct BoxRenderer {
     /// 紙の表の絵と、裏の絵。
     front: wgpu::TextureView,
     back: wgpu::TextureView,
-    /// 加工の版の絵（表と裏）。R が箔の量、G が箔の種類。
+    /// 加工の版の絵（表と裏）。1 枚目は箔とエンボス、2 枚目は部分 UV ニスと白版。
     finish: [wgpu::TextureView; 2],
+    extra: [wgpu::TextureView; 2],
     sampler: wgpu::Sampler,
     env_layout: wgpu::BindGroupLayout,
     env_bind: wgpu::BindGroup,
@@ -561,6 +584,16 @@ impl BoxRenderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
+                },                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
                 },
             ],
         });
@@ -631,7 +664,8 @@ impl BoxRenderer {
         let front = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let back = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let finish = [Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128])];
-        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &[&front, &back, &finish[0], &finish[1]]);
+        let extra = [Self::upload_plain(rs, 1, 1, &[0, 0, 0, 255]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 255])];
+        let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &[&front, &back, &finish[0], &finish[1], &extra[0], &extra[1]]);
         // 景色は、左右はつながっているので繰り返し、上下は端で止める。
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("box environment"),
@@ -656,6 +690,7 @@ impl BoxRenderer {
             front,
             back,
             finish,
+            extra,
             sampler,
             env_layout,
             env_bind,
@@ -760,17 +795,20 @@ impl BoxRenderer {
     }
 
     /// 加工の版の絵を差し替える（None なら加工なし）。
-    pub fn set_finish(&mut self, rs: &egui_wgpu::RenderState, back: bool, w: usize, h: usize, rgba: Option<&[u8]>) {
-        let view = match rgba {
-            Some(rgba) if w > 0 && h > 0 && rgba.len() == w * h * 4 && w <= rs.device.limits().max_texture_dimension_2d as usize && h <= rs.device.limits().max_texture_dimension_2d as usize => Self::upload_plain(rs, w as u32, h as u32, rgba),
-            _ => Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128]),
+    pub fn set_finish(&mut self, rs: &egui_wgpu::RenderState, back: bool, w: usize, h: usize, maps: Option<&[Vec<u8>; 2]>) {
+        let max = rs.device.limits().max_texture_dimension_2d as usize;
+        let fits = |rgba: &[u8]| w > 0 && h > 0 && rgba.len() == w * h * 4 && w <= max && h <= max;
+        let (main, extra) = match maps {
+            Some([main, extra]) if fits(main) && fits(extra) => (Self::upload_plain(rs, w as u32, h as u32, main), Self::upload_plain(rs, w as u32, h as u32, extra)),
+            _ => (Self::upload_plain(rs, 1, 1, &[0, 0, 0, 128]), Self::upload_plain(rs, 1, 1, &[0, 0, 0, 255])),
         };
-        self.finish[back as usize] = view;
-        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1]]);
+        self.finish[back as usize] = main;
+        self.extra[back as usize] = extra;
+        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1], &self.extra[0], &self.extra[1]]);
     }
 
-    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, views: &[&wgpu::TextureView; 4]) -> wgpu::BindGroup {
-        let [front, back, finish_front, finish_back] = *views;
+    fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, views: &[&wgpu::TextureView; 6]) -> wgpu::BindGroup {
+        let [front, back, finish_front, finish_back, extra_front, extra_back] = *views;
         rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("box art"),
             layout,
@@ -780,6 +818,8 @@ impl BoxRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(back) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(finish_front) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(finish_back) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(extra_front) },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(extra_back) },
             ],
         })
     }
@@ -796,7 +836,7 @@ impl BoxRenderer {
         } else {
             self.front = view;
         }
-        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1]]);
+        self.art_bind = Self::art_bind_group(rs, &self.art_layout, &self.sampler, &[&self.front, &self.back, &self.finish[0], &self.finish[1], &self.extra[0], &self.extra[1]]);
     }
 
     fn ensure_target(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2]) {

@@ -13,8 +13,8 @@ use super::{App, Workspace};
 pub(super) const SAMPLES: &[(&str, &str)] = &[
     ("Foil sampler (7 foils on navy, matte PP)", include_str!("../../assets/samples/foil.toml")),
     ("Embossing sampler (heights, deboss, raised foil)", include_str!("../../assets/samples/emboss.toml")),
-    ("Kraft with hologram band and copper foil", include_str!("../../assets/samples/kraft.toml")),
-    ("Black gloss PP with raised gold foil", include_str!("../../assets/samples/black.toml")),
+    ("Kraft with white ink, hologram band and copper foil", include_str!("../../assets/samples/kraft.toml")),
+    ("Black matte PP with spot UV and raised gold foil", include_str!("../../assets/samples/black.toml")),
 ];
 
 // 訳の表に載せる文（`SAMPLES` の名前）。
@@ -23,8 +23,8 @@ fn names() -> [&'static str; 4] {
     [
         t!("Foil sampler (7 foils on navy, matte PP)"),
         t!("Embossing sampler (heights, deboss, raised foil)"),
-        t!("Kraft with hologram band and copper foil"),
-        t!("Black gloss PP with raised gold foil"),
+        t!("Kraft with white ink, hologram band and copper foil"),
+        t!("Black matte PP with spot UV and raised gold foil"),
     ]
 }
 

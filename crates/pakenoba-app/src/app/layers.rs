@@ -366,8 +366,13 @@ impl App {
             let cy = rect.center().y;
             let x = eye.right() + 6.0;
             // 小さな絵のかわりに、箔の色の四角と光の印。
-            let emboss = finish.kind == pakenoba_core::material::FinishKind::Emboss;
-            let swatch = if emboss { [150, 150, 150] } else { super::finishes::foil_swatch(finish.foil) };
+            use pakenoba_core::material::FinishKind;
+            let swatch = match finish.kind {
+                FinishKind::Foil => super::finishes::foil_swatch(finish.foil),
+                FinishKind::Emboss => [150, 150, 150],
+                FinishKind::SpotUv => [170, 215, 245],
+                FinishKind::White => [250, 250, 250],
+            };
             let thumb = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
             painter.rect_filled(thumb, 2.0, egui::Color32::from_rgb(swatch[0], swatch[1], swatch[2]));
             icons::draw_foil(&painter, thumb.center(), egui::Stroke::new(1.3, egui::Color32::from_gray(40)));
@@ -377,10 +382,12 @@ impl App {
             ui.scope_builder(egui::UiBuilder::new().max_rect(name_rect).layout(egui::Layout::top_down(egui::Align::LEFT)), |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.add(egui::Label::new(egui::RichText::new(label).color(super::theme::TEXT)).truncate().selectable(false));
-                let kind = match (missing, emboss) {
+                let kind = match (missing, finish.kind) {
                     (true, _) => t!("Finish (the linked artwork is gone)"),
-                    (false, true) => t!("Embossing"),
-                    (false, false) => t!("Foil stamping"),
+                    (false, FinishKind::Emboss) => t!("Embossing"),
+                    (false, FinishKind::Foil) => t!("Foil stamping"),
+                    (false, FinishKind::SpotUv) => t!("Spot UV varnish"),
+                    (false, FinishKind::White) => t!("White ink"),
                 };
                 ui.add(egui::Label::new(egui::RichText::new(kind).small().color(super::theme::MUTED)).truncate().selectable(false));
             });
@@ -388,7 +395,7 @@ impl App {
                 self.select_finish(Some(index));
             }
             response.context_menu(|ui| {
-                if ui.button(if emboss { t!("Remove the embossing") } else { t!("Remove the foil") }).clicked() {
+                if ui.button(t!("Remove")).clicked() {
                     self.person("finish.delete", serde_json::json!({ "id": finish.id }));
                     ui.close();
                 }
@@ -861,6 +868,20 @@ impl App {
                     }
                     if ui.button(t!("Deboss (press in)")).clicked() {
                         self.add_emboss(true);
+                        ui.close();
+                    }
+                    ui.separator();
+                    ui.weak(t!("Varnish and white"));
+                    if ui.button(t!("Spot UV (gloss)")).clicked() {
+                        self.add_finish(pakenoba_core::material::FinishKind::SpotUv, false);
+                        ui.close();
+                    }
+                    if ui.button(t!("Spot UV (matte)")).clicked() {
+                        self.add_finish(pakenoba_core::material::FinishKind::SpotUv, true);
+                        ui.close();
+                    }
+                    if ui.button(t!("White ink")).clicked() {
+                        self.add_finish(pakenoba_core::material::FinishKind::White, false);
                         ui.close();
                     }
                 });

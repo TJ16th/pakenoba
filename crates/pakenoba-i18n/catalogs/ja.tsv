@@ -1112,7 +1112,6 @@ blend	Color	カラー
 	Select this artwork	この柄を選ぶ
 	The artwork it was linked to is gone	つないでいた柄がありません
 	The foil takes the shape of the linked artwork and moves with it. Hide the artwork's layer to stamp foil without ink.	箔は、つないだ柄の形になり、柄と一緒に動きます。インキを刷らずに箔だけを押すときは、柄のレイヤーを隠します。
-	Remove the foil	箔を外す
 	"id" is missing	「id」がありません
 	Waviness	うねり
 	Small waves in the pressed foil. 0 is flat like a mirror. More waves make the reflection break up and glitter	押した箔の小さなうねり。0 は鏡のように平ら。大きいほど映り込みが乱れて、きらめく
@@ -1120,8 +1119,8 @@ blend	Color	カラー
 	Open a sample	見本を開く
 	Foil sampler (7 foils on navy, matte PP)	箔押しの見本（紺にマット PP、7 種の箔）
 	Embossing sampler (heights, deboss, raised foil)	エンボスの見本（高さ違い、デボス、浮き出し箔）
-	Kraft with hologram band and copper foil	クラフト紙にホログラムの帯と銅箔
-	Black gloss PP with raised gold foil	黒にグロス PP、浮き出しの金箔
+	Kraft with white ink, hologram band and copper foil	クラフト紙に白版、ホログラムの帯と銅箔
+	Black matte PP with spot UV and raised gold foil	黒にマット PP、部分 UV ニスと浮き出しの金箔
 	Opened the sample "{}". Save it to keep your changes.	見本「{}」を開きました。変えたものを残すときは保存してください。
 	Could not open the sample: {e}	見本を開けませんでした: {e}
 	Emboss	エンボス
@@ -1139,7 +1138,20 @@ blend	Color	カラー
 	Emboss (raise)	エンボス（浮かせる）
 	Deboss (press in)	デボス（へこませる）
 	Finish (the linked artwork is gone)	加工（つないでいた柄がありません）
-	Unknown finish "{key}" (foil, emboss)	知らない加工です（{key}）。foil か emboss
 	Added a finish (foil or embossing)	加工を付けた（箔かエンボス）
 	Changed a finish	加工を変えた
 	Removed a finish	加工を外した
+	Spot UV (gloss)	部分 UV ニス（グロス）
+	Spot UV (matte)	部分 UV ニス（マット）
+	White ink	白版
+	Spot UV varnish	部分 UV ニス
+	Finish	仕上げ
+	Gloss	グロス
+	Matte	マット
+	A clear varnish only in the shape of the linked artwork, on top of the overall coating. Gloss on matte PP makes the shape shine.	つないだ柄の形だけに、全体のコートの上から透明なニスを引きます。マット PP の上にグロスで引くと、その形だけが光ります。
+	White ink under the colours in the shape of the linked artwork. On kraft or coloured paper, the colours come out bright where the white is.	つないだ柄の形で、色の下に白いインキを敷きます。クラフト紙や色の紙では、白を敷いた所だけ色が鮮やかに出ます。
+	Remove the spot UV	部分 UV ニスを外す
+	Remove the white ink	白版を外す
+	Varnish and white	ニスと白版
+	Unknown finish "{key}" (foil, emboss, spot_uv, white)	知らない加工です（{key}）。foil、emboss、spot_uv、white のどれか
+	Remove the foil	箔を外す

@@ -97,3 +97,8 @@ id = 24
 kind = "emboss"
 link = 1
 height = 0.3
+
+[[finish]]
+id = 25
+kind = "white"
+link = 1

@@ -70,8 +70,8 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "project.new", summary: "Start a new project (in a new tab when the current one has content).", args: schema!(; required: []), read_only: false },
     CommandInfo { name: "project.open", summary: "Open a project file (.pknb). AI can only open files inside the allowed folders.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
     CommandInfo { name: "project.save_as", summary: "Save the project to a new file (.pknb). AI can only write inside the allowed folders and never overwrites an existing file.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
-    CommandInfo { name: "finish.add", summary: "Add a finish to an artwork layer (image, text or shape): kind foil (default) or emboss. It takes the artwork's shape and moves with it; hide the artwork to stamp foil without ink or to blind-emboss. Foil and emboss on the same artwork make raised foil. Foil: foil = gold (default), silver, copper, red_gold, matte_gold, matte_silver, hologram; wave = small waves in the pressed foil, 0 (flat like a mirror) to 100, default 20. Emboss: height (mm, 0.05-2, default 0.4), edge (slope width in mm, 0.1-3, default 0.6), deboss (true presses in). Returns the finish id.", args: schema!("id": r#"{"type":"integer"}"#, "kind": r#"{"type":"string","enum":["foil","emboss"]}"#, "foil": r#"{"type":"string"}"#, "wave": r#"{"type":"integer"}"#, "height": r#"{"type":"number"}"#, "edge": r#"{"type":"number"}"#, "deboss": r#"{"type":"boolean"}"#; required: ["id"]), read_only: false },
-    CommandInfo { name: "finish.set", summary: "Change a finish layer: foil type, waviness (0-100), emboss height, edge and deboss, visibility or name.", args: schema!("id": r#"{"type":"integer"}"#, "foil": r#"{"type":"string"}"#, "wave": r#"{"type":"integer"}"#, "height": r#"{"type":"number"}"#, "edge": r#"{"type":"number"}"#, "deboss": r#"{"type":"boolean"}"#, "visible": r#"{"type":"boolean"}"#, "name": r#"{"type":"string"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "finish.add", summary: "Add a finish to an artwork layer (image, text or shape): kind foil (default), emboss, spot_uv (clear varnish only in that shape; matte true for matte varnish) or white (white ink under the colours). It takes the artwork's shape and moves with it; hide the artwork to stamp foil without ink or to blind-emboss. Foil and emboss on the same artwork make raised foil. Foil: foil = gold (default), silver, copper, red_gold, matte_gold, matte_silver, hologram; wave = small waves in the pressed foil, 0 (flat like a mirror) to 100, default 20. Emboss: height (mm, 0.05-2, default 0.4), edge (slope width in mm, 0.1-3, default 0.6), deboss (true presses in). Returns the finish id.", args: schema!("id": r#"{"type":"integer"}"#, "kind": r#"{"type":"string","enum":["foil","emboss","spot_uv","white"]}"#, "matte": r#"{"type":"boolean"}"#, "foil": r#"{"type":"string"}"#, "wave": r#"{"type":"integer"}"#, "height": r#"{"type":"number"}"#, "edge": r#"{"type":"number"}"#, "deboss": r#"{"type":"boolean"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "finish.set", summary: "Change a finish layer: foil type, waviness (0-100), emboss height, edge and deboss, spot UV matte, visibility or name.", args: schema!("id": r#"{"type":"integer"}"#, "matte": r#"{"type":"boolean"}"#, "foil": r#"{"type":"string"}"#, "wave": r#"{"type":"integer"}"#, "height": r#"{"type":"number"}"#, "edge": r#"{"type":"number"}"#, "deboss": r#"{"type":"boolean"}"#, "visible": r#"{"type":"boolean"}"#, "name": r#"{"type":"string"}"#; required: ["id"]), read_only: false },
     CommandInfo { name: "finish.delete", summary: "Remove a finish layer.", args: schema!("id": r#"{"type":"integer"}"#; required: ["id"]), read_only: false },
     CommandInfo { name: "material.set", summary: "Set the paper (coated_board, coated, matte_coated, uncoated, kraft, corrugated) and the coating on the outside (none, matte_varnish, gloss_varnish, matte_pp, gloss_pp, soft_touch_pp). Either can be left out.", args: schema!("paper": r#"{"type":"string"}"#, "coat": r#"{"type":"string"}"#; required: []), read_only: false },
     CommandInfo { name: "shape.set", summary: "Change the box type: tuck_box, gable, pillow, or prism (with sides 3, 5, 6 or 8). Placed artwork comes off the box (undo brings it back). Returns the new panel names.", args: schema!("kind": r#"{"type":"string","enum":["tuck_box","gable","pillow","prism"]}"#, "sides": r#"{"type":"integer"}"#; required: ["kind"]), read_only: false },
@@ -771,7 +771,7 @@ mod tests {
         // 加工の版の絵には、柄の形のところに箔が入る（柄を隠しても）。
         app.run_command("agent:test", "layer.visible", json!({ "ids": [id], "visible": false })).unwrap();
         let back = app.decals[0].back;
-        let map = app.finish_map(back).expect("加工の版");
+        let map = app.finish_maps(back).expect("加工の版")[0].clone();
         assert!(map.chunks_exact(4).any(|p| p[0] > 200 && p[1] == super::super::finishes::foil_code(pakenoba_core::material::Foil::Silver)));
         app.run_command("agent:test", "finish.set", json!({ "id": finish, "foil": "hologram" })).unwrap();
         assert_eq!(app.finishes[0].foil, pakenoba_core::material::Foil::Hologram);
@@ -784,10 +784,10 @@ mod tests {
         assert_eq!(app.finishes.len(), 1);
         // 同じ柄にエンボスも付けると、版の A に高さが入る（浮き出し箔）。デボスはへこむ。
         let emboss = app.run_command("agent:test", "finish.add", json!({ "id": id, "kind": "emboss", "height": 0.8 })).unwrap()["id"].as_i64().unwrap();
-        let map = app.finish_map(back).unwrap();
+        let map = app.finish_maps(back).unwrap()[0].clone();
         assert!(map.chunks_exact(4).any(|p| p[3] > 160));
         app.run_command("agent:test", "finish.set", json!({ "id": emboss, "deboss": true })).unwrap();
-        let map = app.finish_map(back).unwrap();
+        let map = app.finish_maps(back).unwrap()[0].clone();
         assert!(map.chunks_exact(4).any(|p| p[3] < 96) && map.chunks_exact(4).all(|p| p[3] <= 128));
         assert_eq!(app.run_command("agent:test", "doc.inspect", Value::Null).unwrap()["finishes"][1]["kind"], "emboss");
         app.run_command("agent:test", "finish.delete", json!({ "id": emboss })).unwrap();

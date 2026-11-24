@@ -93,6 +93,9 @@ fn apply_finish_args(finish: &mut Finish, args: &Value) -> Result<(), String> {
     if let Some(v) = args.get("deboss").and_then(Value::as_bool) {
         finish.deboss = v;
     }
+    if let Some(v) = args.get("matte").and_then(Value::as_bool) {
+        finish.matte = v;
+    }
     Ok(())
 }
 
@@ -109,10 +112,13 @@ impl App {
         if let Some(name) = &finish.name {
             return name.clone();
         }
-        let kind = match (finish.kind, finish.deboss) {
-            (FinishKind::Foil, _) => finish.foil.label(),
-            (FinishKind::Emboss, false) => t!("Emboss"),
-            (FinishKind::Emboss, true) => t!("Deboss"),
+        let kind = match (finish.kind, finish.deboss, finish.matte) {
+            (FinishKind::Foil, ..) => finish.foil.label(),
+            (FinishKind::Emboss, false, _) => t!("Emboss"),
+            (FinishKind::Emboss, true, _) => t!("Deboss"),
+            (FinishKind::SpotUv, _, false) => t!("Spot UV (gloss)"),
+            (FinishKind::SpotUv, _, true) => t!("Spot UV (matte)"),
+            (FinishKind::White, ..) => t!("White ink"),
         };
         match self.finish_link(index) {
             Some(i) => format!("{kind}（{}）", self.layer_label(i)),
@@ -120,11 +126,14 @@ impl App {
         }
     }
 
-    /// 加工の版の絵（`back` が真なら紙の裏）。R が箔の量、G が箔の種類、B が箔のうねり、
-    /// A が浮き出しの高さ（128 が 0、255 が `MAX_RELIEF_MM`、0 がその逆）。加工がなければ None。
-    pub(super) fn finish_map(&self, back: bool) -> Option<Vec<u8>> {
+    /// 加工の版の絵（`back` が真なら紙の裏）。2 枚 1 組。加工がなければ None。
+    ///
+    /// 1 枚目: R が箔の量、G が箔の種類、B が箔のうねり、A が浮き出しの高さ（128 が 0、255 が `MAX_RELIEF_MM`、0 がその逆）。
+    /// 2 枚目: R が部分 UV ニスの量、G がそのつや消しの度合い（0 がグロス、255 がマット）、B が白版の量、A は使わない。
+    pub(super) fn finish_maps(&self, back: bool) -> Option<[Vec<u8>; 2]> {
         let (w, h) = (self.sheet.w, self.sheet.h);
         let mut map: Option<Vec<u8>> = None;
+        let mut extra: Option<Vec<u8>> = None;
         let mut relief: Option<Vec<f32>> = None;
         for index in 0..self.finishes.len() {
             let finish = &self.finishes[index];
@@ -135,6 +144,26 @@ impl App {
             let mut layer = vec![0u8; w * h * 4];
             paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::screen(w, h, &mut layer));
             let map = map.get_or_insert_with(|| [0u8, 0, 0, 128].repeat(w * h));
+            let extra = extra.get_or_insert_with(|| [0u8, 0, 0, 255].repeat(w * h));
+            match finish.kind {
+                FinishKind::SpotUv => {
+                    let rough = if finish.matte { 255 } else { 0 };
+                    for (m, p) in extra.chunks_exact_mut(4).zip(layer.chunks_exact(4)) {
+                        if p[3] > 0 {
+                            m[0] = m[0].max(p[3]);
+                            m[1] = rough;
+                        }
+                    }
+                    continue;
+                }
+                FinishKind::White => {
+                    for (m, p) in extra.chunks_exact_mut(4).zip(layer.chunks_exact(4)) {
+                        m[2] = m[2].max(p[3]);
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             if finish.kind == FinishKind::Emboss {
                 // 形を、縁の幅だけぼかして坂にし、高さを掛けて足す（重なったエンボスは足し合わせる）。
                 let mut cover: Vec<f32> = layer.chunks_exact(4).map(|p| p[3] as f32 / 255.0).collect();
@@ -163,11 +192,26 @@ impl App {
                 m[3] = (128.0 + v / MAX_RELIEF_MM * 127.0).round().clamp(0.0, 255.0) as u8;
             }
         }
-        map
+        Some([map?, extra?])
     }
 
-    /// 展開図の表示の絵に、箔の場所を、その箔の色で重ねる。
-    pub(super) fn overlay_finishes(&self, flat: &mut [u8], map: &[u8]) {
+    /// 展開図の表示の絵に、加工の場所を重ねて見せる（箔はその箔の色、部分 UV ニスは薄い水色、白版は白）。
+    pub(super) fn overlay_finishes(&self, flat: &mut [u8], maps: &[Vec<u8>; 2]) {
+        let [map, extra] = maps;
+        for (p, e) in flat.chunks_exact_mut(4).zip(extra.chunks_exact(4)) {
+            if e[2] > 0 {
+                let a = e[2] as f32 / 255.0 * 0.6;
+                for c in &mut p[..3] {
+                    *c = (*c as f32 * (1.0 - a) + 255.0 * a).round() as u8;
+                }
+            }
+            if e[0] > 0 {
+                let a = e[0] as f32 / 255.0 * 0.3;
+                for (c, tint) in p[..3].iter_mut().zip([120.0f32, 200.0, 255.0]) {
+                    *c = (*c as f32 * (1.0 - a) + tint * a).round() as u8;
+                }
+            }
+        }
         for (p, m) in flat.chunks_exact_mut(4).zip(map.chunks_exact(4)) {
             // 浮き出しは少し明るく、へこみは少し暗く。
             if m[3] != 128 {
@@ -213,6 +257,8 @@ impl App {
                 .enumerate()
                 .map(|(i, f)| match f.kind {
                     FinishKind::Foil => json!({ "id": f.id, "kind": "foil", "foil": f.foil.key(), "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden, "wave": f.wave }),
+                    FinishKind::SpotUv => json!({ "id": f.id, "kind": "spot_uv", "matte": f.matte, "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden }),
+                    FinishKind::White => json!({ "id": f.id, "kind": "white", "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden }),
                     FinishKind::Emboss => json!({ "id": f.id, "kind": "emboss", "deboss": f.deboss, "height_mm": f.height, "edge_mm": f.edge, "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden }),
                 })
                 .collect(),
@@ -231,12 +277,14 @@ impl App {
                 }
                 let link = self.decals[index].layer.id;
                 let kind = match args.get("kind").and_then(Value::as_str) {
-                    Some(key) => FinishKind::from_key(key).ok_or_else(|| t!("Unknown finish \"{key}\" (foil, emboss)"))?,
+                    Some(key) => FinishKind::from_key(key).ok_or_else(|| t!("Unknown finish \"{key}\" (foil, emboss, spot_uv, white)"))?,
                     None => FinishKind::Foil,
                 };
                 let mut finish = match kind {
                     FinishKind::Foil => Finish::foil(Foil::Gold, link),
                     FinishKind::Emboss => Finish::emboss(link, false),
+                    FinishKind::SpotUv => Finish::spot_uv(link, false),
+                    FinishKind::White => Finish::white(link),
                 };
                 apply_finish_args(&mut finish, args)?;
                 self.checkpoint();
@@ -296,6 +344,14 @@ impl App {
         self.person("finish.add", json!({ "id": id, "kind": "foil", "foil": foil.key() }));
     }
 
+    /// 選んでいる柄の形で、部分 UV ニスか白版を付ける。
+    pub(super) fn add_finish(&mut self, kind: FinishKind, matte: bool) {
+        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        self.ensure_ids();
+        let id = self.decals[index].layer.id;
+        self.person("finish.add", json!({ "id": id, "kind": kind.key(), "matte": matte }));
+    }
+
     /// 選んでいる柄の形で、エンボス（`deboss` が真ならデボス）を付ける。
     pub(super) fn add_emboss(&mut self, deboss: bool) {
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
@@ -312,7 +368,12 @@ impl App {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
             super::icons::draw_foil(ui.painter(), rect.center(), egui::Stroke::new(1.2, super::theme::TEXT));
             ui.label(egui::RichText::new(self.finish_label(index)).strong());
-            let what = if kind == FinishKind::Foil { t!("Foil stamping") } else { t!("Embossing") };
+            let what = match kind {
+                FinishKind::Foil => t!("Foil stamping"),
+                FinishKind::Emboss => t!("Embossing"),
+                FinishKind::SpotUv => t!("Spot UV varnish"),
+                FinishKind::White => t!("White ink"),
+            };
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(what));
         });
         egui::Grid::new("finish").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -335,6 +396,20 @@ impl App {
                     self.finish_slider(r, index, id, "wave", wave);
                     ui.end_row();
                 }
+                FinishKind::SpotUv => {
+                    ui.label(egui::RichText::new(t!("Finish")).color(super::theme::MUTED));
+                    let matte = self.finishes[index].matte;
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::selectable(!matte, t!("Gloss"))).clicked() && matte {
+                            self.person("finish.set", json!({ "id": id, "matte": false }));
+                        }
+                        if ui.add(egui::Button::selectable(matte, t!("Matte"))).clicked() && !matte {
+                            self.person("finish.set", json!({ "id": id, "matte": true }));
+                        }
+                    });
+                    ui.end_row();
+                }
+                FinishKind::White => {}
                 FinishKind::Emboss => {
                     ui.label(egui::RichText::new(t!("Direction")).color(super::theme::MUTED));
                     let deboss = self.finishes[index].deboss;
@@ -374,12 +449,18 @@ impl App {
             }
             ui.end_row();
         });
-        if kind == FinishKind::Foil {
-            ui.small(t!("The foil takes the shape of the linked artwork and moves with it. Hide the artwork's layer to stamp foil without ink."));
-        } else {
-            ui.small(t!("The relief takes the shape of the linked artwork and moves with it. Hide the artwork's layer for blind embossing (no ink). Add foil to the same artwork for raised foil."));
-        }
-        let remove = if kind == FinishKind::Foil { t!("Remove the foil") } else { t!("Remove the embossing") };
+        ui.small(match kind {
+            FinishKind::Foil => t!("The foil takes the shape of the linked artwork and moves with it. Hide the artwork's layer to stamp foil without ink."),
+            FinishKind::Emboss => t!("The relief takes the shape of the linked artwork and moves with it. Hide the artwork's layer for blind embossing (no ink). Add foil to the same artwork for raised foil."),
+            FinishKind::SpotUv => t!("A clear varnish only in the shape of the linked artwork, on top of the overall coating. Gloss on matte PP makes the shape shine."),
+            FinishKind::White => t!("White ink under the colours in the shape of the linked artwork. On kraft or coloured paper, the colours come out bright where the white is."),
+        });
+        let remove = match kind {
+            FinishKind::Foil => t!("Remove the foil"),
+            FinishKind::Emboss => t!("Remove the embossing"),
+            FinishKind::SpotUv => t!("Remove the spot UV"),
+            FinishKind::White => t!("Remove the white ink"),
+        };
         if ui.button(remove).on_hover_text(t!("Ctrl+Z undoes this")).clicked() {
             self.person("finish.delete", json!({ "id": id }));
         }

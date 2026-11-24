@@ -796,6 +796,9 @@ struct FinishEntry {
     deboss: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     edge: Option<f64>,
+    /// つや消しの部分 UV ニス。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    matte: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1266,6 +1269,7 @@ impl Project {
                 .iter()
                 .map(|f| {
                     let foil = f.kind == FinishKind::Foil;
+                    let emboss = f.kind == FinishKind::Emboss;
                     FinishEntry {
                         id: f.id,
                         kind: f.kind.key().to_owned(),
@@ -1274,9 +1278,10 @@ impl Project {
                         name: f.name.clone(),
                         hidden: f.hidden,
                         wave: (foil && f.wave != DEFAULT_WAVE).then_some(f.wave),
-                        height: (!foil && f.height != DEFAULT_EMBOSS_HEIGHT).then(|| tidy(f.height)),
-                        deboss: !foil && f.deboss,
-                        edge: (!foil && f.edge != DEFAULT_EMBOSS_EDGE).then(|| tidy(f.edge)),
+                        height: (emboss && f.height != DEFAULT_EMBOSS_HEIGHT).then(|| tidy(f.height)),
+                        deboss: emboss && f.deboss,
+                        edge: (emboss && f.edge != DEFAULT_EMBOSS_EDGE).then(|| tidy(f.edge)),
+                        matte: f.kind == FinishKind::SpotUv && f.matte,
                     }
                 })
                 .collect(),
@@ -1721,6 +1726,8 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         };
         match (FinishKind::from_key(&entry.kind), Foil::from_key(&entry.foil)) {
             (Some(FinishKind::Foil), Some(foil)) => finishes.push(base(Finish { wave: entry.wave.unwrap_or(DEFAULT_WAVE).min(100), ..Finish::foil(foil, entry.link) })),
+            (Some(FinishKind::SpotUv), _) => finishes.push(base(Finish::spot_uv(entry.link, entry.matte))),
+            (Some(FinishKind::White), _) => finishes.push(base(Finish::white(entry.link))),
             (Some(FinishKind::Emboss), _) => {
                 let clamp = |v: Option<f64>, range: &std::ops::RangeInclusive<f32>, default: f32| v.filter(|v| v.is_finite()).map_or(default, |v| (v as f32).clamp(*range.start(), *range.end()));
                 finishes.push(base(Finish { height: clamp(entry.height, &EMBOSS_HEIGHT, DEFAULT_EMBOSS_HEIGHT), edge: clamp(entry.edge, &EMBOSS_EDGE, DEFAULT_EMBOSS_EDGE), ..Finish::emboss(entry.link, entry.deboss) }))
@@ -1931,7 +1938,7 @@ mod tests {
             LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
             LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
         ];
-        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, finishes: vec![Finish { id: 900, name: Some("箔".to_owned()), hidden: true, wave: 0, ..Finish::foil(Foil::Hologram, 1) }, Finish { id: 901, height: 0.8, edge: 1.5, ..Finish::emboss(1, true) }], assets, decals, base, back_base, log, versions: Vec::new() }
+        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, finishes: vec![Finish { id: 900, name: Some("箔".to_owned()), hidden: true, wave: 0, ..Finish::foil(Foil::Hologram, 1) }, Finish { id: 901, height: 0.8, edge: 1.5, ..Finish::emboss(1, true) }, Finish { id: 902, ..Finish::spot_uv(1, true) }, Finish { id: 903, ..Finish::white(1) }], assets, decals, base, back_base, log, versions: Vec::new() }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {

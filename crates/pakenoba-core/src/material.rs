@@ -166,6 +166,10 @@ pub enum FinishKind {
     Foil,
     /// エンボス（浮き出し）かデボス（へこみ）。
     Emboss,
+    /// 部分 UV ニス（その形だけに、つやの膜を足す）。
+    SpotUv,
+    /// 白版（色の下に白いインキを敷く。クラフト紙や色の紙で、色を鮮やかに出す）。
+    White,
 }
 
 impl FinishKind {
@@ -173,11 +177,13 @@ impl FinishKind {
         match self {
             FinishKind::Foil => "foil",
             FinishKind::Emboss => "emboss",
+            FinishKind::SpotUv => "spot_uv",
+            FinishKind::White => "white",
         }
     }
 
     pub fn from_key(key: &str) -> Option<FinishKind> {
-        [FinishKind::Foil, FinishKind::Emboss].into_iter().find(|k| k.key() == key)
+        [FinishKind::Foil, FinishKind::Emboss, FinishKind::SpotUv, FinishKind::White].into_iter().find(|k| k.key() == key)
     }
 }
 
@@ -213,17 +219,29 @@ pub struct Finish {
     pub deboss: bool,
     /// 縁の坂の幅（mm）。小さいほど、縁が切り立つ。
     pub edge: f32,
+    /// つや消しの部分 UV ニス（偽ならグロス）。
+    pub matte: bool,
 }
 
 impl Finish {
     /// 柄 `link` に押す箔。
     pub fn foil(foil: Foil, link: u32) -> Finish {
-        Finish { id: 0, kind: FinishKind::Foil, foil, link, name: None, hidden: false, wave: DEFAULT_WAVE, height: DEFAULT_EMBOSS_HEIGHT, deboss: false, edge: DEFAULT_EMBOSS_EDGE }
+        Finish { id: 0, kind: FinishKind::Foil, foil, link, name: None, hidden: false, wave: DEFAULT_WAVE, height: DEFAULT_EMBOSS_HEIGHT, deboss: false, edge: DEFAULT_EMBOSS_EDGE, matte: false }
     }
 
     /// 柄 `link` の形のエンボス（`deboss` が真ならデボス）。
     pub fn emboss(link: u32, deboss: bool) -> Finish {
         Finish { kind: FinishKind::Emboss, deboss, ..Finish::foil(Foil::Gold, link) }
+    }
+
+    /// 柄 `link` の形の部分 UV ニス（`matte` が真ならつや消し）。
+    pub fn spot_uv(link: u32, matte: bool) -> Finish {
+        Finish { kind: FinishKind::SpotUv, matte, ..Finish::foil(Foil::Gold, link) }
+    }
+
+    /// 柄 `link` の形の白版。
+    pub fn white(link: u32) -> Finish {
+        Finish { kind: FinishKind::White, ..Finish::foil(Foil::Gold, link) }
     }
 }
 

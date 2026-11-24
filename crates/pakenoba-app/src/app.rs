@@ -1163,15 +1163,15 @@ impl App {
         if self.art_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
             let (mut flat, solid) = compose_split(&self.sheet, false, self.custom[0].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, false, Canvas::screen(w, h, art)));
-            let foil = self.finish_map(false);
-            if let Some(map) = &foil {
-                self.overlay_finishes(&mut flat, map);
+            let foil = self.finish_maps(false);
+            if let Some(maps) = &foil {
+                self.overlay_finishes(&mut flat, maps);
             }
             self.front_rgba = flat;
             if let Some(rs) = rs {
                 let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
                 renderer.set_art(rs, false, w, h, solid.as_deref().unwrap_or(&self.front_rgba));
-                renderer.set_finish(rs, false, w, h, foil.as_deref());
+                renderer.set_finish(rs, false, w, h, foil.as_ref());
             }
             self.art_dirty = false;
             self.front_tex_dirty = true;
@@ -1184,15 +1184,15 @@ impl App {
         if self.back_dirty {
             let (w, h) = (self.sheet.w, self.sheet.h);
             let (mut flat, solid) = compose_split(&self.sheet, true, self.custom[1].as_deref(), self.show_guides, |art| paint(&self.surface, &self.template, decals, marks, true, Canvas::screen(w, h, art)));
-            let foil = self.finish_map(true);
-            if let Some(map) = &foil {
-                self.overlay_finishes(&mut flat, map);
+            let foil = self.finish_maps(true);
+            if let Some(maps) = &foil {
+                self.overlay_finishes(&mut flat, maps);
             }
             self.back_rgba = flat;
             if let Some(rs) = rs {
                 let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
                 renderer.set_art(rs, true, w, h, solid.as_deref().unwrap_or(&self.back_rgba));
-                renderer.set_finish(rs, true, w, h, foil.as_deref());
+                renderer.set_finish(rs, true, w, h, foil.as_ref());
             }
             self.back_has_decals = decals.iter().any(|decal| decal.back);
             self.back_dirty = false;
