@@ -218,3 +218,31 @@ mod tests {
         assert!(!is_svg(b"\x89PNG...."));
     }
 }
+
+/// SVG のいちばん外の `width` と `height` が mm（か cm）で書いてあれば、その実寸（mm）。
+pub fn size_mm(bytes: &[u8]) -> Option<[f32; 2]> {
+    // 先頭だけを見る（途中で切れた文字は、置き換えて読む）。
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let start = text.find("<svg")?;
+    let tag = &text[start..start + text[start..].find('>')?];
+    let read = |key: &str| -> Option<f32> {
+        let at = tag.find(&format!(" {key}=\""))? + key.len() + 3;
+        let value = &tag[at..at + tag[at..].find('"')?];
+        let (number, factor) = match value.strip_suffix("mm") {
+            Some(n) => (n, 1.0),
+            None => (value.strip_suffix("cm")?, 10.0),
+        };
+        number.trim().parse::<f32>().ok().filter(|v| *v > 0.0).map(|v| v * factor)
+    };
+    Some([read("width")?, read("height")?])
+}
+
+#[cfg(test)]
+mod size_tests {
+    #[test]
+    fn svg_の実寸を読む() {
+        assert_eq!(super::size_mm(br#"<svg xmlns="x" width="120mm" height="60mm" viewBox="0 0 10 5">"#), Some([120.0, 60.0]));
+        assert_eq!(super::size_mm(br#"<svg width="2cm" height="1cm">"#), Some([20.0, 10.0]));
+        assert_eq!(super::size_mm(br#"<svg width="2048" height="2048">"#), None);
+    }
+}

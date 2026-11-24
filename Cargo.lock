@@ -2898,6 +2898,7 @@ dependencies = [
  "vectorcraft-trace",
  "vello_cpu",
  "zeroize",
+ "zip",
  "zune-jpeg",
 ]
 

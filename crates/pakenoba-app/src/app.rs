@@ -41,6 +41,7 @@ mod agent;
 mod dialog;
 mod versions;
 mod viewgen;
+mod pack;
 mod oplog;
 
 use pakenoba_i18n::t;
@@ -586,6 +587,8 @@ struct App {
     export_job: Option<export::ExportJob>,
     /// 最後に書き出した、生成AI用の画像のフォルダとカメラ。
     last_view: Option<(PathBuf, viewgen::ViewSpec)>,
+    /// 見本パックを取ってきている途中（終わると、中身か失敗の知らせが届く）。
+    pack_job: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
     /// 外のアプリで開いている素材と、最後に見た時刻。
     edits: Vec<edit::EditJob>,
     edit_polled: f64,
@@ -748,6 +751,7 @@ impl App {
             movie: None,
             export_job: None,
             last_view: None,
+            pack_job: None,
             fonts: Default::default(),
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),
@@ -982,8 +986,9 @@ impl App {
                 return None;
             }
         };
-        let Picture::Image { w, h, .. } = &picture else { return None };
-        let size = [50.0, 50.0 * *h as f32 / *w as f32];
+        let Picture::Image { w, h, vector, .. } = &picture else { return None };
+        // SVG に実寸（mm）が書いてあれば、その大きさ（見本パックの模様など）。なければ幅 50 mm。
+        let size = (*vector).then(|| crate::vector::size_mm(&bytes)).flatten().unwrap_or([50.0, 50.0 * *h as f32 / *w as f32]);
         let name = path.file_name().map_or_else(|| t!("Image").to_owned(), |n| n.to_string_lossy().into_owned());
         let stored = project::Asset::new(name.clone(), bytes, size, file::now_local());
         // どこから取り込んだ画像でも、最近使ったものに入れる（次の案件でも、すぐ使えるように）。
@@ -1426,6 +1431,7 @@ impl eframe::App for App {
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());
         self.poll_export(ui.ctx());
+        self.poll_pack(ui.ctx());
         self.poll_edits(ui.ctx());
         self.poll_vectorize(ui.ctx());
         self.poll_agent();

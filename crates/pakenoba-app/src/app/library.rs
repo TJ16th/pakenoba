@@ -324,6 +324,13 @@ impl App {
         }
     }
 
+    /// 登録したフォルダ `index` を、見直してから開く。
+    pub(super) fn open_collection(&mut self, index: usize) {
+        self.rescan(index);
+        self.go_place(Place::Collection(index));
+        self.library.open = true;
+    }
+
     /// フォルダを選んでもらって、コレクションに登録する。
     fn add_collection(&mut self) {
         let answer = match self.library.answer_folder.take() {
@@ -468,6 +475,26 @@ impl App {
         ui.add_space(10.0);
         if ui.selectable_label(self.library.place == Place::Bundled, t!("Built-in samples")).clicked() {
             go = Some(Place::Bundled);
+        }
+        // 見本パック（別に配る素材の詰め合わせ）。入れると、コレクションに並ぶ。
+        if !self.pack_installed() {
+            ui.add_space(10.0);
+            ui.label(t!("Sample pack"));
+            ui.small(t!("Fictional logos and seamless patterns for trying things out (about 40 MB)."));
+            ui.horizontal_wrapped(|ui| {
+                if super::pack::PACK_URL.is_some() && ui.add_enabled(self.pack_job.is_none(), egui::Button::new(t!("Download"))).clicked() {
+                    self.download_pack();
+                }
+                if ui.button(t!("Install from a ZIP…")).clicked() {
+                    self.install_pack_file();
+                }
+            });
+            if self.pack_job.is_some() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.small(t!("Downloading the sample pack…"));
+                });
+            }
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.add_space(6.0);

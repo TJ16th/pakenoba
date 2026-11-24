@@ -51,6 +51,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # 顔と目の検出は、MediaPipe BlazeFace（Apache-2.0。モデルは assets/ に同梱）を、Rust だけで書かれた tract で動かす。
 tract-onnx = "0.23.10"
 ureq = "3"
+# 見本パック（ZIP）を広げる。pakenoba-core と同じ版。
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # 景色の絵を、GPU の半精度の数にする。
 half = "2"
 sha2 = "0.11"

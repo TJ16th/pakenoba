@@ -17,3 +17,6 @@ Thumbs.db
 /tmp/
 *.local.*
 .env
+
+# 見本パック（tools/make_sample_pack.py で作る。リリースに置く）
+/dist/

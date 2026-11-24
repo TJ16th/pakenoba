@@ -1219,3 +1219,14 @@ blend	Color	カラー
 	Then generate with ComfyUI (ControlNet), Firefly (composition reference) or another tool, at the same width-to-height ratio, and put the result back on the faces you can see. The camera is read from view.json in the same folder as the image (or the images saved last).	次に、ComfyUI（ControlNet）や Firefly（構図の参照）などで、同じ縦横の比で生成し、見えている面へ貼り戻します。カメラは、絵と同じフォルダの view.json（なければ、最後に保存したもの）から読みます。
 	This is not a view file written by PAKENOBA (view.json).	パケノバが書いた view.json ではありません。
 	{stem} (on the faces).psd	{stem}（面へ貼った絵）.psd
+	Choose the sample pack (ZIP)	見本パック（ZIP）を選ぶ
+	Could not download the sample pack: {e}	見本パックを取ってこられませんでした: {e}
+	Could not read the sample pack: {e}	見本パックを読めませんでした: {e}
+	Download	取ってくる
+	Downloading the sample pack…	見本パックを取ってきています…
+	Fictional logos and seamless patterns for trying things out (about 40 MB).	試しに使える、架空のロゴと、四方に続く模様の詰め合わせです（約 40 MB）。
+	Install from a ZIP…	ZIP から入れる…
+	Installed the sample pack ({count} assets). It is listed under "Collections".	見本パックを入れました（素材 {count} 個）。「コレクション」に並びます。
+	Sample pack	見本パック
+	The data folder was not found, so the sample pack cannot be installed.	データのフォルダが見つからないので、見本パックを入れられません。
+	This ZIP is not a PAKENOBA sample pack (pakenoba-samples.json is missing).	この ZIP は、パケノバの見本パックではありません（pakenoba-samples.json がありません）。
