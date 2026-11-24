@@ -356,8 +356,9 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
     };
     separation(&mut pdf, die, "Die Cut", [0.0, 1.0, 0.0, 0.0]);
     separation(&mut pdf, crease, "Crease", [1.0, 0.0, 0.0, 0.0]);
+    // 大きな絵なので、速さを優先して圧縮する。
     let deflate = |data: &[u8]| -> Result<Vec<u8>, String> {
-        let mut zip = ZlibEncoder::new(Vec::new(), Compression::default());
+        let mut zip = ZlibEncoder::new(Vec::new(), Compression::fast());
         zip.write_all(data).map_err(|e| e.to_string())?;
         zip.finish().map_err(|e| e.to_string())
     };

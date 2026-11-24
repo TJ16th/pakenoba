@@ -270,6 +270,11 @@ mod tests {
         assert!(line[0] > 250.0 && line[3] > 0.99, "{line:?}");
         let outside = picture.sample([21.0, 0.0], size);
         assert_eq!(outside[3], 0.0);
+        // 中心が形の内側の画素は、縁のすぐ近くでも、すべて塗る（隣の面の図形とのあいだに明るい線を出さない）。
+        for ppm in [4.0, 13.8, 23.6] {
+            assert_eq!(picture.sample_at([20.0 - 0.1 / ppm, 0.0], size, ppm)[3], 1.0, "{ppm}");
+            assert_eq!(picture.sample_at([20.0 + 1.2 / ppm, 0.0], size, ppm)[3], 0.0, "{ppm}");
+        }
         // 丸は、四隅が外。
         let ellipse = Picture::Shape(ShapeSpec {
             kind: ShapeKind::Ellipse,

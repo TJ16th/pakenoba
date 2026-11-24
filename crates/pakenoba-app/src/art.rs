@@ -129,25 +129,122 @@ fn fill_band(tpl: &Template, frame: &Frame, first_row: usize, band: &mut [u8]) {
 pub type Segment = (P2, P2);
 
 /// 展開図の切り線と折り線（展開図の mm）。
-/// 2 枚のパネルが展開図の上で同じ辺を共有しているところは、紙がつながっているので、切り線ではなく折り線。
+/// 2 枚のパネルの辺が展開図の上で重なっているところは、紙がつながっているので、切り線ではなく折り線。
+/// 親とつながる折り線（まっすぐなものと曲線）の上も、折り線。辺の一部だけが重なっていれば、その部分だけが折り線で、
+/// はみ出した所は切り線（厚みのぶん、隣より少し長いパネルの角など）。抜き穴の輪郭は切り線。
 pub fn sheet_lines(tpl: &Template) -> (Vec<Segment>, Vec<Segment>) {
-    let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
-    let edges: Vec<Vec<(P2, P2)>> = tpl.panels.iter().map(|panel| (0..panel.outline.len()).map(|i| (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()])).collect()).collect();
-    let (mut cuts, mut folds) = (Vec::new(), Vec::new());
-    for (index, own) in edges.iter().enumerate() {
-        for &(a, b) in own {
-            let other = edges.iter().enumerate().any(|(j, theirs)| j != index && theirs.iter().any(|&(c, d)| same(a, d) && same(b, c)));
-            if other {
-                // 共有している辺は、両方のパネルに 1 回ずつ出てくるので、片方だけ取る。
-                if !folds.iter().any(|&(c, d): &(P2, P2)| same(a, d) && same(b, c)) {
-                    folds.push((a, b));
+    let mut cuts: Vec<Segment> = cut_edges(tpl).into_iter().map(|(a, b, _)| (a, b)).collect();
+    let creases = creases(tpl);
+    let mut folds = creases.clone();
+    // 2 枚のパネルが重なる辺のうち、親とつながる折り線の上でない所（ゲーブル型の側面の上の、斜めの線など）。
+    for (index, panel) in tpl.panels.iter().enumerate() {
+        let n = panel.outline.len();
+        for i in 0..n {
+            let (a, b) = (panel.outline[i], panel.outline[(i + 1) % n]);
+            let others: Vec<Segment> = tpl.panels.iter().enumerate().filter(|&(j, _)| j > index).flat_map(|(_, other)| edges_of(&other.outline)).collect();
+            for (s, t) in covered(a, b, &others) {
+                for (u, v) in uncovered_in(a, b, s, t, &creases) {
+                    folds.push((lerp(a, b, u), lerp(a, b, v)));
                 }
-            } else {
-                cuts.push((a, b));
             }
         }
     }
+    for hole in &tpl.holes {
+        let point = |i: usize| {
+            let a = std::f32::consts::TAU * i as f32 / 64.0;
+            let (c, s) = (a.cos(), a.sin());
+            [hole[0] + hole[2] * c.signum() * c.abs().sqrt(), hole[1] + hole[3] * s.signum() * s.abs().sqrt()]
+        };
+        cuts.extend((0..64).map(|i| (point(i), point(i + 1))));
+    }
     (cuts, folds)
+}
+
+/// 親とつながる折り線（まっすぐなものと、曲線を折れ線にしたもの）。
+fn creases(tpl: &Template) -> Vec<Segment> {
+    let mut out = Vec::new();
+    for panel in &tpl.panels {
+        if let Some(hinge) = &panel.hinge {
+            out.push((hinge.a, hinge.b));
+        }
+        if let Some(curved) = &panel.curved {
+            out.extend(curved.line.windows(2).map(|pair| (pair[0], pair[1])));
+        }
+    }
+    out
+}
+
+fn edges_of(outline: &[P2]) -> Vec<Segment> {
+    (0..outline.len()).map(|i| (outline[i], outline[(i + 1) % outline.len()])).collect()
+}
+
+fn lerp(a: P2, b: P2, t: f32) -> P2 {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+
+/// 辺 `a`-`b` のうち、`others` のどれかと重なっている（同じ直線の上にある）区間（0〜1 の割合、つないだもの）。
+fn covered(a: P2, b: P2, others: &[Segment]) -> Vec<(f32, f32)> {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-4 {
+        return Vec::new();
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let off = |p: P2| ((p[0] - a[0]) * -uy + (p[1] - a[1]) * ux).abs();
+    let along = |p: P2| ((p[0] - a[0]) * ux + (p[1] - a[1]) * uy) / len;
+    let mut spans: Vec<(f32, f32)> = others
+        .iter()
+        .filter(|&&(c, d)| off(c) < 0.05 && off(d) < 0.05)
+        .map(|&(c, d)| {
+            let (s, t) = (along(c), along(d));
+            (s.min(t).max(0.0), s.max(t).min(1.0))
+        })
+        .filter(|&(s, t)| (t - s) * len > 0.05)
+        .collect();
+    spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut merged: Vec<(f32, f32)> = Vec::new();
+    for (s, t) in spans {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 + 0.05 / len => last.1 = last.1.max(t),
+            _ => merged.push((s, t)),
+        }
+    }
+    merged
+}
+
+/// 区間 `s`〜`t`（辺 `a`-`b` の割合）のうち、`others` と重ならない区間。
+fn uncovered_in(a: P2, b: P2, s: f32, t: f32, others: &[Segment]) -> Vec<(f32, f32)> {
+    let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt().max(1e-4);
+    let mut out = Vec::new();
+    let mut at = s;
+    for (u, v) in covered(a, b, others) {
+        if v <= at || u >= t {
+            continue;
+        }
+        if u > at && (u - at) * len > 0.05 {
+            out.push((at, u));
+        }
+        at = at.max(v);
+    }
+    if (t - at) * len > 0.05 {
+        out.push((at, t));
+    }
+    out
+}
+
+/// 切り線になる辺の部分（両端と、パネルの番号）。ほかのパネルの辺と重なる所と、折り線の上は除く。
+pub fn cut_edges(tpl: &Template) -> Vec<(P2, P2, usize)> {
+    let creases = creases(tpl);
+    let mut out = Vec::new();
+    for (index, panel) in tpl.panels.iter().enumerate() {
+        let others: Vec<Segment> = tpl.panels.iter().enumerate().filter(|&(j, _)| j != index).flat_map(|(_, other)| edges_of(&other.outline)).chain(creases.iter().copied()).collect();
+        for (a, b) in edges_of(&panel.outline) {
+            for (u, v) in uncovered_in(a, b, 0.0, 1.0, &others) {
+                out.push((lerp(a, b, u), lerp(a, b, v), index));
+            }
+        }
+    }
+    out
 }
 
 pub fn make_sheet_art(tpl: &Template) -> SheetArt {
@@ -203,26 +300,7 @@ pub fn make_sheet_art_at(tpl: &Template, frame: Frame) -> SheetArt {
             }
         }
     }
-    // 抜き穴の輪郭も切り線として描く。
-    for hole in &tpl.holes {
-        let point = |i: usize| {
-            let a = std::f32::consts::TAU * i as f32 / 64.0;
-            let (c, s) = (a.cos(), a.sin());
-            to_px(tpl, [hole[0] + hole[2] * c.signum() * c.abs().sqrt(), hole[1] + hole[3] * s.signum() * s.abs().sqrt()])
-        };
-        for i in 0..64 {
-            draw_line(&mut lines, w, h, point(i), point(i + 1), width, [30, 30, 34, 255]);
-        }
-    }
-    for hinge in tpl.panels.iter().filter_map(|p| p.hinge.as_ref()) {
-        draw_line(&mut lines, w, h, to_px(tpl, hinge.a), to_px(tpl, hinge.b), width, [0, 150, 220, 255]);
-    }
-    // 曲線の折り線。
-    for curved in tpl.panels.iter().filter_map(|p| p.curved.as_ref()) {
-        for pair in curved.line.windows(2) {
-            draw_line(&mut lines, w, h, to_px(tpl, pair[0]), to_px(tpl, pair[1]), width, [0, 150, 220, 255]);
-        }
-    }
+    // 抜き穴の輪郭、親とつながる折り線、曲線の折り線は、`sheet_lines` に入っている。
     // 表のガイドは、のりしろの斜線の上に、線を重ねたもの。
     let mut guides = glue;
     alpha_over(&mut guides, &lines);
@@ -680,8 +758,29 @@ pub fn fit_frame(source: &[u8], size: [usize; 2], tpl: &Template, pad: f32, fram
 /// 塗り足しの範囲。紙の外で、切り線から `bleed` mm 以内の画素ごとに、いちばん近いパネルと、そのパネルの輪郭の上のいちばん近い点。
 pub struct BleedZone {
     pub bleed: f32,
-    pub map: std::collections::HashMap<u32, (u16, P2)>,
+    pub map: PixelMap<(u16, P2)>,
 }
+
+/// 画素の番号で引く表のための、速い散らし方（番号に大きな奇数を掛けるだけ）。
+#[derive(Default)]
+pub struct PixelHasher(u64);
+
+impl std::hash::Hasher for PixelHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// 画素の番号で引く表。
+pub type PixelMap<V> = std::collections::HashMap<u32, V, std::hash::BuildHasherDefault<PixelHasher>>;
 
 impl BleedZone {
     /// 画素（番号。展開図の点 `at`）が、パネル `panel` の塗り足しで、柄がその近くの紙の端まで来ているか（`covers` で調べる）。
@@ -706,46 +805,54 @@ fn nearest_on_segment(p: P2, a: P2, b: P2) -> P2 {
     [a[0] + t * dx, a[1] + t * dy]
 }
 
-/// 塗り足しの範囲を求める。`sheet` は同じ `frame` で作った紙（アルファが 0 の所が紙の外）。
+/// 塗り足しの範囲を求める。`sheet` は同じ `frame` で作った紙（アルファが 0 の所が紙の外か抜き穴）。
+/// 切り線ごとに、別のスレッドで近くの画素を調べ、あとで、いちばん近いものにまとめる。
 pub fn bleed_zone(tpl: &Template, sheet: &SheetArt, bleed: f32) -> BleedZone {
     let frame = sheet.frame;
-    let mut map: std::collections::HashMap<u32, (u16, P2, f32)> = std::collections::HashMap::new();
-    if bleed > 0.0 {
-        let same = |p: P2, q: P2| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05;
-        for (index, panel) in tpl.panels.iter().enumerate() {
-            let n = panel.outline.len();
-            for i in 0..n {
-                let (a, b) = (panel.outline[i], panel.outline[(i + 1) % n]);
-                // 隣のパネルと共有している辺は折り線（紙がつながっている）。塗り足しは切り線の外だけ。
-                let shared = tpl.panels.iter().enumerate().any(|(j, other)| j != index && (0..other.outline.len()).any(|k| same(a, other.outline[(k + 1) % other.outline.len()]) && same(b, other.outline[k])));
-                if shared {
+    let mut map: PixelMap<(u16, P2)> = PixelMap::default();
+    if bleed <= 0.0 {
+        return BleedZone { bleed, map };
+    }
+    let cuts: Vec<(P2, P2, u16)> = cut_edges(tpl).into_iter().map(|(a, b, i)| (a, b, i as u16)).collect();
+    let bleed2 = bleed * bleed;
+    let near = |&(a, b, panel): &(P2, P2, u16)| {
+        let mut found: Vec<(u32, u16, P2, f32)> = Vec::new();
+        let lo = [a[0].min(b[0]) - bleed, a[1].min(b[1]) - bleed];
+        let hi = [a[0].max(b[0]) + bleed, a[1].max(b[1]) + bleed];
+        let (x0, x1, y0, y1) = frame.span(lo, hi);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let o = y * frame.w + x;
+                if sheet.art[o * 4 + 3] != 0 {
                     continue;
                 }
-                let lo = [a[0].min(b[0]) - bleed, a[1].min(b[1]) - bleed];
-                let hi = [a[0].max(b[0]) + bleed, a[1].max(b[1]) + bleed];
-                let (x0, x1, y0, y1) = frame.span(lo, hi);
-                for y in y0..y1 {
-                    for x in x0..x1 {
-                        let o = y * frame.w + x;
-                        if sheet.art[o * 4 + 3] != 0 {
-                            continue;
-                        }
-                        let p = frame.at(x, y);
-                        let c = nearest_on_segment(p, a, b);
-                        let d = ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt();
-                        if d > bleed || tpl.panels.iter().any(|q| inside(&q.outline, p)) {
-                            continue;
-                        }
-                        let entry = map.entry(o as u32).or_insert((index as u16, c, d));
-                        if d < entry.2 {
-                            *entry = (index as u16, c, d);
-                        }
-                    }
+                let p = frame.at(x, y);
+                let c = nearest_on_segment(p, a, b);
+                let d2 = (p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2);
+                if d2 > bleed2 || tpl.in_hole(p[0], p[1]) {
+                    continue;
                 }
+                found.push((o as u32, panel, c, d2));
             }
         }
+        found
+    };
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 16);
+    let parts: Vec<Vec<(u32, u16, P2, f32)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = cuts.chunks(cuts.len().div_ceil(threads).max(1)).map(|chunk| scope.spawn(move || chunk.iter().flat_map(near).collect::<Vec<_>>())).collect();
+        handles.into_iter().map(|h| h.join().unwrap_or_default()).collect()
+    });
+    let mut best: PixelMap<(u16, P2, f32)> = PixelMap::default();
+    best.reserve(parts.iter().map(Vec::len).sum::<usize>());
+    for (o, panel, c, d2) in parts.into_iter().flatten() {
+        let entry = best.entry(o).or_insert((panel, c, d2));
+        if d2 < entry.2 {
+            *entry = (panel, c, d2);
+        }
     }
-    BleedZone { bleed, map: map.into_iter().map(|(k, (panel, c, _))| (k, (panel, c))).collect() }
+    map.reserve(best.len());
+    map.extend(best.into_iter().map(|(k, (panel, c, _))| (k, (panel, c))));
+    BleedZone { bleed, map }
 }
 
 /// 塗り足しのうち、まだ塗られていない所を、いちばん近い紙の端の色で埋める（端を外へ伸ばす）。
@@ -915,6 +1022,25 @@ mod tests {
                     let at = [tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM];
                     let expected = tpl.panels.iter().any(|p| inside(&p.outline, at)) && !tpl.in_hole(at[0], at[1]);
                     assert_eq!(sheet.art[(y * sheet.w + x) * 4 + 3] == 255, expected, "{at:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn 折り線の上に_切り線を重ねない() {
+        // 厚みのぶん、隣より少し長いパネルがあっても、折り線の上は切り線にしない（入稿用 PDF で箱が切り離されてしまう）。
+        for tpl in [Template::tuck_box(120.0, 120.0, 120.0, 0.5), Template::gable(160.0, 100.0, 110.0, 45.0, 0.5), Template::prism(6, 50.0, 120.0, 0.5), Template::pillow(180.0, 90.0, 0.5, 40.0)] {
+            let (cuts, folds) = sheet_lines(&tpl);
+            assert!(!cuts.is_empty() && !folds.is_empty());
+            for &(a, b) in &folds {
+                for t in [0.25f32, 0.5, 0.75] {
+                    let p = lerp(a, b, t);
+                    let near = cuts.iter().any(|&(c, d)| {
+                        let q = nearest_on_segment(p, c, d);
+                        (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) < 0.02 * 0.02
+                    });
+                    assert!(!near, "折り線 {a:?}-{b:?} の上に切り線がある");
                 }
             }
         }

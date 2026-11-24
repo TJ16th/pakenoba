@@ -8,6 +8,31 @@ use crate::paint::Picture;
 use crate::art::{BleedZone, DecalLayer, Frame, Plate, SheetArt, add_spot_channels, alpha_over, bleed_zone, draw_bleed_line, extend_edges, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
 use crate::paint::{Canvas, Marks, paint};
 
+/// 別のスレッドで動かす書き出しの種類。
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ExportKind {
+    Psd,
+    Ready,
+}
+
+/// 書き出しに要る、案件の写し（別のスレッドへ渡す）。
+pub(super) struct ExportCopy {
+    dims: super::Dims,
+    decals: Vec<crate::paint::Placed>,
+    finishes: Vec<pakenoba_core::material::Finish>,
+    bases: [Option<super::base::BaseArt>; 2],
+    output: super::outputs::OutputSettings,
+    project: Option<PathBuf>,
+}
+
+/// 動いている書き出し。
+pub(super) struct ExportJob {
+    kind: ExportKind,
+    path: PathBuf,
+    started: std::time::Instant,
+    handle: std::thread::JoinHandle<Result<String, String>>,
+}
+
 /// 書き出しの細かさ（dpi）の選択肢。100 は画面と同じ（1 mm 4 画素）。
 pub(super) const EXPORT_DPI: [u32; 4] = [100, 300, 350, 600];
 
@@ -170,21 +195,84 @@ impl App {
     }
 
     /// 型紙を PSD で保存する。裏に柄があれば、裏の型紙も、同じ場所に「_裏」を付けて保存する。
+    /// 書き出しは、別のスレッドで動かす（画面を止めない）。
     pub(super) fn export_psd(&mut self) {
         let Some(path) = self.ask_export() else { return };
-        self.write_psds(&path);
+        self.start_export(ExportKind::Psd, path);
     }
 
-    /// 型紙の PSD を書く（ダイアログのあと）。
-    pub(super) fn write_psds(&mut self, path: &Path) {
-        match self.with_sharp_text(|app| app.psd_files(path)) {
-            Ok(files) => {
-                let others: Vec<String> = files[1..].iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
-                let mut message = if others.is_empty() { t!("Saved: {}", path.display()) } else { t!("Saved: {} (and {})", path.display(), others.join(", ")) };
-                message.push_str(&self.coarse_note());
-                self.say(message);
+    /// 書き出しを、別のスレッドで始める。案件の写し（文字は書き出しの細かさで描き直したもの）を渡す。
+    pub(super) fn start_export(&mut self, kind: ExportKind, path: PathBuf) {
+        if self.export_job.is_some() {
+            self.say(t!("Another export is running. Wait until it has finished."));
+            return;
+        }
+        let copy = ExportCopy { dims: self.dims, decals: self.with_sharp_text(|app| app.decals.clone()), finishes: self.finishes.clone(), bases: self.bases.clone(), output: self.output.clone(), project: self.file.path.clone() };
+        let target = path.clone();
+        let handle = std::thread::spawn(move || {
+            let app = App::headless(copy);
+            match kind {
+                ExportKind::Psd => app.psd_message(&target),
+                ExportKind::Ready => app.ready_message(&target),
             }
-            Err(e) => self.say(e),
+        });
+        self.export_job = Some(ExportJob { kind, path, started: std::time::Instant::now(), handle });
+    }
+
+    /// 書き出しが終わっていたら、結果を知らせる。動いている間は、画面を時々描き直す（かかった時間を出すため）。
+    pub(super) fn poll_export(&mut self, ctx: &eframe::egui::Context) {
+        let Some(job) = &self.export_job else { return };
+        if !job.handle.is_finished() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        let job = self.export_job.take().expect("export job present");
+        match job.handle.join() {
+            Ok(Ok(message)) | Ok(Err(message)) => self.say(message),
+            Err(_) => self.say(t!("The export stopped unexpectedly: {}", job.path.display())),
+        }
+    }
+
+    /// 書き出しが動いていれば、そう出して真を返す（保存のボタンの代わり）。
+    pub(super) fn export_busy(&self, ui: &mut eframe::egui::Ui) -> bool {
+        let Some(job) = &self.export_job else { return false };
+        ui.horizontal(|ui| {
+            ui.spinner();
+            let what = match job.kind {
+                ExportKind::Psd => t!("Saving the dieline PSD"),
+                ExportKind::Ready => t!("Saving the print-ready PDF"),
+            };
+            ui.label(t!("{what}… {} s", job.started.elapsed().as_secs()));
+        });
+        true
+    }
+
+    /// 書き出し専用の、画面を出さない作業用の App（別のスレッドで作る）。
+    fn headless(copy: ExportCopy) -> App {
+        let mut app = App::new(&super::Initial { quiet: true, ..Default::default() });
+        let (template, surface, _) = copy.dims.build();
+        (app.dims, app.built_dims, app.template, app.surface) = (copy.dims, Some(copy.dims), template, surface);
+        app.sheet = crate::art::make_sheet_art(&app.template);
+        (app.decals, app.finishes, app.bases, app.output) = (copy.decals, copy.finishes, copy.bases, copy.output);
+        app.file.path = copy.project;
+        app.refit_bases();
+        app
+    }
+
+    /// 型紙の PSD を書き、知らせる文を返す。
+    pub(super) fn psd_message(&self, path: &Path) -> Result<String, String> {
+        let files = self.psd_files(path)?;
+        let others: Vec<String> = files[1..].iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
+        let mut message = if others.is_empty() { t!("Saved: {}", path.display()) } else { t!("Saved: {} (and {})", path.display(), others.join(", ")) };
+        message.push_str(&self.coarse_note());
+        Ok(message)
+    }
+
+    /// 型紙の PSD を、この場で書く（試験用）。
+    #[cfg(test)]
+    pub(super) fn write_psds(&mut self, path: &Path) {
+        match self.with_sharp_text(|app| app.psd_message(path)) {
+            Ok(message) | Err(message) => self.say(message),
         }
     }
 
@@ -335,6 +423,40 @@ mod tests {
         assert_eq!(app.custom[0].as_ref().map(Vec::len), Some(app.sheet.w * app.sheet.h * 4));
         let out = app.out_sheet();
         assert_eq!(out.custom[0].as_ref().map(Vec::len), Some(frame.w * frame.h * 4));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn 書き出しは_別のスレッドで動き_終わると知らせる() {
+        let dir = std::env::temp_dir().join(format!("pakenoba-job-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(&Initial::default());
+        app.add_decal(Picture::Logo, [46.0, 46.0]);
+        app.output.dpi = 100;
+        let ctx = eframe::egui::Context::default();
+        let path = dir.join("job.psd");
+        app.start_export(ExportKind::Psd, path.clone());
+        // 動いている間は、もう 1 つ始めない。
+        app.start_export(ExportKind::Ready, dir.join("job.pdf"));
+        assert!(!dir.join("job.pdf").exists());
+        for _ in 0..600 {
+            app.poll_export(&ctx);
+            if app.export_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(app.export_job.is_none(), "終わらない");
+        assert!(path.exists());
+        let file = craft_psd::PsdFile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(file.iter_layers().any(|l| l.name().contains("Logo")));
+        app.start_export(ExportKind::Ready, dir.join("job.pdf"));
+        while app.export_job.is_some() {
+            app.poll_export(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(dir.join("job.pdf").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

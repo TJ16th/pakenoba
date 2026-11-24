@@ -108,6 +108,8 @@ pub struct Initial {
     pub recovery_dir: Option<PathBuf>,
     /// 控えを書く間隔（秒）。
     pub backup_seconds: f64,
+    /// 画面を出さない、書き出し専用の作業用（控えを書かない、設定を読まない、言語を変えない）。
+    pub quiet: bool,
     /// 設定のファイル（テスト用。指定がなければ、いつもの場所）。
     pub settings: Option<PathBuf>,
     /// 起動したときに「素材」の画面を開く。
@@ -124,7 +126,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: Vec::new(), answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: Vec::new(), answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, quiet: false, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
     }
 }
 
@@ -578,6 +580,8 @@ struct App {
     /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
     solid_aspect: f32,
     movie: Option<outputs::MovieJob>,
+    /// 別のスレッドで動いている書き出し（型紙の PSD、入稿用の PDF）。
+    export_job: Option<export::ExportJob>,
     /// 外のアプリで開いている素材と、最後に見た時刻。
     edits: Vec<edit::EditJob>,
     edit_polled: f64,
@@ -711,11 +715,11 @@ impl App {
             answer_replace: initial.answer_replace.clone(),
             answer_export: initial.answer_export.clone(),
             // 自動のテストでは、使う人のフォルダに控えを書かない。
-            recovery: if cfg!(test) { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
+            recovery: if cfg!(test) || initial.quiet { recovery::Recovery::off() } else { recovery::Recovery::start(initial.recovery_dir.clone(), initial.backup_seconds) },
             settings: {
-                let settings = if cfg!(test) { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) };
+                let settings = if cfg!(test) || initial.quiet { settings::Settings::off() } else { settings::Settings::load(initial.settings.clone()) };
                 // 画面の言語。設定になければ、OS の言語（自動のテストでは、基準の英語のまま）。
-                if !cfg!(test) {
+                if !cfg!(test) && !initial.quiet {
                     pakenoba_i18n::set(settings.language.as_deref().unwrap_or_else(|| pakenoba_i18n::detect()));
                 }
                 settings
@@ -738,6 +742,7 @@ impl App {
             peek: peek::PeekState::new(initial.peek),
             solid_aspect: 16.0 / 9.0,
             movie: None,
+            export_job: None,
             fonts: Default::default(),
             text_style: typing::default_style(),
             shape_style: shapes::default_shape(),
@@ -1415,6 +1420,7 @@ impl eframe::App for App {
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());
+        self.poll_export(ui.ctx());
         self.poll_edits(ui.ctx());
         self.poll_vectorize(ui.ctx());
         self.poll_agent();

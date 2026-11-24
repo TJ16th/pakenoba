@@ -1182,3 +1182,9 @@ blend	Color	カラー
 	Bleed (extended edges)	塗り足し（端を伸ばした所）
 	"dpi" must be one of 100, 300, 350, 600	"dpi" は 100、300、350、600 のどれかにしてください
 	"bleed" must be between 0 and 5 mm	"bleed" は 0〜5 mm にしてください
+	Another export is running. Wait until it has finished.	ほかの書き出しが動いています。終わるまでお待ちください。
+	Exporting. Switch tabs when it has finished.	書き出しています。終わってからタブを切り替えてください。
+	Saving the dieline PSD	型紙の PSD を保存しています
+	Saving the print-ready PDF	入稿用の PDF を保存しています
+	The export stopped unexpectedly: {}	書き出しが途中で止まりました: {}
+	{what}… {} s	{what}… {} 秒

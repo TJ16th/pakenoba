@@ -19,7 +19,7 @@ use pakenoba_core::math::{Mat4, look_at, mat4_mul};
 use pakenoba_core::template::bounding_sphere;
 
 use super::{App, Shown};
-use crate::art::{compose, compose_split, mirror, mirror_gray, sheet_lines};
+use crate::art::{compose, mirror, mirror_gray, sheet_lines};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Canvas, Marks, paint};
 use crate::print::{Paper, PrintSettings, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
@@ -38,6 +38,7 @@ const MOVIE_SIZES: [(&str, [u32; 2]); 2] = [("960 x 540", [960, 540]), ("1280 x 
 const MOVIE_FPS: u32 = 20;
 
 /// 出力の設定。
+#[derive(Clone)]
 pub(super) struct OutputSettings {
     pub shot_size: usize,
     pub background: usize,
@@ -296,12 +297,17 @@ impl App {
     /// 入稿用の PDF を保存する（ダイアログで場所を選ぶ）。
     pub(super) fn export_ready(&mut self) {
         let Some(path) = self.ask_output(t!("Save the print-ready PDF"), "PDF", "pdf", t!("print-ready")) else { return };
-        match self.with_sharp_text(|app| app.ready_file(&path)) {
+        self.start_export(super::export::ExportKind::Ready, path);
+    }
+
+    /// 入稿用の PDF を書き、知らせる文を返す（書き出しのスレッドから呼ぶ）。
+    pub(super) fn ready_message(&self, path: &Path) -> Result<String, String> {
+        match self.ready_file(path) {
             Ok(pages) => {
                 let note = self.coarse_note();
-                self.say(format!("{}{note}", t!("Saved {} ({pages} page(s), with the finishing instructions on the last page).", path.display())));
+                Ok(format!("{}{note}", t!("Saved {} ({pages} page(s), with the finishing instructions on the last page).", path.display())))
             }
-            Err(e) => self.say(t!("Could not save the print-ready PDF: {e}")),
+            Err(e) => Err(t!("Could not save the print-ready PDF: {e}")),
         }
     }
 
@@ -309,8 +315,9 @@ impl App {
     pub(super) fn ready_art(&self, out: &super::export::OutSheet, back: bool) -> Vec<u8> {
         let frame = out.sheet.frame;
         let zone = out.zone.as_ref();
-        let (flat, printed) = compose_split(&out.sheet, back, out.custom()[usize::from(back)], false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::bled(frame, zone, rgba)));
-        let mut art = printed.unwrap_or(flat);
+        // 紙の色は入れず、読み込んだ絵柄（あれば）の上に、柄を描く。
+        let mut art = out.custom()[usize::from(back)].map_or_else(|| vec![0u8; frame.w * frame.h * 4], <[u8]>::to_vec);
+        paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::bled(frame, zone, &mut art));
         if let Some(zone) = zone {
             crate::art::extend_edges(&mut art, frame, zone, None);
         }
@@ -374,7 +381,8 @@ impl App {
                 0 => {
                     ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
                     self.resolution_choice(ui);
-                    if ui.button(t!("Save the dieline as PSD…")).clicked() {
+                    if self.export_busy(ui) {
+                    } else if ui.button(t!("Save the dieline as PSD…")).clicked() {
                         self.export_psd();
                     }
                     ui.small(t!("After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel."));
@@ -472,7 +480,8 @@ impl App {
                         ui.label(t!("Plates: {}", plates.join(", ")));
                     }
                     self.resolution_choice(ui);
-                    if ui.button(t!("Save the print-ready PDF…")).clicked() {
+                    if self.export_busy(ui) {
+                    } else if ui.button(t!("Save the print-ready PDF…")).clicked() {
                         self.export_ready();
                     }
                     ui.small(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges."));
@@ -574,6 +583,40 @@ mod tests {
         // 塗り足しの外（紙から 3 mm より遠い所）は塗らない。
         let far = (0..frame.w * frame.h).filter(|&p| out.sheet.art[p * 4 + 3] == 0 && !zone.map.contains_key(&(p as u32)) && art[p * 4 + 3] > 0).count();
         assert!(far < zone.map.len() / 50, "{far}");
+    }
+
+    #[test]
+    fn 隣り合う面の図形のあいだに_明るい線が出ない() {
+        let mut app = App::new(&super::super::Initial::default());
+        let (_, text) = super::super::samples::SAMPLES[3];
+        let opened = pakenoba_core::project::Project::from_text(text).unwrap();
+        assert!(app.apply_project(opened.project).is_empty());
+        for dpi in [100, 350] {
+            app.output.dpi = dpi;
+            app.output.bleed = 0.0;
+            let out = app.out_sheet();
+            let art = app.ready_art(&out, false);
+            let frame = out.sheet.frame;
+            // 黒の見本の側面の帯（4 面が横に並ぶ）。中ほどの行は、紙のある所がすべて黒で、透けた画素がない。
+            let (_, folds) = sheet_lines(&app.template);
+            let mut checked = 0;
+            let alpha = |p: P2| {
+                let [px, py] = frame.to_px(p);
+                art[(py as usize * frame.w + px as usize) * 4 + 3]
+            };
+            for (a, b) in folds.iter().filter(|(a, b)| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() > 30.0) {
+                let y = (a[1] + b[1]) * 0.5;
+                // 両側とも黒い面の折り線だけを見る（片側が白い底のものは除く）。
+                if alpha([a[0] - 0.6, y]) < 255 || alpha([a[0] + 0.6, y]) < 255 {
+                    continue;
+                }
+                for dx in [-0.3f32, -0.15, -0.05, 0.0, 0.05, 0.15, 0.3] {
+                    assert_eq!(alpha([a[0] + dx, y]), 255, "{dpi} dpi, 折り線 x = {} の近く ({dx} mm) が透けている", a[0]);
+                    checked += 1;
+                }
+            }
+            assert!(checked >= 14, "{checked}");
+        }
     }
 
     #[test]

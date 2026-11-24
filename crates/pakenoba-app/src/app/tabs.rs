@@ -187,6 +187,8 @@ impl App {
             Some(t!("Saving. Switch tabs when it has finished."))
         } else if self.movie.is_some() {
             Some(t!("Exporting a video. Switch tabs when it has finished."))
+        } else if self.export_job.is_some() {
+            Some(t!("Exporting. Switch tabs when it has finished."))
         } else if self.vectorizing.is_some() {
             Some(t!("Vectorizing. Switch tabs when it has finished."))
         } else {

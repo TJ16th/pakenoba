@@ -18,7 +18,7 @@ coat = "matte_pp"
 id = 1
 panel = "正面"
 at = [0.5, 0.5]
-size = [120.0, 120.0]
+size = [120.0, 121.0]
 angle = 0.0
 back = false
 
@@ -44,7 +44,7 @@ stroke_width = 1.0
 id = 3
 panel = "背面"
 at = [0.5, 0.5]
-size = [120.0, 120.0]
+size = [120.5, 121.0]
 angle = 0.0
 back = false
 
@@ -57,7 +57,7 @@ stroke_width = 1.0
 id = 4
 panel = "左側面"
 at = [0.5, 0.5]
-size = [120.0, 120.0]
+size = [119.5, 120.0]
 angle = 0.0
 back = false
 
@@ -70,7 +70,7 @@ stroke_width = 1.0
 id = 5
 panel = "上のフタ"
 at = [0.5, 0.5]
-size = [120.0, 120.0]
+size = [120.0, 119.5]
 angle = 0.0
 back = false
 
