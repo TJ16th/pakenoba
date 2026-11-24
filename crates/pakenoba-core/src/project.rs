@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+use crate::material::{Coat, Material, Paper};
 use crate::surface::Decal;
 use crate::template::{P2, Template, TuckFlaps};
 
@@ -631,6 +632,8 @@ fn is_mask_file(file: &str) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Project {
     pub shape: Shape,
+    /// 紙とコート。
+    pub material: Material,
     pub assets: Vec<Asset>,
     /// 置いた柄。並びは重なりの順（後ろのものが上）。
     pub decals: Vec<Placement>,
@@ -749,6 +752,9 @@ struct Manifest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     written_by: String,
     shape: ShapeEntry,
+    /// 紙とコート。書いていなければ、はじめの素材（コートボール、コートなし）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    material: Option<MaterialEntry>,
     /// 展開図まるごとの絵。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base: Option<BaseEntry>,
@@ -759,6 +765,12 @@ struct Manifest {
     assets: Vec<AssetEntry>,
     #[serde(rename = "decal", default, skip_serializing_if = "Vec::is_empty")]
     decals: Vec<DecalEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MaterialEntry {
+    paper: String,
+    coat: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1182,6 +1194,7 @@ impl Project {
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
             shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy) },
+            material: (self.material != Material::default()).then(|| MaterialEntry { paper: self.material.paper.key().to_owned(), coat: self.material.coat.key().to_owned() }),
             base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             back_base: self.back_base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size) }).collect(),
@@ -1624,7 +1637,20 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     }
     tidy_groups(&mut decals);
 
-    Ok(Opened { project: Project { shape, assets, decals, base, back_base, log: Vec::new(), versions: Vec::new() }, problems })
+    // 紙とコート。知らない名前は、はじめのものにして知らせる。
+    let mut material = Material::default();
+    if let Some(entry) = &manifest.material {
+        match Paper::from_key(&entry.paper) {
+            Some(paper) => material.paper = paper,
+            None => problems.push(t!("This version of PAKENOBA does not know the paper \"{}\", so it was made coated board", entry.paper)),
+        }
+        match Coat::from_key(&entry.coat) {
+            Some(coat) => material.coat = coat,
+            None => problems.push(t!("This version of PAKENOBA does not know the coating \"{}\", so it was removed", entry.coat)),
+        }
+    }
+
+    Ok(Opened { project: Project { shape, material, assets, decals, base, back_base, log: Vec::new(), versions: Vec::new() }, problems })
 }
 
 /// グループの入れ子とクリッピングマスクの決まりに合うように、印を直す（読むとき、並べ替えたあと）。
@@ -1826,7 +1852,7 @@ mod tests {
             LogEntry { time: "2026-11-24T12:00:00+09:00".to_owned(), actor: "person".to_owned(), command: "layer.blend.set".to_owned(), args: serde_json::json!({ "ids": [1, 2], "blend": "multiply" }) },
             LogEntry { time: "2026-11-24T12:01:00+09:00".to_owned(), actor: "agent:claude".to_owned(), command: "layer.visible".to_owned(), args: serde_json::Value::Null },
         ];
-        Project { shape, assets, decals, base, back_base, log, versions: Vec::new() }
+        Project { shape, material: Material { paper: Paper::Kraft, coat: Coat::GlossPp }, assets, decals, base, back_base, log, versions: Vec::new() }
     }
 
     fn bytes_of(project: &Project) -> Vec<u8> {
@@ -1914,7 +1940,7 @@ mod tests {
 
     #[test]
     fn 柄も素材もない案件を_保存して開ける() {
-        let project = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
+        let project = Project { shape: shape(Kind::TuckBox), material: Material::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         let opened = reopen(&project);
         assert!(opened.problems.is_empty());
         assert_eq!(opened.project, project);
@@ -2273,7 +2299,7 @@ mod tests {
         big.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, big);
         // 小さい案件で上書きしても、前の中身が後ろに残らない。
-        let small = Project { shape: shape(Kind::TuckBox), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
+        let small = Project { shape: shape(Kind::TuckBox), material: Material::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() };
         small.save(&path).unwrap();
         assert_eq!(Project::open(&path).unwrap().project, small);
         assert_eq!(fs::read(&path).unwrap(), bytes_of(&small));
@@ -2332,6 +2358,7 @@ mod tests {
         let tpl = shape.template();
         let panel = |name: &str, nth: usize| panel_index(&tpl, name, nth).unwrap();
         Project {
+            material: Material::default(),
             shape,
             assets: vec![Asset::new("ロゴ.png", fake_file(11, 600), [46.0, 46.0], "2026-11-22T00:30:00+09:00"), Asset::new("地紋.psd", fake_file(12, 2000), [120.0, 80.0], "2026-11-22T00:31:00+09:00")],
             decals: vec![

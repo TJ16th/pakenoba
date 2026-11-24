@@ -82,8 +82,8 @@ pub(super) const VIEW_PRESETS: [(&str, f32, f32); 7] = [
     ("Back view", std::f32::consts::PI, 0.0),
     ("Left view", -std::f32::consts::FRAC_PI_2, 0.0),
     ("Right view", std::f32::consts::FRAC_PI_2, 0.0),
-    ("Top view", 0.0, 1.5),
-    ("Bottom view", 0.0, -1.5),
+    ("Top view", 0.0, std::f32::consts::FRAC_PI_2),
+    ("Bottom view", 0.0, -std::f32::consts::FRAC_PI_2),
 ];
 
 impl App {
@@ -107,14 +107,21 @@ impl App {
             if ui.add(egui::Button::selectable(self.ortho, t!("Parallel"))).on_hover_text(t!("Parallel projection: no perspective, so parallel edges stay parallel")).clicked() {
                 self.ortho = !self.ortho;
             }
+            ui.menu_button(t!("Lighting"), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
             ui.add_space(6.0);
             if ui.small_button(t!("Snap")).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {
                 let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
                 let quarter = std::f32::consts::FRAC_PI_2;
-                let pitch = if pitch > 0.785 { 1.5 } else if pitch < -0.785 { -1.5 } else { 0.0 };
-                self.look_from((yaw / quarter).round() * quarter, pitch);
+                // 上下も 90 度刻みにそろえる（真上を越えて逆さのときは、逆さのまま）。
+                self.look_from((yaw / quarter).round() * quarter, (wrap_angle(pitch) / quarter).round() * quarter);
             }
             let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
+            if ui.small_button(t!("Down 90°")).on_hover_text(t!("Turn the box 90 degrees toward you, over the top")).clicked() {
+                self.look_from(yaw, wrap_angle(pitch + std::f32::consts::FRAC_PI_2));
+            }
+            if ui.small_button(t!("Up 90°")).on_hover_text(t!("Turn the box 90 degrees away from you, over the bottom")).clicked() {
+                self.look_from(yaw, wrap_angle(pitch - std::f32::consts::FRAC_PI_2));
+            }
             if ui.small_button(t!("Right 90°")).on_hover_text(t!("Turn the box 90 degrees to the right")).clicked() {
                 self.look_from(yaw - std::f32::consts::FRAC_PI_2, pitch);
             }
@@ -136,11 +143,30 @@ fn axis_view(axis: usize, sign: f32) -> (f32, f32) {
     match (axis, sign > 0.0) {
         (0, true) => (std::f32::consts::FRAC_PI_2, 0.0),
         (0, false) => (-std::f32::consts::FRAC_PI_2, 0.0),
-        (1, true) => (0.0, 1.5),
-        (1, false) => (0.0, -1.5),
+        (1, true) => (0.0, std::f32::consts::FRAC_PI_2),
+        (1, false) => (0.0, -std::f32::consts::FRAC_PI_2),
         (_, true) => (0.0, 0.0),
         (_, false) => (std::f32::consts::PI, 0.0),
     }
+}
+
+/// 視点の向きと、画面の上の向き。`pitch` に制限はない（真上を越えて回すと、箱は上下が逆さに見える）。
+pub(super) fn orbit(yaw: f32, pitch: f32) -> (V3, V3) {
+    let dir = [pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos()];
+    let up = [-pitch.sin() * yaw.sin(), pitch.cos(), -pitch.sin() * yaw.cos()];
+    (dir, up)
+}
+
+/// 角度を -π〜π にする。
+pub(super) fn wrap_angle(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// マウスで回す。上下には制限なく回せる。逆さのときは、左右の向きも逆にする（手の動きと箱の動きをそろえる）。
+pub(super) fn drag_orbit(yaw: &mut f32, pitch: &mut f32, delta: egui::Vec2) {
+    let flip = if pitch.cos() < 0.0 { -1.0 } else { 1.0 };
+    *yaw = wrap_angle(*yaw - delta.x * 0.01 * flip);
+    *pitch = wrap_angle(*pitch + delta.y * 0.01);
 }
 
 /// 2 つの角度の差（0〜π）。
@@ -275,13 +301,13 @@ impl App {
         let fov = 30f32.to_radians();
         // 縦長の画面でも箱がはみ出さないように、狭いほうに合わせて離れる。
         let dist = radius / (fov * 0.5).sin() * 1.1 / self.zoom / aspect.min(1.0);
-        let dir = [self.pitch.cos() * self.yaw.sin(), self.pitch.sin(), self.pitch.cos() * self.yaw.cos()];
+        let (dir, up) = orbit(self.yaw, self.pitch);
         let eye = [center[0] + dir[0] * dist, center[1] + dir[1] * dist, center[2] + dir[2] * dist];
-        let view = look_at(eye, center, [0.0, 1.0, 0.0]);
+        let view = look_at(eye, center, up);
 
         // カーソルの下にある、立体の上の点（パネルと、展開図上の位置）。
         let forward = normalize(sub(center, eye));
-        let side = normalize(cross(forward, [0.0, 1.0, 0.0]));
+        let side = normalize(cross(forward, up));
         let upward = cross(side, forward);
         // 型紙は写しを使う（つかんだ柄といっしょに選んだ柄を動かすときに、App を書き換えるため）。
         let shared = std::rc::Rc::clone(&self.template);
@@ -383,9 +409,7 @@ impl App {
                 (None, _) => {
                     // 自分で回したら、視点の自動の動きは止める。
                     self.view_to = None;
-                    let delta = response.drag_delta();
-                    self.yaw -= delta.x * 0.01;
-                    self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+                    drag_orbit(&mut self.yaw, &mut self.pitch, response.drag_delta());
                 }
             }
         }
@@ -462,9 +486,7 @@ impl App {
         });
 
         let proj = projection(ortho, fov, aspect, dist, radius);
-        // 光は視点の少し右上から当てる（どの角度から見ても手前の面が明るくなる）。
-        let right = normalize([view[0][0], view[1][0], view[2][0]]);
-        let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
+        let look = self.look(self.yaw);
 
         // 抜き穴を、絵柄の座標（0〜1）に直して渡す。
         let (sheet_w, sheet_h) = (self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]);
@@ -472,8 +494,9 @@ impl App {
         for (slot, h) in holes.iter_mut().zip(&self.template.holes) {
             *slot = [(h[0] - self.template.min[0]) / sheet_w, (self.template.max[1] - h[1]) / sheet_h, h[2] / sheet_w, h[3] / sheet_h];
         }
+        self.sync_environment(ui.ctx(), rs);
         let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
-        if let Some(id) = renderer.render(rs, size, &mesh, mat4_mul(&proj, &view), light, holes) {
+        if let Some(id) = renderer.render(rs, size, &mesh, mat4_mul(&proj, &view), &look, holes) {
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             painter.image(id, rect, uv, Color32::WHITE);
         }

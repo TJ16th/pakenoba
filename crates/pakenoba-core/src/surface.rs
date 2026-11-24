@@ -331,6 +331,9 @@ impl Surface {
     /// （3 枚の面が集まる角。平らに開けないので、どこかで柄が切れる）。
     /// ただし、向きが同じで位置だけが違うときは、両方とも使う（箱を一周して戻ってきた帯）。
     pub fn layout(&self, tpl: &Template, decal: &Decal) -> Vec<Piece> {
+        if is_band(decal.size) {
+            return self.band_layout(tpl, decal);
+        }
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         let tucked = |panel: usize| tpl.panels[panel].hidden_when_closed();
         let mut pieces = vec![Piece { panel: decal.panel, place: decal.place(tpl), seams: 0, tucked: tucked(decal.panel) }];
@@ -365,6 +368,75 @@ impl Surface {
                 });
                 if !clash {
                     pieces.push(Piece { panel: link.to, place, seams: from.seams + link.seam as usize, tucked: from.tucked || tucked(link.to) });
+                }
+            }
+        }
+        pieces
+    }
+
+    /// 帯（細長い柄）の割り振り。帯を、箱の表面をまっすぐ進むテープとして扱う。
+    ///
+    /// 帯の中心の線を、置いたパネルから両方の向きへたどる。線がパネルの辺から出たら、その辺でつながっている面へ移り
+    /// （折り線ならそのまま、合わせ目なら回して）、帯の長さが尽きるまで続ける。斜めに置いた帯は、箱にらせん状に巻きつく。
+    /// 閉じると隠れる面（差し込み、内側のフラップ）へは進まない。
+    /// 中心の線は通らないが、帯の幅がかかる隣の面には、1 回だけ続ける（3 つの面が集まる角の近く）。
+    fn band_layout(&self, tpl: &Template, decal: &Decal) -> Vec<Piece> {
+        let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
+        let long = if decal.size[0] >= decal.size[1] { 0 } else { 1 };
+        let reach = half[long];
+        let tucked = |panel: usize| tpl.panels[panel].hidden_when_closed();
+        let start = Piece { panel: decal.panel, place: decal.place(tpl), seams: 0, tucked: tucked(decal.panel) };
+        let mut pieces = vec![start];
+        let same = |a: &Piece, b: &Piece| a.panel == b.panel && (a.place.angle() - b.place.angle()).abs() < 1e-3 && len2(sub2(a.place.t, b.place.t)) < 0.25;
+        for sign in [1.0f32, -1.0] {
+            let mut dir = [0.0f32; 2];
+            dir[long] = sign;
+            let mut piece = start;
+            // いまの面に入った所（中心の線の上の、柄の座標での距離）。
+            let mut at = 0.0f32;
+            for _ in 0..48 {
+                let to_decal = piece.place.inverse();
+                let outline: Vec<P2> = tpl.panels[piece.panel].outline.iter().map(|&p| to_decal.point(p)).collect();
+                let Some(exit) = leave_at(&outline, dir, at) else { break };
+                if exit >= reach {
+                    break;
+                }
+                // 出た点に、いちばん近い境目の線を持つつながり（閉じると隠れる面は選ばない）。
+                let point = piece.place.point([dir[0] * exit, dir[1] * exit]);
+                let next = self.links[piece.panel]
+                    .iter()
+                    .filter(|link| !tucked(link.to) && tpl.panels[link.to].takes_art())
+                    .filter_map(|link| link.gate.iter().map(|g| distance_to_segment(point, g[0], g[1])).min_by(f32::total_cmp).map(|d| (d, link)))
+                    .filter(|(d, _)| *d < 4.0)
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                let Some((_, link)) = next else { break };
+                piece = Piece { panel: link.to, place: link.map.then_after(&piece.place), seams: piece.seams + link.seam as usize, tucked: false };
+                at = exit;
+                if !pieces.iter().any(|p| same(p, &piece)) {
+                    pieces.push(piece);
+                }
+            }
+        }
+        // 帯の幅がかかる隣の面へ、1 回だけ。合わせ目は、まだ合わせ目をまたいでいない面からだけ（縁に沿った帯が、フタに何本も出ないように）。
+        let path = pieces.len();
+        for i in 0..path {
+            let from = pieces[i];
+            let to_decal = from.place.inverse();
+            for link in &self.links[from.panel] {
+                if tucked(link.to) || (link.seam && from.seams >= 1) {
+                    continue;
+                }
+                if !link.gate.iter().any(|g| segment_hits_box(to_decal.point(g[0]), to_decal.point(g[1]), half)) {
+                    continue;
+                }
+                let place = link.map.then_after(&from.place);
+                let clash = pieces.iter().filter(|p| p.panel == link.to).any(|p| {
+                    let between = p.place.inverse().then_after(&place);
+                    let shifted_only = between.angle().abs() < 0.01 && len2(between.t) > 1.0;
+                    boxes_overlap(&between, half) && !shifted_only
+                });
+                if !clash {
+                    pieces.push(Piece { panel: link.to, place, seams: from.seams + link.seam as usize, tucked: false });
                 }
             }
         }
@@ -501,6 +573,39 @@ impl Decal {
     pub fn place(&self, tpl: &Template) -> Aff2 {
         Aff2::new(self.angle, self.center(tpl))
     }
+}
+
+/// 帯として扱う細長い柄か（長い辺が、短い辺の 3 倍以上）。
+fn is_band(size: P2) -> bool {
+    size[0].max(size[1]) >= 3.0 * size[0].min(size[1])
+}
+
+/// 原点から `dir` の向きへ進む線が、（凸の）輪郭から出る距離。`after` より先で、いちばん遠い交点。
+fn leave_at(outline: &[P2], dir: P2, after: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for i in 0..outline.len() {
+        let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+        let e = sub2(b, a);
+        let denom = dir[0] * e[1] - dir[1] * e[0];
+        if denom.abs() < 1e-9 {
+            continue;
+        }
+        // 原点 + t*dir = a + u*e
+        let t = (a[0] * e[1] - a[1] * e[0]) / denom;
+        let u = (a[0] * dir[1] - a[1] * dir[0]) / denom;
+        if (-1e-4..=1.0 + 1e-4).contains(&u) && t > after + 1e-3 {
+            best = Some(best.map_or(t, |b: f32| b.max(t)));
+        }
+    }
+    best
+}
+
+fn distance_to_segment(p: P2, a: P2, b: P2) -> f32 {
+    let ab = sub2(b, a);
+    let l = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if l < 1e-12 { 0.0 } else { ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l };
+    let q = along(a, ab, t.clamp(0.0, 1.0));
+    len2(sub2(p, q))
 }
 
 /// 柄が、合わせ目の線を横切ってまっすぐ進むか。線の向きが、柄の長い向きとおおよそ直角（45 度より大きい）なら真。
@@ -997,6 +1102,25 @@ mod tests {
 
     /// 箱の上の縁にかかった帯が、フタを伝って回り込まない。
     #[test]
+    fn 斜めに回した帯は_箱にらせん状に巻きつく() {
+        // 本人が見つけた不具合（2026-11-24）: 帯を回すと、角度によって側面やフラップで途切れた。
+        let tpl = Template::tuck_box(200.0, 160.0, 85.0, 0.5);
+        let surface = Surface::new(&tpl, &Template::tuck_box(200.0, 160.0, 85.0, 0.02));
+        let front = index(&tpl, "正面");
+        for deg in [10.0f32, 20.0, 30.0, 45.0, 60.0, 80.0] {
+            let band = Decal { panel: front, at: [0.5, 0.5], size: [720.0, 20.0], angle: deg.to_radians() };
+            let pieces = surface.layout(&tpl, &band);
+            let names: Vec<&str> = pieces.iter().map(|p| tpl.panels[p.panel].name).collect();
+            assert!(pieces.len() >= 5, "{deg} 度で途中で切れる: {names:?}");
+            for name in ["上のフタ", "底のフタ"] {
+                assert!(names.contains(&name), "{deg} 度で {name} に続かない: {names:?}");
+            }
+            // 閉じると隠れる面には出ない。
+            assert!(pieces.iter().all(|p| !tpl.panels[p.panel].hidden_when_closed()), "{deg} 度: {names:?}");
+        }
+    }
+
+    #[test]
     fn 縁にかかった帯は_フタを伝って回り込まない() {
         for (w, d, h) in [(200.0, 160.0, 85.0), (120.0, 60.0, 160.0)] {
             let tpl = Template::tuck_box(w, d, h, 0.5);
@@ -1020,3 +1144,4 @@ mod tests {
         }
     }
 }
+

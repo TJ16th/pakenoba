@@ -17,7 +17,7 @@ use std::thread::JoinHandle;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, pos2, vec2};
 use eframe::egui_wgpu;
 
-use pakenoba_core::math::{Mat4, V3, look_at, mat4_mul, normalize};
+use pakenoba_core::math::{Mat4, V3, look_at, mat4_mul};
 use pakenoba_core::template::bounding_sphere;
 
 use super::App;
@@ -223,15 +223,15 @@ pub struct Window {
 
 /// 窓の向こうに箱を置いて、目の位置から見たときの、投影と視点と箱の置き方をかけた行列。
 /// 箱は、いまの立体の表示の向き（`yaw`、`pitch`）で、窓の高さの 7 割ほどに収まる大きさにし、
-/// 中心を画面の少し奥に置く。返すのは、行列と、箱の座標での光の向き。
-pub fn window_view(window: Window, eye: V3, center: V3, radius: f32, yaw: f32, pitch: f32, zoom: f32) -> (Mat4, V3) {
+/// 中心を画面の少し奥に置く。返すのは、その行列。
+pub fn window_view(window: Window, eye: V3, center: V3, radius: f32, yaw: f32, pitch: f32, zoom: f32) -> Mat4 {
     let (w, h) = (window.right - window.left, window.top - window.bottom);
     let size = 0.36 * w.min(h) * zoom;
     let scale = size / radius.max(1e-3);
     let middle = [(window.left + window.right) * 0.5, (window.bottom + window.top) * 0.5, -0.45 * size];
     // 箱の向き: 立体の表示と同じ向きから見た姿を、画面の正面に向ける。
-    let dir = [pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos()];
-    let mut turn = look_at(dir, [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let (dir, up) = super::views::orbit(yaw, pitch);
+    let mut turn = look_at(dir, [0.0, 0.0, 0.0], up);
     turn[3] = [0.0, 0.0, 0.0, 1.0];
     let model = mat4_mul(&translate(middle), &mat4_mul(&scale_m(scale), &mat4_mul(&turn, &translate([-center[0], -center[1], -center[2]]))));
     // 目が画面に近すぎたり、裏へ回ったりしないようにする。
@@ -242,10 +242,7 @@ pub fn window_view(window: Window, eye: V3, center: V3, radius: f32, yaw: f32, p
     let k = near / eye[2];
     let (l, r, b, t) = ((window.left - eye[0]) * k, (window.right - eye[0]) * k, (window.bottom - eye[1]) * k, (window.top - eye[1]) * k);
     let proj = frustum(l, r, b, t, near, far);
-    // 光は、立体の表示と同じく、箱から見て視点の少し右上から（箱といっしょに動き、頭の動きでは変わらない）。
-    let right = normalize([turn[0][0], turn[1][0], turn[2][0]]);
-    let light = normalize([dir[0] + right[0] * 0.45, dir[1] + 0.55, dir[2] + right[2] * 0.45]);
-    (mat4_mul(&proj, &mat4_mul(&view, &model)), light)
+    mat4_mul(&proj, &mat4_mul(&view, &model))
 }
 
 /// 右手系の、ずらした透視投影。奥行きは 0〜1（wgpu の規約）。
@@ -714,8 +711,7 @@ impl App {
         if response.dragged() {
             let delta = response.drag_delta();
             self.view_to = None;
-            self.yaw -= delta.x * 0.01;
-            self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+            super::views::drag_orbit(&mut self.yaw, &mut self.pitch, delta);
         }
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -751,12 +747,14 @@ impl App {
         let eye = self.peek.eye(now, dt, screen_h);
         let mesh = self.template.build_mesh_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
         let (center, radius) = bounding_sphere(&mesh);
-        let (view_proj, light) = window_view(window, eye, center, radius, self.yaw, self.pitch, self.zoom);
+        let view_proj = window_view(window, eye, center, radius, self.yaw, self.pitch, self.zoom);
         let ppp = ui.ctx().pixels_per_point();
         let size = [(rect.width() * ppp).round().max(2.0) as u32, (rect.height() * ppp).round().max(2.0) as u32];
         let holes = self.holes();
+        let look = self.look(self.yaw);
+        self.sync_environment(ui.ctx(), rs);
         let renderer = self.renderer.get_or_insert_with(|| BoxRenderer::new(rs));
-        if let Some(id) = renderer.render(rs, size, &mesh, view_proj, light, holes) {
+        if let Some(id) = renderer.render(rs, size, &mesh, view_proj, &look, holes) {
             painter.image(id, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
         // 小さな知らせ（顔が見えているか）。
@@ -917,7 +915,7 @@ mod tests {
     fn 画面の上の点は_目がどこにあっても同じ場所に映る() {
         // 窓の上にある点は、目を動かしても画面の上の同じ場所に出る（窓の見え方の決まり）。
         for eye in [[0.0, 0.0, 600.0], [200.0, -80.0, 450.0], [-300.0, 120.0, 900.0]] {
-            let (m, _) = window_view(SCREEN, eye, [0.0; 3], 100.0, 0.0, 0.0, 1.0);
+            let m = window_view(SCREEN, eye, [0.0; 3], 100.0, 0.0, 0.0, 1.0);
             // 箱の座標から、画面の上の点 (100, 50, 0) に来る点を逆算するかわりに、
             // 箱を置かない投影だけで確かめる。
             let k = 0.05f32;
@@ -935,7 +933,7 @@ mod tests {
         // 左の側面の奥の点と手前の点の、画面での横の距離（左の側面が見えている幅）を比べる。
         // 窓の向こうの物を右からのぞくと、右の側面が見え、左の側面は縮んで隠れていく。
         let gap = |eye: V3| {
-            let (m, _) = window_view(SCREEN, eye, [0.0; 3], 100.0, 0.0, 0.0, 1.0);
+            let m = window_view(SCREEN, eye, [0.0; 3], 100.0, 0.0, 0.0, 1.0);
             let left_back = project(&m, [-50.0, 0.0, -50.0]);
             let left_front = project(&m, [-50.0, 0.0, 50.0]);
             left_front[0] - left_back[0]
@@ -946,7 +944,7 @@ mod tests {
     #[test]
     fn 近づくと大きく見える() {
         let width = |z: f32| {
-            let (m, _) = window_view(SCREEN, [0.0, 0.0, z], [0.0; 3], 100.0, 0.0, 0.0, 1.0);
+            let m = window_view(SCREEN, [0.0, 0.0, z], [0.0; 3], 100.0, 0.0, 0.0, 1.0);
             project(&m, [50.0, 0.0, 50.0])[0] - project(&m, [-50.0, 0.0, 50.0])[0]
         };
         assert!(width(350.0) > width(900.0));

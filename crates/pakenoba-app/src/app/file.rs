@@ -175,7 +175,7 @@ impl App {
                 Ok(Placement { decal: placed.decal, back: placed.back, source, layer: placed.layer.clone() })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Project { shape: self.dims.shape(), assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()), log: self.log.clone(), versions: self.versions.clone() })
+        Ok(Project { shape: self.dims.shape(), material: self.material, assets, decals, base: self.bases[0].as_ref().map(|b| b.file.clone()), back_base: self.bases[1].as_ref().map(|b| b.file.clone()), log: self.log.clone(), versions: self.versions.clone() })
     }
 
     /// 状態の印。案件のファイルに入るもの（型、寸法、柄、素材、展開図の絵）から作る。
@@ -184,6 +184,7 @@ impl App {
         let mut hasher = DefaultHasher::new();
         let d = &self.dims;
         (d.sides, [d.w, d.d, d.h, d.t, d.bulge, d.roof].map(f32::to_bits)).hash(&mut hasher);
+        (self.material.paper.key(), self.material.coat.key()).hash(&mut hasher);
         for asset in &self.assets {
             if let Some(stored) = &asset.stored {
                 (&asset.name, asset.size.map(f32::to_bits), stored.id()).hash(&mut hasher);
@@ -236,6 +237,7 @@ impl App {
         let mut problems = Vec::new();
         self.home = false;
         self.dims = Dims::from_shape(&project.shape);
+        self.material = project.material;
         (self.template, self.surface, self.problems) = self.dims.build();
         self.sheet = make_sheet_art(&self.template);
         self.built_dims = Some(self.dims);
@@ -517,7 +519,7 @@ impl App {
     /// 起動したときと同じ、まっさらな案件にする（差し込み箱、柄も素材もなし）。型を選ぶところから始める。
     pub(super) fn new_now(&mut self) {
         let shape = Dims::for_shape(0, self.dims.t).shape();
-        self.apply_project(Project { shape, assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
+        self.apply_project(Project { shape, material: Default::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
         self.file.path = None;
         // タブで並ぶので、2 つ目からは番号を付ける（「名前なし 2」）。
         let n = self.tabs.next_untitled();

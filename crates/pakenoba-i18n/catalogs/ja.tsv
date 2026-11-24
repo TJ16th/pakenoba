@@ -672,7 +672,6 @@
 	Home	ホーム
 	Start with a box type	型を選んで始める
 	Projects you open or save appear here.	開いたり保存したりした案件が、ここに並びます。
-	Missing files are shown dimmed. "Clear list" in File > Recent projects removes them from the list.	見つからないファイルは薄く出します。「ファイル」→「最近使った案件」の「一覧を消す」で、一覧から外せます。
 	Not found: {folder}	見つかりません: {folder}
 	If you close this tab without saving, the changes will be lost.	保存しないでタブを閉じると、変更は失われます。
 	Saving. Switch tabs when it has finished.	保存しています。終わってからタブを切り替えてください。
@@ -1053,3 +1052,46 @@ blend	Color	カラー
 	Kept a version	版を残した
 	Could not keep a version	版を残せませんでした
 	"name" is missing	「name」がありません
+	{missing} project(s) could not be found (moved or deleted).	{missing} 件の案件が見つかりません（動かしたか、消したもの）。
+	Remove missing from the list	見つからないものを一覧から外す
+	Coated board (gray back)	コートボール（裏グレー）
+	Coated paper	コート紙
+	Matte coated paper	マットコート紙
+	Uncoated paper	上質紙
+	Kraft paper	クラフト紙
+	Corrugated board	段ボール
+	No coating	コートなし
+	Matte varnish	マットニス
+	Gloss varnish	グロスニス
+	Matte PP lamination	マット PP
+	Gloss PP lamination	グロス PP
+	Soft-touch PP lamination	ソフトタッチ PP
+	This version of PAKENOBA does not know the paper "{}", so it was made coated board	このパケノバは紙「{}」を知らないので、コートボールにしました
+	This version of PAKENOBA does not know the coating "{}", so it was removed	このパケノバはコート「{}」を知らないので、外しました
+	Studio (soft)	スタジオ（やわらかい光）
+	Studio (one key light)	スタジオ（一灯）
+	Studio (white)	スタジオ（白）
+	Outdoors, clear sky	屋外（晴天）
+	Outdoors, partly cloudy	屋外（晴れ、雲あり）
+	Outdoors, overcast	屋外（曇り）
+	Could not download the environment: {e}	景色を取ってこられませんでした: {e}
+	There is no folder to keep the environment in	景色をしまうフォルダがありません
+	The environment file is not a valid HDR image	景色のファイルが、正しい HDR の画像ではありません
+	Down 90°	手前へ 90°
+	Turn the box 90 degrees toward you, over the top	箱を手前へ 90 度回す（上を越えて回せる）
+	Up 90°	奥へ 90°
+	Turn the box 90 degrees away from you, over the bottom	箱を奥へ 90 度回す（下を越えて回せる）
+	Changed the paper or coating	紙かコートを変えた
+	Unknown paper "{key}"	知らない紙です（{key}）
+	Unknown coating "{key}"	知らないコートです（{key}）
+	Environment	景色
+	{text} (preparing…)	{text}（用意しています…）
+	{text} (downloads on first use)	{text}（はじめて使うときに取ってきます）
+	Outdoor environments are from Poly Haven (CC0).	屋外の景色は Poly Haven（CC0）のものです。
+	Turn	回す
+	Reset turn and brightness	回しと明るさを戻す
+	Coating	コート
+	The coating is on the outside of the box only.	コートは、箱の外側（紙の表）だけに掛かります。
+	Lighting	照明
+	Choose the environment that lights the box, and turn it	箱を照らす景色を選ぶ、回す
+	Paper and coating	紙とコート

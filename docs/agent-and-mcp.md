@@ -152,7 +152,7 @@ Git を中に入れることは勧めない。
 - `run_command(誰が, 名前, 引数)` で 1 つ、`run_batch` でまとめて実行する。1 回のコマンドが元に戻す 1 回ぶん、まとめたものは全体で 1 回ぶん。途中で失敗したら、そこで止めて理由を返す（そこまでの変更は残り、元に戻せる）。
 - 調整は、案件のファイルと同じ書き方の JSON で渡す（`{"kind": "levels", "black": 10, ...}`）。
 - ロックしているもの、ないもの、知らない名前は、変えずに理由を返す。
-- 同じ日に 15 個を足して 42 個にした（`app/commands_doc.rs`）: `project.info`、`project.new`、`project.open`、`project.save_as`、`shape.set`（型）、`shape.dimensions`（寸法とフラップ。元に戻す対象外）、`asset.list`、`asset.import`、`decal.add`（素材、付属の見本、文字、図形のどれか）、`text.set`、`shape_art.set`、`export.psd`、`export.pdf`、`render.preview`（展開図の絵を PNG で）。`doc.inspect` の柄には、文字と図形の中身も出す。あとで `version.list` と `version.keep` を足して 44 個。
+- 同じ日に 15 個を足して 42 個にした（`app/commands_doc.rs`）: `project.info`、`project.new`、`project.open`、`project.save_as`、`shape.set`（型）、`shape.dimensions`（寸法とフラップ。元に戻す対象外）、`asset.list`、`asset.import`、`decal.add`（素材、付属の見本、文字、図形のどれか）、`text.set`、`shape_art.set`、`export.psd`、`export.pdf`、`render.preview`（展開図の絵を PNG で）。`doc.inspect` の柄には、文字と図形の中身も出す。あとで `version.list` と `version.keep` を足して 44 個。紙とコートの `material.set` を足して 45 個（2026-11-24）。
 - 案件を開く、作る、保存するは、案件の中身を変えないので、操作の記録には残さない。
 - まだコマンドにしていないもの: 表示（向き、組み立て、開け閉め）、16:9 の画像と箱開け動画の書き出し（GPU で描くので、画面なしでは描けない）、立体の見た目の PNG、マスクを筆で描く、素材の差し替え。
 

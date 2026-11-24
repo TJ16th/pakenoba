@@ -304,7 +304,9 @@ impl App {
         let filtering = self.layer_filter.active();
         // 紙の表と裏に分けて、上に重なっているものから並べる。
         let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
-        ui.scope(|ui| {
+        // 一覧だけを流し、いちばん下のボタンは欄の底に残す。
+        let list_height = (ui.available_height() - 34.0).max(60.0);
+        egui::ScrollArea::vertical().id_salt("layer-list").max_height(list_height).min_scrolled_height(list_height).auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             line(ui);
             for back in [false, true] {
@@ -332,8 +334,7 @@ impl App {
             }
         });
         self.drag_layer(ui, &rows_at);
-        // 一覧の下は、空いた所を残してから、いちばん下のボタン（PhotoCraft と同じ）。
-        ui.add_space(24.0);
+        // 一覧の下に、いちばん下のボタン（PhotoCraft と同じ）。
         line(ui);
         egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| self.layer_buttons(ui));
     }

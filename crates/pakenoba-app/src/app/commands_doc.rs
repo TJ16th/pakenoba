@@ -196,7 +196,7 @@ impl App {
                 if !self.pristine() && !self.open_tab() {
                     return Err(t!("Could not open a new tab").to_owned());
                 }
-                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
+                self.apply_project(pakenoba_core::project::Project { shape: super::Dims::for_shape(0, 0.5).shape(), material: Default::default(), assets: Vec::new(), decals: Vec::new(), base: None, back_base: None, log: Vec::new(), versions: Vec::new() });
                 self.file.path = None;
                 self.mark_saved();
                 Ok(Value::Null)
@@ -223,6 +223,18 @@ impl App {
                     self.mark_saved();
                 }
                 Ok(json!({ "path": path.display().to_string() }))
+            }
+            "material.set" => {
+                use pakenoba_core::material::{Coat, Paper};
+                let mut material = self.material;
+                if let Some(key) = args.get("paper").and_then(Value::as_str) {
+                    material.paper = Paper::from_key(key).ok_or_else(|| t!("Unknown paper \"{key}\""))?;
+                }
+                if let Some(key) = args.get("coat").and_then(Value::as_str) {
+                    material.coat = Coat::from_key(key).ok_or_else(|| t!("Unknown coating \"{key}\""))?;
+                }
+                self.material = material;
+                Ok(json!({ "paper": material.paper.key(), "coat": material.coat.key() }))
             }
             "shape.set" => {
                 let kind = args.get("kind").and_then(Value::as_str).ok_or_else(|| t!("\"kind\" is missing").to_owned())?;

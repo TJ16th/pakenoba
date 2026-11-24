@@ -35,6 +35,7 @@ pub(super) fn command_label(name: &str) -> String {
         "mask.invert" => t!("Inverted a mask"),
         "mask.enable" => t!("Turned a mask on or off"),
         "mask.delete" => t!("Deleted a mask"),
+        "material.set" => t!("Changed the paper or coating"),
         "shape.set" => t!("Changed the box type"),
         "shape.dimensions" => t!("Changed the dimensions"),
         "asset.import" => t!("Imported an asset"),

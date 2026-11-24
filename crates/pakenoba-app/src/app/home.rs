@@ -60,9 +60,19 @@ impl App {
                                 open = Some(Some(path));
                             }
                         }
-                        if !self.settings.recent.is_empty() {
+                        // 見つからない案件があるときだけ、その数と、一覧から外すボタンを出す。
+                        let missing = self.settings.recent.iter().filter(|p| !p.exists()).count();
+                        if missing > 0 {
                             ui.add_space(6.0);
-                            ui.weak(t!("Missing files are shown dimmed. \"Clear list\" in File > Recent projects removes them from the list."));
+                            ui.horizontal(|ui| {
+                                ui.weak(t!("{missing} project(s) could not be found (moved or deleted)."));
+                                if ui.small_button(t!("Remove missing from the list")).clicked() {
+                                    self.settings.recent.retain(|p| p.exists());
+                                    if let Err(e) = self.settings.save() {
+                                        self.say(e);
+                                    }
+                                }
+                            });
                         }
                     });
                 });

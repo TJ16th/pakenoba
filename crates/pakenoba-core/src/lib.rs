@@ -4,11 +4,13 @@
 //! - `surface`: 面のつながり（折り線と合わせ目）と、立体の上で置く柄の割り振り。
 //! - `check`: 型紙が箱として成り立つかの検査（閉じているか、開けられるか）。
 //! - `math`: 最小限のベクトルと変換。
+//! - `material`: 紙とコート（箱全体の素材）の種類。
 //! - `project`: 案件のファイル（`.pknb`）の読み書き。
 //!
 //! このソフトが出す型紙はデザイン確認用で、製造用のデータではない。
 
 pub mod check;
+pub mod material;
 pub mod math;
 pub mod project;
 pub mod surface;

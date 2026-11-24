@@ -2879,6 +2879,7 @@ dependencies = [
  "flate2",
  "fontique",
  "gif",
+ "half",
  "keyring",
  "nokhwa",
  "pakenoba-core",

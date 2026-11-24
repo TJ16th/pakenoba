@@ -12,6 +12,7 @@ mod file;
 mod history;
 mod icons;
 mod library;
+mod lighting;
 mod outputs;
 mod panels;
 mod recovery;
@@ -439,6 +440,10 @@ struct Snapshot {
 struct App {
     dims: Dims,
     built_dims: Option<Dims>,
+    /// 紙とコート（箱全体の素材）。寸法と同じく、元に戻すの対象外。
+    material: pakenoba_core::material::Material,
+    /// 照らす景色の用意の進み具合。
+    env: lighting::EnvState,
     /// 型紙。共有して持つ（表示の中で、App を書き換えながら読むため）。
     template: Rc<Template>,
     /// 柄がたどれる面のつながり（折り線と合わせ目）。
@@ -640,6 +645,8 @@ impl App {
         let mut app = App {
             dims,
             built_dims: Some(dims),
+            material: Default::default(),
+            env: Default::default(),
             template,
             surface,
             problems,
@@ -1297,7 +1304,7 @@ impl eframe::App for App {
         // 視点のアニメーション。近いほうの回り方で、行き先へなめらかに寄せる。
         if let Some((yaw, pitch)) = self.view_to {
             let turn = (yaw - self.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-            let rise = pitch - self.pitch;
+            let rise = views::wrap_angle(pitch - self.pitch);
             if turn.abs() < 0.002 && rise.abs() < 0.002 {
                 (self.yaw, self.pitch) = (yaw, pitch);
                 self.view_to = None;

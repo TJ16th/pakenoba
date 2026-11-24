@@ -38,6 +38,7 @@ macro_rules! doc {
 doc! {
     dims: Dims,
     built_dims: Option<Dims>,
+    material: pakenoba_core::material::Material,
     template: Rc<Template>,
     surface: Surface,
     problems: Vec<(bool, String)>,
@@ -91,6 +92,7 @@ impl Doc {
         Doc {
             dims,
             built_dims: Some(dims),
+            material: Default::default(),
             template,
             surface,
             problems,

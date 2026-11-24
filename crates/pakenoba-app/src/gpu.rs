@@ -7,8 +7,11 @@ use pakenoba_i18n::t;
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
-use pakenoba_core::math::{Mat4, V3};
+use pakenoba_core::material::{Coat, Material, Paper};
+use pakenoba_core::math::Mat4;
 use pakenoba_core::template::Vertex;
+
+use crate::env::{self, Prepared};
 
 // egui は「ガンマ補正済みの値がそのまま入ったテクスチャ」を前提にしているので、sRGB 形式にはしない。
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -20,47 +23,112 @@ const BACKGROUND: wgpu::Color = wgpu::Color { r: 0.157, g: 0.157, b: 0.157, a: 1
 const SHADER: &str = r#"
 struct Globals {
     view_proj: mat4x4<f32>,
-    light: vec4<f32>,
+    // 画面の点から、箱の座標の視線を出すための逆行列。
+    inv_view_proj: mat4x4<f32>,
+    // x, y: 景色の回し（cos, sin）。z: 明るさの倍率。w: 景色のいちばん粗い段階の番号。
+    env: vec4<f32>,
     // 抜き穴。xy が中心、zw が半分の幅と高さ（どちらも絵柄の座標）。z が 0 なら穴なし。
     holes: array<vec4<f32>, 2>,
+    // 拡散の光（球面調和の 9 個の係数）。
+    sh: array<vec4<f32>, 9>,
+    // 紙の表、裏、切り口の色（線形）と粗さ。
+    paper_front: vec4<f32>,
+    paper_back: vec4<f32>,
+    paper_edge: vec4<f32>,
+    // コート: 強さ、粗さ、色の深まり（グロス PP で色が濃く見える）、使わない。
+    coat: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var art: texture_2d<f32>;
 @group(1) @binding(1) var art_sampler: sampler;
 @group(1) @binding(2) var back_art: texture_2d<f32>;
+@group(2) @binding(0) var env_map: texture_2d<f32>;
+@group(2) @binding(1) var env_sampler: sampler;
+
+const PI: f32 = 3.14159265;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) kind: f32,
+    @location(3) clip: vec4<f32>,
 };
 
 @vertex
 fn vs_main(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) kind: f32) -> VertexOut {
     var out: VertexOut;
     out.position = globals.view_proj * vec4<f32>(pos, 1.0);
+    out.clip = out.position;
     out.normal = normal;
     out.uv = uv;
     out.kind = kind;
     return out;
 }
 
+// 箱の座標の向きを、景色の座標へ（視点といっしょに、上下の軸のまわりに回す）。
+fn to_env(d: vec3<f32>) -> vec3<f32> {
+    let c = globals.env.x;
+    let s = globals.env.y;
+    return vec3<f32>(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+}
+
+// 景色の、向き d から来る光。粗さに合わせて、ぼかした段階から引く。
+fn radiance(d: vec3<f32>, rough: f32) -> vec3<f32> {
+    let e = to_env(d);
+    let uv = vec2<f32>(atan2(e.x, e.z) / (2.0 * PI) + 0.5, acos(clamp(e.y, -1.0, 1.0)) / PI);
+    return textureSampleLevel(env_map, env_sampler, uv, rough * globals.env.w).rgb;
+}
+
+// 向き n の面が受ける拡散の光（白い紙の明るさ）。
+fn irradiance(n0: vec3<f32>) -> vec3<f32> {
+    let n = to_env(n0);
+    let x = n.x;
+    let y = n.y;
+    let z = n.z;
+    var e = globals.sh[0].rgb;
+    e += globals.sh[1].rgb * y + globals.sh[2].rgb * z + globals.sh[3].rgb * x;
+    e += globals.sh[4].rgb * (x * y) + globals.sh[5].rgb * (y * z) + globals.sh[6].rgb * (3.0 * z * z - 1.0);
+    e += globals.sh[7].rgb * (x * z) + globals.sh[8].rgb * (x * x - y * y);
+    return max(e, vec3<f32>(0.0)) / PI;
+}
+
+// 映り込みの強さ（反射率 f0、粗さ、視線と面の角度から）。Karis の近似。
+fn env_brdf(f0: vec3<f32>, rough: f32, nv: f32) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = rough * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
+// 明るすぎる所だけを丸める（Khronos PBR Neutral）。0.76 までの色は、そのまま。
+fn neutral(c0: vec3<f32>) -> vec3<f32> {
+    let start = 0.76;
+    let desat = 0.15;
+    let x = min(c0.r, min(c0.g, c0.b));
+    let offset = select(0.04, x - 6.25 * x * x, x < 0.08);
+    var c = c0 - offset;
+    let peak = max(c.r, max(c.g, c.b));
+    if peak < start {
+        return c;
+    }
+    let d = 1.0 - start;
+    let new_peak = 1.0 - d * d / (peak + d - start);
+    c = c * (new_peak / peak);
+    let g = 1.0 - 1.0 / (desat * (peak - new_peak) + 1.0);
+    return mix(c, vec3<f32>(new_peak), g);
+}
+
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    // 色は光の計算に合う線形の値で扱い、最後に画面用の値へ直す。
-    let paper = vec3<f32>(0.87, 0.84, 0.77);
-    let inner = vec3<f32>(0.80, 0.76, 0.68);
-    let edge = vec3<f32>(0.62, 0.56, 0.47);
-    let texel = textureSample(art, art_sampler, in.uv);
-    let back = textureSample(back_art, art_sampler, in.uv);
-    var base = mix(paper, texel.rgb, texel.a);
-    if in.kind > 1.5 {
-        base = edge;
-    } else if in.kind > 0.5 {
-        // 紙の裏（箱の内側の面）。裏に置いた柄が見える。
-        base = mix(inner, back.rgb, back.a);
-    }
     // 抜き穴の中は描かない。角の丸い四角として判定する。
     for (var i = 0; i < 2; i++) {
         let hole = globals.holes[i];
@@ -71,11 +139,46 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             }
         }
     }
-    let n = normalize(in.normal);
-    let towards = dot(n, globals.light.xyz);
-    let shade = 0.42 + 0.58 * max(towards, 0.0) + 0.10 * max(-towards, 0.0);
-    let lit = base * shade;
-    return vec4<f32>(pow(lit, vec3<f32>(1.0 / 2.2)), 1.0);
+    // 視線（画面の点を、近い所と遠い所へ戻して結ぶ。透視でも平行投影でも同じ式）。
+    let ndc = in.clip.xy / in.clip.w;
+    let near = globals.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let far = globals.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+    let v = normalize(near.xyz / near.w - far.xyz / far.w);
+    var n = normalize(in.normal);
+    if dot(n, v) < 0.0 {
+        n = -n;
+    }
+    let nv = max(dot(n, v), 1e-4);
+    let r = reflect(-v, n);
+
+    var paper = globals.paper_front;
+    var base: vec3<f32>;
+    var shade = 1.0;
+    if in.kind > 1.5 {
+        paper = globals.paper_edge;
+        base = paper.rgb;
+    } else if in.kind > 0.5 {
+        // 紙の裏（箱の内側の面）。裏に置いた柄が見える。箱の中は、外より暗い。
+        paper = globals.paper_back;
+        let back = textureSample(back_art, art_sampler, in.uv);
+        base = mix(paper.rgb, back.rgb, back.a);
+        shade = 0.7;
+    } else {
+        let texel = textureSample(art, art_sampler, in.uv);
+        base = mix(paper.rgb, texel.rgb, texel.a);
+        // コートで色が少し深く（グロス）、または少し白っぽく（マット）見える。
+        base = pow(max(base, vec3<f32>(0.0)), vec3<f32>(1.0 + globals.coat.z));
+    }
+    let rough = paper.a;
+    let f_paper = env_brdf(vec3<f32>(0.04), rough, nv);
+    var color = base * irradiance(n) * shade * (1.0 - f_paper) + radiance(r, rough) * f_paper * shade;
+    // コート（表だけ）。紙の上の透明な膜の映り込み。膜で返したぶん、下の紙は暗くなる。
+    if in.kind < 0.5 && globals.coat.x > 0.0 {
+        let fc = env_brdf(vec3<f32>(0.04), globals.coat.y, nv) * globals.coat.x;
+        color = color * (1.0 - fc) + radiance(r, globals.coat.y) * fc;
+    }
+    color = color * globals.env.z;
+    return vec4<f32>(to_srgb(clamp(neutral(color), vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
 }
 "#;
 
@@ -83,8 +186,92 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     view_proj: Mat4,
-    light: [f32; 4],
+    inv_view_proj: Mat4,
+    env: [f32; 4],
     holes: [[f32; 4]; 2],
+    sh: [[f32; 4]; 9],
+    paper_front: [f32; 4],
+    paper_back: [f32; 4],
+    paper_edge: [f32; 4],
+    coat: [f32; 4],
+}
+
+/// 箱の見た目のうち、視点のほかに描くたびに渡すもの。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub material: Material,
+    /// 景色の回し（ラジアン）。視点の左右の向きに、使う人が決めた回しを足したもの。
+    pub turn: f32,
+    /// 明るさの倍率。
+    pub exposure: f32,
+}
+
+fn linear(srgb: [u8; 3]) -> [f32; 3] {
+    srgb.map(|c| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    })
+}
+
+fn with(rgb: [f32; 3], a: f32) -> [f32; 4] {
+    [rgb[0], rgb[1], rgb[2], a]
+}
+
+/// 紙の表、裏、切り口の、色と粗さ。
+fn paper_values(paper: Paper) -> [[f32; 4]; 3] {
+    let (front, back, edge) = match paper {
+        Paper::CoatedBoard => (([244, 244, 240], 0.42), ([178, 176, 171], 0.8), ([196, 192, 184], 0.9)),
+        Paper::Coated => (([246, 246, 244], 0.35), ([246, 246, 244], 0.35), ([236, 234, 229], 0.85)),
+        Paper::MatteCoated => (([243, 243, 240], 0.6), ([243, 243, 240], 0.6), ([234, 232, 226], 0.85)),
+        Paper::Uncoated => (([242, 240, 233], 0.85), ([242, 240, 233], 0.85), ([232, 229, 220], 0.9)),
+        Paper::Kraft => (([176, 134, 92], 0.8), ([168, 127, 87], 0.85), ([150, 112, 78], 0.9)),
+        Paper::Corrugated => (([184, 146, 104], 0.85), ([170, 135, 96], 0.88), ([160, 125, 88], 0.95)),
+    };
+    [with(linear(front.0), front.1), with(linear(back.0), back.1), with(linear(edge.0), edge.1)]
+}
+
+/// コートの、強さ、粗さ、色の深まり。
+fn coat_values(coat: Coat) -> [f32; 4] {
+    match coat {
+        Coat::None => [0.0, 0.5, 0.0, 0.0],
+        Coat::MatteVarnish => [0.5, 0.5, 0.0, 0.0],
+        Coat::GlossVarnish => [0.8, 0.12, 0.05, 0.0],
+        Coat::MattePp => [1.0, 0.55, -0.03, 0.0],
+        Coat::GlossPp => [1.0, 0.04, 0.10, 0.0],
+        Coat::SoftTouchPp => [0.7, 0.78, -0.05, 0.0],
+    }
+}
+
+/// 4x4 の逆行列（列優先）。逆にできなければ単位行列。
+fn invert(m: &Mat4) -> Mat4 {
+    let a: Vec<f32> = m.iter().flatten().copied().collect();
+    let mut inv = [0.0f32; 16];
+    inv[0] = a[5] * a[10] * a[15] - a[5] * a[11] * a[14] - a[9] * a[6] * a[15] + a[9] * a[7] * a[14] + a[13] * a[6] * a[11] - a[13] * a[7] * a[10];
+    inv[4] = -a[4] * a[10] * a[15] + a[4] * a[11] * a[14] + a[8] * a[6] * a[15] - a[8] * a[7] * a[14] - a[12] * a[6] * a[11] + a[12] * a[7] * a[10];
+    inv[8] = a[4] * a[9] * a[15] - a[4] * a[11] * a[13] - a[8] * a[5] * a[15] + a[8] * a[7] * a[13] + a[12] * a[5] * a[11] - a[12] * a[7] * a[9];
+    inv[12] = -a[4] * a[9] * a[14] + a[4] * a[10] * a[13] + a[8] * a[5] * a[14] - a[8] * a[6] * a[13] - a[12] * a[5] * a[10] + a[12] * a[6] * a[9];
+    inv[1] = -a[1] * a[10] * a[15] + a[1] * a[11] * a[14] + a[9] * a[2] * a[15] - a[9] * a[3] * a[14] - a[13] * a[2] * a[11] + a[13] * a[3] * a[10];
+    inv[5] = a[0] * a[10] * a[15] - a[0] * a[11] * a[14] - a[8] * a[2] * a[15] + a[8] * a[3] * a[14] + a[12] * a[2] * a[11] - a[12] * a[3] * a[10];
+    inv[9] = -a[0] * a[9] * a[15] + a[0] * a[11] * a[13] + a[8] * a[1] * a[15] - a[8] * a[3] * a[13] - a[12] * a[1] * a[11] + a[12] * a[3] * a[9];
+    inv[13] = a[0] * a[9] * a[14] - a[0] * a[10] * a[13] - a[8] * a[1] * a[14] + a[8] * a[2] * a[13] + a[12] * a[1] * a[10] - a[12] * a[2] * a[9];
+    inv[2] = a[1] * a[6] * a[15] - a[1] * a[7] * a[14] - a[5] * a[2] * a[15] + a[5] * a[3] * a[14] + a[13] * a[2] * a[7] - a[13] * a[3] * a[6];
+    inv[6] = -a[0] * a[6] * a[15] + a[0] * a[7] * a[14] + a[4] * a[2] * a[15] - a[4] * a[3] * a[14] - a[12] * a[2] * a[7] + a[12] * a[3] * a[6];
+    inv[10] = a[0] * a[5] * a[15] - a[0] * a[7] * a[13] - a[4] * a[1] * a[15] + a[4] * a[3] * a[13] + a[12] * a[1] * a[7] - a[12] * a[3] * a[5];
+    inv[14] = -a[0] * a[5] * a[14] + a[0] * a[6] * a[13] + a[4] * a[1] * a[14] - a[4] * a[2] * a[13] - a[12] * a[1] * a[6] + a[12] * a[2] * a[5];
+    inv[3] = -a[1] * a[6] * a[11] + a[1] * a[7] * a[10] + a[5] * a[2] * a[11] - a[5] * a[3] * a[10] - a[9] * a[2] * a[7] + a[9] * a[3] * a[6];
+    inv[7] = a[0] * a[6] * a[11] - a[0] * a[7] * a[10] - a[4] * a[2] * a[11] + a[4] * a[3] * a[10] + a[8] * a[2] * a[7] - a[8] * a[3] * a[6];
+    inv[11] = -a[0] * a[5] * a[11] + a[0] * a[7] * a[9] + a[4] * a[1] * a[11] - a[4] * a[3] * a[9] - a[8] * a[1] * a[7] + a[8] * a[3] * a[5];
+    inv[15] = a[0] * a[5] * a[10] - a[0] * a[6] * a[9] - a[4] * a[1] * a[10] + a[4] * a[2] * a[9] + a[8] * a[1] * a[6] - a[8] * a[2] * a[5];
+    let det = a[0] * inv[0] + a[1] * inv[4] + a[2] * inv[8] + a[3] * inv[12];
+    if det.abs() < 1e-20 {
+        return [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    }
+    let k = 1.0 / det;
+    let mut out = [[0.0f32; 4]; 4];
+    for (i, v) in inv.iter().enumerate() {
+        out[i / 4][i % 4] = v * k;
+    }
+    out
 }
 
 struct Target {
@@ -104,6 +291,12 @@ pub struct BoxRenderer {
     front: wgpu::TextureView,
     back: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    env_layout: wgpu::BindGroupLayout,
+    env_bind: wgpu::BindGroup,
+    env_sampler: wgpu::Sampler,
+    /// 景色の拡散の光と、いちばん粗い段階の番号。
+    sh: [[f32; 4]; 9],
+    env_levels: f32,
     vertex_buf: wgpu::Buffer,
     vertex_capacity: usize,
     target: Option<Target>,
@@ -164,7 +357,19 @@ impl BoxRenderer {
                 },
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("box layout"), bind_group_layouts: &[Some(&globals_layout), Some(&art_layout)], immediate_size: 0 });
+        let env_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("box environment"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("box layout"), bind_group_layouts: &[Some(&globals_layout), Some(&art_layout), Some(&env_layout)], immediate_size: 0 });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("box pipeline"),
@@ -219,6 +424,20 @@ impl BoxRenderer {
         let front = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let back = Self::upload(rs, 1, 1, &[255, 255, 255, 0]);
         let art_bind = Self::art_bind_group(rs, &art_layout, &sampler, &front, &back);
+        // 景色は、左右はつながっているので繰り返し、上下は端で止める。
+        let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("box environment"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        // 景色を用意できるまでは、まわりが一様に明るい景色。
+        let plain = env::prepare(&env::Equirect { w: 32, h: 16, px: vec![[1.0; 3]; 32 * 16] });
+        let env_view = Self::upload_env(rs, &plain);
+        let env_bind = Self::env_bind_group(rs, &env_layout, &env_sampler, &env_view);
         let vertex_capacity = 4096;
         BoxRenderer {
             pipeline,
@@ -229,6 +448,11 @@ impl BoxRenderer {
             front,
             back,
             sampler,
+            env_layout,
+            env_bind,
+            env_sampler,
+            sh: plain.sh.map(|c| [c[0], c[1], c[2], 0.0]),
+            env_levels: (plain.mips.len() - 1) as f32,
             vertex_buf: vertex_buffer(device, vertex_capacity),
             vertex_capacity,
             target: None,
@@ -247,6 +471,67 @@ impl BoxRenderer {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// 景色の段階を、半精度の数のテクスチャにして送る。
+    fn upload_env(rs: &egui_wgpu::RenderState, prepared: &Prepared) -> wgpu::TextureView {
+        let top = &prepared.mips[0];
+        let tex = rs.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("box environment"),
+            size: wgpu::Extent3d { width: top.w as u32, height: top.h as u32, depth_or_array_layers: 1 },
+            mip_level_count: prepared.mips.len() as u32,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        for (level, mip) in prepared.mips.iter().enumerate() {
+            let mut bytes = Vec::with_capacity(mip.w * mip.h * 8);
+            for p in &mip.px {
+                for v in [p[0], p[1], p[2], 1.0] {
+                    bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+                }
+            }
+            rs.queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: level as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &bytes,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8 * mip.w as u32), rows_per_image: Some(mip.h as u32) },
+                wgpu::Extent3d { width: mip.w as u32, height: mip.h as u32, depth_or_array_layers: 1 },
+            );
+        }
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn env_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("box environment"),
+            layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }],
+        })
+    }
+
+    /// 照らす景色を差し替える。
+    pub fn set_environment(&mut self, rs: &egui_wgpu::RenderState, prepared: &Prepared) {
+        let view = Self::upload_env(rs, prepared);
+        self.env_bind = Self::env_bind_group(rs, &self.env_layout, &self.env_sampler, &view);
+        self.sh = prepared.sh.map(|c| [c[0], c[1], c[2], 0.0]);
+        self.env_levels = (prepared.mips.len() - 1) as f32;
+    }
+
+    fn globals(&self, view_proj: Mat4, look: &Look, holes: [[f32; 4]; 2]) -> Globals {
+        let [paper_front, paper_back, paper_edge] = paper_values(look.material.paper);
+        Globals {
+            view_proj,
+            inv_view_proj: invert(&view_proj),
+            env: [look.turn.cos(), look.turn.sin(), look.exposure, self.env_levels],
+            holes,
+            sh: self.sh,
+            paper_front,
+            paper_back,
+            paper_edge,
+            coat: coat_values(look.material.coat),
+        }
     }
 
     fn art_bind_group(rs: &egui_wgpu::RenderState, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, front: &wgpu::TextureView, back: &wgpu::TextureView) -> wgpu::BindGroup {
@@ -296,7 +581,7 @@ impl BoxRenderer {
     }
 
     /// 箱を描き、egui で表示できる画像の ID を返す。
-    pub fn render(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, light: V3, holes: [[f32; 4]; 2]) -> Option<egui::TextureId> {
+    pub fn render(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, look: &Look, holes: [[f32; 4]; 2]) -> Option<egui::TextureId> {
         let max = rs.device.limits().max_texture_dimension_2d;
         let size = [size[0].clamp(2, max), size[1].clamp(2, max)];
         self.ensure_target(rs, size);
@@ -305,7 +590,7 @@ impl BoxRenderer {
             self.vertex_buf = vertex_buffer(&rs.device, self.vertex_capacity);
         }
         rs.queue.write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
-        rs.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&Globals { view_proj, light: [light[0], light[1], light[2], 0.0], holes }));
+        rs.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&self.globals(view_proj, look, holes)));
 
         let target = self.target.as_ref()?;
         let mut encoder = rs.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("box") });
@@ -330,6 +615,7 @@ impl BoxRenderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind, &[]);
             pass.set_bind_group(1, &self.art_bind, &[]);
+            pass.set_bind_group(2, &self.env_bind, &[]);
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..std::mem::size_of_val(vertices) as u64));
             pass.draw(0..vertices.len() as u32, 0..1);
         }
@@ -340,7 +626,7 @@ impl BoxRenderer {
     /// 箱を、画面とは別の画像に描いて、RGBA（アルファは乗算なし）で読み戻す。画像や動画に書き出すとき用。
     /// `background` のアルファを 0 にすると、背景は透明になる。
     #[allow(clippy::too_many_arguments)]
-    pub fn capture(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, light: V3, holes: [[f32; 4]; 2], background: [f32; 4]) -> Result<Vec<u8>, String> {
+    pub fn capture(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2], vertices: &[Vertex], view_proj: Mat4, look: &Look, holes: [[f32; 4]; 2], background: [f32; 4]) -> Result<Vec<u8>, String> {
         let max = rs.device.limits().max_texture_dimension_2d;
         if size[0] < 2 || size[1] < 2 || size[0] > max || size[1] > max {
             return Err(t!("This PC cannot draw a {} x {} px image (up to {max} px)", size[0], size[1]));
@@ -356,7 +642,7 @@ impl BoxRenderer {
             self.vertex_buf = vertex_buffer(device, self.vertex_capacity);
         }
         rs.queue.write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
-        rs.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&Globals { view_proj, light: [light[0], light[1], light[2], 0.0], holes }));
+        rs.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&self.globals(view_proj, look, holes)));
         // 1 行の長さは 256 バイトの倍数にそろえる（wgpu の決まり）。
         let row = (size[0] * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("capture readback"), size: (row * size[1]) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
@@ -384,6 +670,7 @@ impl BoxRenderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind, &[]);
             pass.set_bind_group(1, &self.art_bind, &[]);
+            pass.set_bind_group(2, &self.env_bind, &[]);
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..std::mem::size_of_val(vertices) as u64));
             pass.draw(0..vertices.len() as u32, 0..1);
         }

@@ -70,6 +70,7 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "project.new", summary: "Start a new project (in a new tab when the current one has content).", args: schema!(; required: []), read_only: false },
     CommandInfo { name: "project.open", summary: "Open a project file (.pknb). AI can only open files inside the allowed folders.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
     CommandInfo { name: "project.save_as", summary: "Save the project to a new file (.pknb). AI can only write inside the allowed folders and never overwrites an existing file.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "material.set", summary: "Set the paper (coated_board, coated, matte_coated, uncoated, kraft, corrugated) and the coating on the outside (none, matte_varnish, gloss_varnish, matte_pp, gloss_pp, soft_touch_pp). Either can be left out.", args: schema!("paper": r#"{"type":"string"}"#, "coat": r#"{"type":"string"}"#; required: []), read_only: false },
     CommandInfo { name: "shape.set", summary: "Change the box type: tuck_box, gable, pillow, or prism (with sides 3, 5, 6 or 8). Placed artwork comes off the box (undo brings it back). Returns the new panel names.", args: schema!("kind": r#"{"type":"string","enum":["tuck_box","gable","pillow","prism"]}"#, "sides": r#"{"type":"integer"}"#; required: ["kind"]), read_only: false },
     CommandInfo { name: "shape.dimensions", summary: "Set inside dimensions in mm (width, depth, height, thickness of the paper; bulge in degrees for pillow; roof for gable; glue_flap, dust_flap, tuck_flap for the tuck-end box, a number or \"auto\"). Values are kept in range. Not undoable.", args: schema!("width": r#"{"type":"number"}"#, "depth": r#"{"type":"number"}"#, "height": r#"{"type":"number"}"#, "thickness": r#"{"type":"number"}"#, "bulge": r#"{"type":"number"}"#, "roof": r#"{"type":"number"}"#, "glue_flap": "{}", "dust_flap": "{}", "tuck_flap": "{}"; required: []), read_only: false },
     CommandInfo { name: "asset.list", summary: "List the assets that can be placed (built-in samples and this project's assets) with their index.", args: schema!(; required: []), read_only: true },
@@ -214,6 +215,7 @@ impl App {
         json!({
             "file": self.file.path.as_ref().map(|p| p.display().to_string()),
             "shape": { "summary": self.shape_summary(), "sides": d.sides, "w": d.w, "d": d.d, "h": d.h, "paper_mm": d.t },
+            "material": { "paper": self.material.paper.key(), "coat": self.material.coat.key() },
             "panels": self.template.panels.iter().map(|p| p.name).collect::<Vec<_>>(),
             "layers": (0..self.decals.len()).map(|i| self.layer_json(i)).collect::<Vec<_>>(),
             "selected": self.selection().iter().map(|&i| self.decals[i].layer.id).collect::<Vec<_>>(),

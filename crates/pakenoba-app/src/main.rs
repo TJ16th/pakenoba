@@ -7,6 +7,7 @@ mod app;
 mod art;
 mod blend;
 mod effects;
+mod env;
 mod models;
 mod gpu;
 mod paint;

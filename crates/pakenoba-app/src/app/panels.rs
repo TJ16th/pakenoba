@@ -189,7 +189,15 @@ impl App {
         // PhotoCraft と同じく、欄ごとに明るめの灰色の箱にし、箱の間と外を暗い溝にする。
         let side = egui::Frame::new().fill(super::theme::BACKGROUND).inner_margin(egui::Margin::same(4));
         egui::Panel::right("design-side").resizable(false).exact_size(314.0).frame(side).show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            // レイヤーの欄は下に固定する（上の欄の高さが、選んだ柄で変わっても、レイヤーの欄は動かない）。
+            // 境目は上下に動かせる（高さは覚えておく）。
+            let split_id = egui::Id::unique("design-layers-height");
+            let total = ui.available_height();
+            let stored = ui.ctx().data_mut(|d| *d.get_persisted_mut_or(split_id, 380.0f32));
+            let layers_h = stored.clamp(180.0, (total - 120.0).max(180.0));
+            let width = ui.available_width();
+            let top_h = (total - layers_h - 6.0).max(40.0);
+            egui::ScrollArea::vertical().id_salt("properties").max_height(top_h).min_scrolled_height(top_h).auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 super::theme::panel_frame().show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
@@ -205,7 +213,21 @@ impl App {
                         self.properties(ui);
                     });
                 });
+            });
+            // 境目のつまみ（上下に引くと、レイヤーの欄の高さが変わる）。
+            let (handle, response) = ui.allocate_exact_size(egui::vec2(width, 6.0), egui::Sense::drag());
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                ui.painter().hline(handle.x_range(), handle.center().y, egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
+            }
+            if response.dragged() {
+                let next = (layers_h - response.drag_delta().y).clamp(180.0, (total - 120.0).max(180.0));
+                ui.ctx().data_mut(|d| d.insert_persisted(split_id, next));
+            }
+            ui.allocate_ui(egui::vec2(width, layers_h), |ui| {
                 super::theme::panel_frame().show(ui, |ui| {
+                    ui.set_min_size(egui::vec2(ui.available_width(), layers_h - 8.0));
+                    ui.set_max_height(layers_h - 8.0);
                     ui.spacing_mut().item_spacing.y = 6.0;
                     self.layers(ui);
                 });
@@ -429,6 +451,7 @@ impl App {
                 if self.dims.sides == 0 {
                     boxed(ui, t!("Flaps"), false, |ui| self.flap_settings(ui));
                 }
+                boxed(ui, t!("Paper and coating"), false, |ui| self.material_settings(ui));
                 boxed(ui, t!("Dieline check"), false, |ui| {
                     if self.problems.is_empty() {
                         ui.label(t!("No problems were found."));
