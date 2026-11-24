@@ -65,6 +65,19 @@ impl Default for OutputSettings {
     }
 }
 
+/// 画面で再生している、箱開け動画のプレビュー。
+pub(super) struct MoviePreview {
+    start: std::time::Instant,
+    /// はじめの視点（いまの視点）。
+    yaw: f32,
+    /// 隠している、選んだ柄の枠とガイド（終わったら戻す）。
+    kept: Option<(Option<usize>, Vec<usize>, bool)>,
+    pub(super) texture: Option<egui::TextureHandle>,
+}
+
+/// プレビューの絵の大きさ（動画と同じ 16:9）。
+const PREVIEW_SIZE: [u32; 2] = [640, 360];
+
 /// 書き出している途中の動画。
 pub(super) struct MovieJob {
     frame: u32,
@@ -261,6 +274,107 @@ impl App {
                 self.say(t!("Exporting the video…"));
             }
             Err(e) => self.say(t!("Could not export the video: {e}")),
+        }
+    }
+
+    /// 箱開け動画のプレビューを始める（もう一度押すと止める）。
+    pub(super) fn toggle_movie_preview(&mut self) {
+        if self.movie_preview.is_some() {
+            return self.stop_movie_preview();
+        }
+        if self.render_state.is_none() || !self.template.can_open_at(0) {
+            return;
+        }
+        self.movie_preview = Some(MoviePreview { start: std::time::Instant::now(), yaw: self.yaw, kept: None, texture: None });
+    }
+
+    fn stop_movie_preview(&mut self) {
+        if let Some(kept) = self.movie_preview.take().and_then(|p| p.kept) {
+            self.restore_marks(kept);
+        }
+    }
+
+    /// プレビューの 1 コマを描く（画面の更新ごと）。書き出すときと同じ視点と背景で、小さく描く。
+    pub(super) fn movie_preview_frame(&mut self, ctx: &egui::Context) {
+        let Some(preview) = &self.movie_preview else { return };
+        if self.workspace != super::Workspace::Output || self.movie.is_some() {
+            return self.stop_movie_preview();
+        }
+        let Some(rs) = self.render_state.clone() else { return };
+        let total = ((self.output.movie_seconds * MOVIE_FPS as f32).round() as u32).max(10);
+        // 最後のコマのあと 0.8 秒止めてから、はじめに戻ってくり返す。
+        let cycle = total as f32 / MOVIE_FPS as f32 + 0.8;
+        let t = preview.start.elapsed().as_secs_f32() % cycle;
+        let frame = ((t * MOVIE_FPS as f32) as u32).min(total - 1);
+        let yaw0 = preview.yaw;
+        if preview.kept.is_none() {
+            let kept = self.clean_art(ctx, &rs);
+            if let Some(preview) = self.movie_preview.as_mut() {
+                preview.kept = Some(kept);
+            }
+        }
+        let (open, swing) = movie_pose(frame, total, self.output.movie_turn);
+        let background = BACKGROUNDS[self.output.background.min(1)].1;
+        if let Ok(rgba) = self.render_box(&rs, PREVIEW_SIZE, [open, 0.0], yaw0 + swing, background, true) {
+            let image = egui::ColorImage::from_rgba_unmultiplied([PREVIEW_SIZE[0] as usize, PREVIEW_SIZE[1] as usize], &rgba);
+            if let Some(preview) = self.movie_preview.as_mut() {
+                match &mut preview.texture {
+                    Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                    None => preview.texture = Some(ctx.load_texture("movie-preview", image, egui::TextureOptions::LINEAR)),
+                }
+            }
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(1000 / MOVIE_FPS as u64));
+    }
+
+    /// 立体の表示の上に、プレビューを重ねる（書き出す動画と同じ 16:9 の枠に）。押すと止める。
+    pub(super) fn movie_preview_overlay(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        let Some(texture) = self.movie_preview.as_ref().and_then(|p| p.texture.clone()) else { return };
+        let target = PREVIEW_SIZE[0] as f32 / PREVIEW_SIZE[1] as f32;
+        let aspect = rect.width() / rect.height();
+        let frame = if aspect > target { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.height() * target, rect.height())) } else { egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), rect.width() / target)) };
+        let painter = ui.painter().with_clip_rect(rect);
+        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(200));
+        painter.image(texture.id(), frame, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        let label = painter.layout_no_wrap(t!("Preview (click to stop)").to_owned(), egui::FontId::proportional(13.0), egui::Color32::WHITE);
+        let at = frame.left_top() + egui::vec2(10.0, 8.0);
+        painter.rect_filled(egui::Rect::from_min_size(at - egui::vec2(6.0, 3.0), label.size() + egui::vec2(12.0, 6.0)), 4.0, egui::Color32::from_black_alpha(160));
+        painter.galley(at, label, egui::Color32::WHITE);
+        let response = ui.interact(rect, ui.scope_id().with("movie-preview"), egui::Sense::click());
+        if response.clicked() {
+            self.stop_movie_preview();
+        }
+    }
+
+    /// いまの動きの設定を、名前を付けてプリセットに残す（同じ名前があれば上書き）。
+    fn save_motion(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let preset = super::settings::MotionPreset { name: name.to_owned(), seconds: self.output.movie_seconds, turn: self.output.movie_turn, yaw: self.yaw, pitch: self.pitch, size: self.output.movie_size, background: self.output.background };
+        match self.settings.motions.iter_mut().find(|m| m.name == name) {
+            Some(old) => *old = preset,
+            None => self.settings.motions.push(preset),
+        }
+        if let Err(e) = self.settings.save() {
+            self.say(e);
+        } else {
+            self.say(t!("Saved the motion preset \"{name}\". It can be used in any project."));
+        }
+    }
+
+    /// プリセットの動きにする（視点も、その向きへ回す）。
+    fn use_motion(&mut self, index: usize) {
+        let Some(m) = self.settings.motions.get(index).cloned() else { return };
+        self.output.movie_seconds = m.seconds;
+        self.output.movie_turn = m.turn;
+        self.output.movie_size = m.size.min(MOVIE_SIZES.len() - 1);
+        self.output.background = m.background.min(1);
+        self.look_from(m.yaw, m.pitch);
+        if let Some(preview) = self.movie_preview.as_mut() {
+            preview.yaw = m.yaw;
+            preview.start = std::time::Instant::now();
         }
     }
 
@@ -584,10 +698,53 @@ impl App {
                         ui.end_row();
                     });
                     ui.checkbox(&mut self.output.movie_turn, t!("Turn slightly while opening"));
+                    // 動きのプリセット（どの案件でも使える）。
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(t!("Motion preset"));
+                        let mut chosen = None;
+                        egui::ComboBox::from_id_salt("motion-preset").selected_text(t!("Choose…")).show_ui(ui, |ui| {
+                            if self.settings.motions.is_empty() {
+                                ui.weak(t!("No presets yet"));
+                            }
+                            for (i, m) in self.settings.motions.iter().enumerate() {
+                                if ui.selectable_label(false, &m.name).clicked() {
+                                    chosen = Some(i);
+                                }
+                            }
+                        });
+                        if let Some(i) = chosen {
+                            self.use_motion(i);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.motion_name).hint_text(t!("Preset name")).desired_width(120.0));
+                        if ui.add_enabled(!self.motion_name.trim().is_empty(), egui::Button::new(t!("Save motion"))).on_hover_text(t!("Saves the length, turning, size, background and the current viewing angle")).clicked() {
+                            let name = std::mem::take(&mut self.motion_name);
+                            self.save_motion(&name);
+                        }
+                        let named = self.settings.motions.iter().position(|m| m.name == self.motion_name.trim());
+                        if ui.add_enabled(named.is_some(), egui::Button::new(t!("Delete"))).on_hover_text(t!("Deletes the preset with this name")).clicked()
+                            && let Some(i) = named
+                        {
+                            self.settings.motions.remove(i);
+                            if let Err(e) = self.settings.save() {
+                                self.say(e);
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
                     let busy = self.movie.is_some();
-                    if ui.add_enabled(!busy, egui::Button::new(t!("Save video…"))).clicked() {
-                        self.export_movie();
-                    }
+                    ui.horizontal(|ui| {
+                        let playing = self.movie_preview.is_some();
+                        if ui.add_enabled(!busy && self.template.can_open_at(0), egui::Button::new(if playing { t!("Stop preview") } else { t!("Preview") })).on_hover_text(t!("Plays the video on screen, the same as it will be saved")).clicked() {
+                            self.toggle_movie_preview();
+                        }
+                        if ui.add_enabled(!busy, egui::Button::new(t!("Save video…"))).clicked() {
+                            self.stop_movie_preview();
+                            self.export_movie();
+                        }
+                    });
                     if !self.template.can_open_at(0) {
                         ui.small(t!("This box type has no opening motion."));
                     }

@@ -310,6 +310,7 @@ impl App {
                 candidate = self.solid_view(ui, view, rs.as_ref(), carry.filter(|(_, p)| view.contains(*p)));
                 if self.workspace == Workspace::Output {
                     self.shot_frame(ui, view);
+                    self.movie_preview_overlay(ui, view);
                 }
             }
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);

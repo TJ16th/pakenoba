@@ -1295,3 +1295,13 @@ blend	Color	カラー
 	Show this adjustment	この調整を表示
 	← Settings of this layer	← このレイヤーの設定へ
 	Finishing the video…	動画を仕上げています…
+	Deletes the preset with this name	この名前のプリセットを削除します
+	Motion preset	動きのプリセット
+	No presets yet	まだありません
+	Plays the video on screen, the same as it will be saved	書き出すのと同じ動画を、画面で再生します
+	Preset name	プリセットの名前
+	Preview (click to stop)	プレビュー（押すと止まります）
+	Save motion	動きを保存
+	Saved the motion preset "{name}". It can be used in any project.	動きのプリセット「{name}」を保存しました。どの案件でも使えます。
+	Saves the length, turning, size, background and the current viewing angle	長さ、回り込み、大きさ、背景と、いまの見る向きを保存します
+	Stop preview	プレビューを止める

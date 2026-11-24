@@ -344,6 +344,8 @@ impl App {
         };
         let mut problems = opened.problems;
         problems.extend(self.apply_project(opened.project));
+        // 作りかけの案件は、型はもう決まっていることが多いので、デザインの工程から始める。
+        self.workspace = Workspace::Design;
         let name = file_name(path);
         if problems.is_empty() {
             self.file.path = Some(path.to_owned());

@@ -602,6 +602,10 @@ struct App {
     /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
     solid_aspect: f32,
     movie: Option<outputs::MovieJob>,
+    /// 画面で再生している、箱開け動画のプレビュー。
+    movie_preview: Option<outputs::MoviePreview>,
+    /// 動きのプリセットに付ける名前（打っている途中）。
+    motion_name: String,
     /// 別のスレッドで動いている書き出し（型紙の PSD、入稿用の PDF）。
     export_job: Option<export::ExportJob>,
     /// 最後に書き出した、生成AI用の画像のフォルダとカメラ。
@@ -777,6 +781,8 @@ impl App {
             peek: peek::PeekState::new(initial.peek),
             solid_aspect: 16.0 / 9.0,
             movie: None,
+            movie_preview: None,
+            motion_name: String::new(),
             export_job: None,
             last_view: None,
             pack_job: None,
@@ -1504,6 +1510,7 @@ impl eframe::App for App {
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());
+        self.movie_preview_frame(ui.ctx());
         self.poll_export(ui.ctx());
         self.poll_pack(ui.ctx());
         self.poll_edits(ui.ctx());
