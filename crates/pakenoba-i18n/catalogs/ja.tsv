@@ -1305,3 +1305,17 @@ blend	Color	カラー
 	Saved the motion preset "{name}". It can be used in any project.	動きのプリセット「{name}」を保存しました。どの案件でも使えます。
 	Saves the length, turning, size, background and the current viewing angle	長さ、回り込み、大きさ、背景と、いまの見る向きを保存します
 	Stop preview	プレビューを止める
+	3d	3D
+	Could not save the 3D model: {e}	3D モデルを保存できませんでした: {e}
+	For older 3D apps. Saves the .obj, a .mtl and two PNG images; keep them together	古い 3D アプリ向け。.obj と .mtl と 2 枚の PNG を保存します。同じフォルダに置いたまま使ってください
+	Lengths are in meters. Foil, embossing and varnish are baked into the artwork as colors; their shine is not included.	長さはメートルです。箔・エンボス・ニスは色として絵に焼き込みます（光り方は入りません）。
+	One file with the shape and artwork. Opens in Blender, browser viewers and many 3D apps	形と絵が 1 つのファイルに入ります。Blender、ブラウザのビューア、多くの 3D アプリで開けます
+	Save as GLB…	GLB で保存…
+	Save as OBJ…	OBJ で保存…
+	Save the 3D model (GLB)	3D モデルを保存（GLB）
+	Save the 3D model (OBJ)	3D モデルを保存（OBJ）
+	Saved {} files ({}). Keep them in the same folder.	{} 個のファイルを保存しました（{}）。同じフォルダに置いたまま使ってください。
+	Saved {}. It opens in Blender, in a browser viewer such as Babylon.js Sandbox, and in many 3D apps.	{} を保存しました。Blender や、Babylon.js Sandbox などのブラウザのビューア、多くの 3D アプリで開けます。
+	Saves the box as a 3D model, folded and opened as it is now on screen, with the artwork on the outside and inside.	いま画面に出ている組み立て具合・開き具合のまま、箱を 3D モデルとして保存します。外側と内側の柄も入ります。
+	To look at it on Windows, use Blender, or open it in a browser viewer such as Babylon.js Sandbox.	Windows で見るには、Blender か、Babylon.js Sandbox などのブラウザのビューアで開いてください。
+	3D model (GLB, OBJ)	3D モデル（GLB、OBJ）

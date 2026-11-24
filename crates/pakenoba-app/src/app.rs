@@ -25,6 +25,7 @@ mod typing;
 mod shapes;
 pub(crate) mod adjust;
 mod vectorize;
+mod model3d;
 mod menus;
 mod peek;
 mod splash;
@@ -145,6 +146,8 @@ pub fn run(initial: Initial) -> eframe::Result {
         Box::new(move |cc| {
             setup_style(&cc.egui_ctx);
             crate::effects::set_wake(&cc.egui_ctx);
+            // Windows のタイトルバーも暗い色にする（アプリの中だけ暗くしても、タイトルバーは OS の色のままになる）。
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
             Ok(Box::new(App::new(&initial)))
         }),
     )
@@ -602,6 +605,8 @@ struct App {
     /// 立体の表示の縦横比（書き出す画像の範囲を、表示の上の枠と合わせるため）。
     solid_aspect: f32,
     movie: Option<outputs::MovieJob>,
+    /// 起動してから数えた画面の数（タイトルバーを暗くし直すため。30 で止める）。
+    title_theme_frames: u8,
     /// 画面で再生している、箱開け動画のプレビュー。
     movie_preview: Option<outputs::MoviePreview>,
     /// 動きのプリセットに付ける名前（打っている途中）。
@@ -782,6 +787,7 @@ impl App {
             solid_aspect: 16.0 / 9.0,
             movie: None,
             movie_preview: None,
+            title_theme_frames: 0,
             motion_name: String::new(),
             export_job: None,
             last_view: None,
@@ -1424,6 +1430,15 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // 起動した直後は、ウィンドウが出る前に色を決めても、タイトルバーが白いまま残ることがある。
+        // 出てから少しのあいだに、もう一度暗い色を頼む（Windows では、タイトルバーの描き直しも頼まれる）。
+        if self.title_theme_frames < 30 {
+            self.title_theme_frames += 1;
+            if matches!(self.title_theme_frames, 2 | 30) {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
+            }
+            ui.ctx().request_repaint();
+        }
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
             let Some(target) = self.open_to[which] else { continue };

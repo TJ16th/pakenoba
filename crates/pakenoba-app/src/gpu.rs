@@ -405,6 +405,12 @@ fn with(rgb: [f32; 3], a: f32) -> [f32; 4] {
 
 /// 紙の表、裏、切り口の、色と粗さ。
 fn paper_values(paper: Paper) -> [[f32; 4]; 3] {
+    let [front, back, edge] = paper_colors(paper);
+    [with(linear(front.0), front.1), with(linear(back.0), back.1), with(linear(edge.0), edge.1)]
+}
+
+/// 紙の表・裏・断面の色（sRGB）と、つやの無さ（0 がつやつや、1 がつや消し）。
+pub fn paper_colors(paper: Paper) -> [([u8; 3], f32); 3] {
     let (front, back, edge) = match paper {
         Paper::CoatedBoard => (([244, 244, 240], 0.42), ([178, 176, 171], 0.8), ([196, 192, 184], 0.9)),
         Paper::Coated => (([246, 246, 244], 0.35), ([246, 246, 244], 0.35), ([236, 234, 229], 0.85)),
@@ -413,7 +419,7 @@ fn paper_values(paper: Paper) -> [[f32; 4]; 3] {
         Paper::Kraft => (([176, 134, 92], 0.8), ([168, 127, 87], 0.85), ([150, 112, 78], 0.9)),
         Paper::Corrugated => (([184, 146, 104], 0.85), ([170, 135, 96], 0.88), ([160, 125, 88], 0.95)),
     };
-    [with(linear(front.0), front.1), with(linear(back.0), back.1), with(linear(edge.0), edge.1)]
+    [front, back, edge]
 }
 
 /// 紙のきめ: 繊維の大きさ（mm）、表と裏の凹凸の高さ（mm）、色のむら。段ボールの段の間隔と高さ（mm）。

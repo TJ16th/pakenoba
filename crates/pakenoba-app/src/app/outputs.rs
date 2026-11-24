@@ -25,11 +25,13 @@ use crate::paint::{Canvas, Marks, paint};
 use crate::print::{Paper, PrintSettings, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
-pub(super) const OUTPUTS: [(&str, bool); 8] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true), ("Images for generative AI (ControlNet, Firefly)", true)];
+pub(super) const OUTPUTS: [(&str, bool); 9] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true), ("Images for generative AI (ControlNet, Firefly)", true), ("3D model (GLB, OBJ)", true)];
 /// 入稿用の PDF の出力の番号。
 pub(super) const READY_OUTPUT: usize = 6;
 /// 生成AI用の画像の出力の番号。
 pub(super) const VIEW_OUTPUT: usize = 7;
+/// 3D の書き出しの番号。
+pub(super) const MODEL_OUTPUT: usize = 8;
 
 /// 画像の大きさ（16:9）。
 const SHOT_SIZES: [(&str, [u32; 2]); 2] = [("1920 x 1080", [1920, 1080]), ("3840 x 2160 (4K)", [3840, 2160])];
@@ -144,7 +146,7 @@ pub(super) fn png_bytes(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, String> 
 
 impl App {
     /// 保存先を選んでもらう。`what` はダイアログの題、`ext` は拡張子、`suffix` ははじめの名前に足す言葉。
-    fn ask_output(&mut self, what: &str, filter: &str, ext: &str, suffix: &str) -> Option<PathBuf> {
+    pub(super) fn ask_output(&mut self, what: &str, filter: &str, ext: &str, suffix: &str) -> Option<PathBuf> {
         if let Some(answer) = self.answer_export.take() {
             return Some(with_extension(answer, ext));
         }
@@ -778,6 +780,19 @@ impl App {
                 }
                 super::peek::PEEK_OUTPUT => self.peek_settings(ui),
                 VIEW_OUTPUT => self.view_settings(ui),
+                MODEL_OUTPUT => {
+                    ui.label(t!("Saves the box as a 3D model, folded and opened as it is now on screen, with the artwork on the outside and inside."));
+                    ui.horizontal(|ui| {
+                        if ui.button(t!("Save as GLB…")).on_hover_text(t!("One file with the shape and artwork. Opens in Blender, browser viewers and many 3D apps")).clicked() {
+                            self.export_glb();
+                        }
+                        if ui.button(t!("Save as OBJ…")).on_hover_text(t!("For older 3D apps. Saves the .obj, a .mtl and two PNG images; keep them together")).clicked() {
+                            self.export_obj();
+                        }
+                    });
+                    ui.small(t!("Lengths are in meters. Foil, embossing and varnish are baked into the artwork as colors; their shine is not included."));
+                    ui.small(t!("To look at it on Windows, use Blender, or open it in a browser viewer such as Babylon.js Sandbox."));
+                }
                 READY_OUTPUT => {
                     ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
                     let plates = self.plate_names();
