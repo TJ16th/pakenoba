@@ -532,7 +532,8 @@ impl App {
                 FinishKind::Emboss => {
                     ui.label(egui::RichText::new(t!("Direction")).color(super::theme::MUTED));
                     let deboss = self.finishes[index].deboss;
-                    ui.horizontal(|ui| {
+                    // 横に並べると、言語によっては欄の幅を超える（超えると右の欄が広がり、左の端が立体の表示に隠れる）。縦に並べる。
+                    ui.vertical(|ui| {
                         if ui.add(egui::Button::selectable(!deboss, t!("Raise (emboss)"))).clicked() && deboss {
                             self.person("finish.set", json!({ "id": id, "deboss": false }));
                         }
