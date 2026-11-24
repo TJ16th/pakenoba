@@ -14,7 +14,8 @@ use pakenoba_core::template::Vertex;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
-const BACKGROUND: wgpu::Color = wgpu::Color { r: 0.17, g: 0.175, b: 0.19, a: 1.0 };
+/// 立体の表示の地の色（PhotoCraft の絵を置く場所と同じ #282828）。
+const BACKGROUND: wgpu::Color = wgpu::Color { r: 0.157, g: 0.157, b: 0.157, a: 1.0 };
 
 const SHADER: &str = r#"
 struct Globals {

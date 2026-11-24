@@ -150,27 +150,39 @@ impl App {
 
     /// 右（デザイン）: 選んだ柄の設定と、レイヤー。
     pub(super) fn design_side(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("design-side").resizable(false).exact_size(310.0).show(ui, |ui| {
+        // PhotoCraft と同じく、欄ごとに明るめの灰色の箱にし、箱の間と外を暗い溝にする。
+        let side = egui::Frame::new().fill(super::theme::BACKGROUND).inner_margin(egui::Margin::same(4));
+        egui::Panel::right("design-side").resizable(false).exact_size(314.0).frame(side).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(4.0);
-                // 型の工程へ戻る入口。言語によっては長くなるので、折り返す。
-                ui.horizontal_wrapped(|ui| {
-                    if ui.small_button(t!("Structure")).on_hover_text(t!("Go back to the Structure step to change the box type and dimensions")).clicked() {
-                        self.workspace = Workspace::Shape;
-                    }
-                    ui.weak(self.shape_summary());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                super::theme::panel_frame().show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    icons::panel_tabs(ui, &[t!("Properties")], 0);
+                    super::theme::panel_body().show(ui, |ui| {
+                        // 型の工程へ戻る入口。言語によっては長くなるので、折り返す。
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.small_button(t!("Structure")).on_hover_text(t!("Go back to the Structure step to change the box type and dimensions")).clicked() {
+                                self.workspace = Workspace::Shape;
+                            }
+                            ui.weak(self.shape_summary());
+                        });
+                        self.properties(ui);
+                    });
                 });
-                ui.separator();
-                self.properties(ui);
-                ui.add_space(12.0);
-                self.layers(ui);
+                super::theme::panel_frame().show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    self.layers(ui);
+                });
+                super::theme::panel_frame().show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    icons::panel_tabs(ui, &[t!("Load dieline artwork")], 0);
+                    super::theme::panel_body().show(ui, |ui| self.psd_loader(ui));
+                });
             });
         });
     }
 
     fn properties(&mut self, ui: &mut egui::Ui) {
-        icons::panel_tabs(ui, &[t!("Properties")], 0);
-        ui.add_space(6.0);
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else {
             ui.weak(t!("Select artwork to see its settings here."));
             return;
@@ -178,7 +190,15 @@ impl App {
         if !crate::paint::is_artwork(&self.decals[index].picture) {
             return self.layer_properties(ui, index);
         }
-        // 値を変えたときに、変える前へ戻せるよう、いまの状態を取っておく。
+        // 見出し: レイヤーの名前と、右に種類（PhotoCraft の「Layer 1 … Pixel Layer」と同じ）。
+        let title = self.layer_label(index);
+        let kind = self.decals[index].picture.label();
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
+            icons::draw_image(ui.painter(), rect.center(), egui::Stroke::new(1.1, super::theme::TEXT));
+            ui.label(egui::RichText::new(title).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(kind));
+        });
         let others = self.selection().len() - 1;
         if others > 0 {
             ui.weak(t!("{others} more selected. They move together."));
@@ -192,12 +212,7 @@ impl App {
         } else if self.decals[index].layer.lock_pixels {
             ui.weak(t!("Image is locked. Unlock it in the Layers panel to change adjustments or the mask."));
         }
-        self.text_properties(ui, index, locked);
-        self.shape_properties(ui, index, locked);
         self.brush_options(ui);
-        self.adjust_properties(ui, index, locked);
-        self.adjust_controls(ui, index, locked);
-        self.edit_controls(ui, index);
         let earlier = self.snapshot();
         let template = &self.template;
         let ratio_lock = &mut self.ratio_lock;
@@ -217,39 +232,47 @@ impl App {
         let mut height = decal.size[1];
         // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
         let mut degrees = decal.angle.to_degrees() * turn + 0.0;
-        ui.add_enabled_ui(!fixed, |ui| egui::Grid::new("properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Type"));
-            ui.label(decal.picture.label());
-            ui.end_row();
-            ui.label(t!("Side of sheet"));
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut back, false, t!(" Front ")).on_hover_text(t!("Place on the front of the sheet (outside of the box)"));
-                ui.selectable_value(&mut back, true, t!(" Back ")).on_hover_text(t!("Place on the back of the sheet (inside of the box), such as under the lid"));
+        // 変形（PhotoCraft の「Transform」と同じ並び: W と H の間に鎖、その下に X と Y）。
+        // 欄の幅から、数値の欄の幅を決める（はみ出さないように。見出しの字下げのぶんも引く）。
+        let fw = ((ui.available_width() - 24.0 - 84.0) / 2.0).clamp(56.0, 90.0);
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Transform")).strong()).id_salt("transform").default_open(true).show(ui, |ui| {
+            let label = |ui: &mut egui::Ui, text: &str| {
+                ui.add_sized([22.0, 22.0], egui::Label::new(egui::RichText::new(text).color(super::theme::MUTED)));
+            };
+            let field = |ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str| {
+                ui.add_sized([fw, 22.0], egui::DragValue::new(value).range(range).speed(0.5).max_decimals(1).suffix(unit));
+            };
+            ui.add_enabled_ui(!fixed, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    label(ui, t!("W"));
+                    field(ui, &mut width, 2.0..=2000.0, " mm");
+                    if icons::link_button(ui, *ratio_lock).clicked() {
+                        *ratio_lock = !*ratio_lock;
+                    }
+                    label(ui, t!("H"));
+                    field(ui, &mut height, 2.0..=2000.0, " mm");
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    label(ui, t!("X"));
+                    field(ui, &mut x, -2000.0..=4000.0, " mm");
+                    ui.add_space(22.0);
+                    label(ui, t!("Y"));
+                    field(ui, &mut y, -2000.0..=4000.0, " mm");
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    label(ui, t!("Angle"));
+                    field(ui, &mut degrees, -180.0..=180.0, t!("°"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(t!("Side of sheet")).color(super::theme::MUTED));
+                    ui.selectable_value(&mut back, false, t!(" Front ")).on_hover_text(t!("Place on the front of the sheet (outside of the box)"));
+                    ui.selectable_value(&mut back, true, t!(" Back ")).on_hover_text(t!("Place on the back of the sheet (inside of the box), such as under the lid"));
+                });
             });
-            ui.end_row();
-            ui.label(t!("Position X"));
-            number(ui, &mut x, -2000.0..=4000.0, "mm");
-            ui.end_row();
-            ui.label(t!("Position Y"));
-            number(ui, &mut y, -2000.0..=4000.0, "mm");
-            ui.end_row();
-            // 幅と高さは 1 行に並べ、間に比率をそろえる鎖のボタン（Photoshop と同じ形）。
-            ui.label(t!("Size"));
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.label(t!("W"));
-                ui.add_sized([78.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut width).range(2.0..=2000.0).speed(0.5).max_decimals(1).suffix(" mm"));
-                if icons::link_button(ui, *ratio_lock).clicked() {
-                    *ratio_lock = !*ratio_lock;
-                }
-                ui.label(t!("H"));
-                ui.add_sized([78.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut height).range(2.0..=2000.0).speed(0.5).max_decimals(1).suffix(" mm"));
-            });
-            ui.end_row();
-            ui.label(t!("Rotation"));
-            number(ui, &mut degrees, -180.0..=180.0, t!("°"));
-            ui.end_row();
-        }));
+        });
         if (x, y) != (x0, y0) {
             // 数値で動かすときは、置かれている面の中にとどめる（隣の面へは、ドラッグで動かす）。
             decal.set_center(template, [template.min[0] + mirror(x), template.max[1] - y]);
@@ -293,7 +316,13 @@ impl App {
         if seams > 0 {
             ui.small(t!("Crosses {seams} seam(s)."));
         }
-        ui.add_space(2.0);
+        // 中身ごとの設定（文字、図形）、柄だけの調整、画像の道具、外のアプリで直す。
+        self.text_properties(ui, index, locked);
+        self.shape_properties(ui, index, locked);
+        self.adjust_properties(ui, index, locked);
+        self.adjust_controls(ui, index, locked);
+        self.edit_controls(ui, index);
+        ui.add_space(4.0);
         if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
             self.delete_selected();
         }
@@ -301,7 +330,7 @@ impl App {
 
     /// 展開図まるごとの絵（PSD）の読み込み。
     pub(super) fn psd_loader(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t!("Load dieline artwork")).default_open(!self.psd_info.is_empty()).show(ui, |ui| {
+        {
             ui.small(t!("Draw on a dieline PSD saved from \"Output\" and drop it on the window. You can also type its path. Artwork drawn on a back dieline (one whose name ends with \"_back\") is laid on the back of the sheet."));
             let mut load_clicked = false;
             let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
@@ -316,7 +345,7 @@ impl App {
             if !self.psd_info.is_empty() {
                 ui.small(&self.psd_info);
             }
-        });
+        }
     }
 
     /// 左（型）: 型の一覧。

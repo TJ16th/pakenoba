@@ -200,9 +200,9 @@ pub(super) fn bare_button(ui: &mut egui::Ui, size: egui::Vec2, on: bool, enabled
         visuals.text_color().gamma_multiply(0.85)
     };
     if on {
-        ui.painter().rect_filled(rect, 3.0, Color32::from_white_alpha(if enabled { 34 } else { 18 }));
+        ui.painter().rect_filled(rect, 3.0, if enabled { super::theme::SELECTED } else { super::theme::HOVER });
     } else if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, Color32::from_white_alpha(16));
+        ui.painter().rect_filled(rect, 3.0, super::theme::HOVER);
     }
     icon(ui.painter(), rect.center(), Stroke::new(1.15, color));
     response.on_hover_text(tip).on_disabled_hover_text(tip)
@@ -246,8 +246,8 @@ pub(super) fn panel_tabs(ui: &mut egui::Ui, tabs: &[&str], active: usize) -> Opt
     let height = 30.0;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let visuals = ui.visuals().clone();
-    // 帯は欄より少し暗く、選んでいるタブは欄と同じ色（PhotoCraft と同じ）。
-    let bar = visuals.panel_fill.lerp_to_gamma(Color32::BLACK, 0.18);
+    // 帯は欄より暗く、選んでいるタブは欄と同じ色（PhotoCraft と同じ）。
+    let bar = super::theme::TAB_BAR;
     ui.painter().rect_filled(rect, 0.0, bar);
     let mut x = rect.left();
     let mut clicked = None;
@@ -259,7 +259,7 @@ pub(super) fn panel_tabs(ui: &mut egui::Ui, tabs: &[&str], active: usize) -> Opt
         if i == active {
             ui.painter().rect_filled(tab, 0.0, visuals.panel_fill);
         }
-        let color = if i == active { visuals.strong_text_color() } else { visuals.weak_text_color() };
+        let color = if i == active { super::theme::TEXT } else { super::theme::FAINT };
         ui.painter().galley_with_override_text_color(pos2(tab.left() + 12.0, tab.center().y - galley.size().y / 2.0), galley, color);
         if response.clicked() {
             clicked = Some(i);

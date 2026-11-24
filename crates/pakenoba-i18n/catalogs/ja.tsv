@@ -329,17 +329,13 @@
 	Select artwork to see its settings here.	柄を選ぶと、ここに設定が出ます。
 	{others} more selected. They move together.	ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。
 	Locked. To move it, unlock it in the Layers panel.	ロックしています。動かすには、レイヤーの欄で鍵を外してください。
-	Type	種類
 	Side of sheet	紙の面
 	 Front 	 表 
 	Place on the front of the sheet (outside of the box)	紙の表（箱の外側）に置く
 	 Back 	 裏 
 	Place on the back of the sheet (inside of the box), such as under the lid	紙の裏（箱の内側）に置く。フタの裏など
-	Position X	位置 X
-	Position Y	位置 Y
 	Width	幅
 	Height	高さ
-	Rotation	回転
 	°	度
 	Moved to the back of the sheet. You can see it in the "Back" view or inside the opened box.	紙の裏へ移しました。「裏」の表示か、箱を開けた内側で見られます。
 	Moved to the front of the sheet.	紙の表へ移しました。
@@ -867,3 +863,11 @@ blend	Color	カラー
 	Shape layers	図形のレイヤー
 	Show all layers	すべてのレイヤーを出す
 	Text layers	文字のレイヤー
+# PhotoCraft に合わせたプロパティとトーンカーブ
+	Angle	角度
+	Click to add a point · double-click or right-click to remove	押すと点を足す・ダブルクリックか右クリックで消す
+	Input:	入力:
+	Output:	出力:
+	Transform	変形
+	X	X
+	Y	Y

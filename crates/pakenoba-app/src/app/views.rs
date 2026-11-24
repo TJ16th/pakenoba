@@ -24,7 +24,7 @@ const SOLID_SHARE: f32 = 0.55;
 const RULER_TOP: f32 = 18.0;
 const RULER_LEFT: f32 = 30.0;
 /// 展開図の表示の地の色。立体の表示の地と同じにする。
-const BACKDROP: Color32 = Color32::from_rgb(43, 45, 48);
+const BACKDROP: Color32 = super::theme::CANVAS;
 
 /// 出ている表示の組み合わせから、それぞれの場所を決める。返すのは、立体、表、裏の順。
 ///

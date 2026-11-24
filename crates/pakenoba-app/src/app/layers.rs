@@ -165,7 +165,7 @@ impl LayerFilter {
 /// 欄の中の、細い区切りの線。
 fn line(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color));
+    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, super::theme::DIVIDER));
 }
 
 /// 紙の表と裏の見出し（小さな灰色の字）。
@@ -296,11 +296,11 @@ impl App {
     /// 上から: 見出しのタブ、絞り込み、描画モードと不透明度、ロックと塗り、レイヤーの一覧、いちばん下のボタン。
     pub(super) fn layers(&mut self, ui: &mut egui::Ui) {
         icons::panel_tabs(ui, &[t!("Layers")], 0);
-        ui.add_space(6.0);
-        self.layer_filter_row(ui);
-        ui.add_space(4.0);
-        self.layer_controls(ui);
-        ui.add_space(6.0);
+        super::theme::panel_body().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            self.layer_filter_row(ui);
+            self.layer_controls(ui);
+        });
         let filtering = self.layer_filter.active();
         // 紙の表と裏に分けて、上に重なっているものから並べる。
         let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
@@ -332,11 +332,10 @@ impl App {
             }
         });
         self.drag_layer(ui, &rows_at);
-        ui.add_space(4.0);
+        // 一覧の下は、空いた所を残してから、いちばん下のボタン（PhotoCraft と同じ）。
+        ui.add_space(24.0);
         line(ui);
-        self.layer_buttons(ui);
-        ui.add_space(8.0);
-        self.psd_loader(ui);
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| self.layer_buttons(ui));
     }
 
     /// 絞り込みの段（PhotoCraft の「種類」の段と同じ形）: 名前で探す欄と、種類のボタン。
@@ -507,15 +506,17 @@ impl App {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::click_and_drag());
         let visuals = ui.visuals().clone();
         let painter = ui.painter().clone();
-        if selected {
-            painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(30));
-        } else if response.hovered() {
-            painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(10));
-        }
-        painter.hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
-        // 目の列と、区切りの線。
+        // 目の列は少し暗く、選んだ行は明るめの灰色（PhotoCraft と同じ）。
         let eye = egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, ROW_H));
-        painter.vline(eye.right(), rect.y_range(), egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
+        painter.rect_filled(eye, 0.0, super::theme::EYE_COLUMN);
+        let body = egui::Rect::from_min_max(egui::pos2(eye.right(), rect.top()), rect.max);
+        if selected {
+            painter.rect_filled(body, 0.0, super::theme::SELECTED);
+        } else if response.hovered() {
+            painter.rect_filled(body, 0.0, super::theme::HOVER);
+        }
+        painter.hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, super::theme::ROW_LINE));
+        painter.vline(eye.right(), rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
         if ui.put(egui::Rect::from_center_size(eye.center(), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !layer.hidden)).clicked() {
             self.checkpoint();
             self.decals[index].layer.hidden = !layer.hidden;
@@ -742,12 +743,14 @@ impl App {
     fn sub_row(&mut self, ui: &mut egui::Ui, depth: f32, on: bool, label: &str, heading: bool, focused: bool) -> (bool, bool) {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SUB_H), egui::Sense::click());
         let visuals = ui.visuals().clone();
+        ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, SUB_H)), 0.0, super::theme::EYE_COLUMN);
+        let body = egui::Rect::from_min_max(egui::pos2(rect.left() + EYE_W, rect.top()), rect.max);
         if focused {
-            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_white_alpha(22));
+            ui.painter().rect_filled(body, 0.0, super::theme::SELECTED);
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_white_alpha(8));
+            ui.painter().rect_filled(body, 0.0, super::theme::HOVER);
         }
-        ui.painter().vline(rect.left() + EYE_W, rect.y_range(), egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
+        ui.painter().vline(rect.left() + EYE_W, rect.y_range(), egui::Stroke::new(1.0, super::theme::DIVIDER));
         let eye = ui.put(egui::Rect::from_center_size(egui::pos2(rect.left() + EYE_W / 2.0, rect.center().y), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, on));
         let x = rect.left() + EYE_W + 6.0 + DEPTH_W * depth + THUMB_PT / 2.0 + if heading { 0.0 } else { 18.0 };
         let ink = if on { visuals.text_color() } else { visuals.weak_text_color() };
@@ -1202,7 +1205,7 @@ impl App {
                     if !layer_only || n > 1 {
                         ui.checkbox(&mut a.on, t!("Adjustment visible"));
                     }
-                    if !layer_only && ui.add_sized([ui.available_width(), 26.0], egui::Button::new(t!("Reset to defaults")).corner_radius(13.0)).clicked() {
+                    if !layer_only && super::theme::pill_button(ui, t!("Reset to defaults")).clicked() {
                         reset = Some(k);
                     }
                 }
@@ -1292,7 +1295,7 @@ impl App {
                             self.toggle_clip(index);
                         }
                     });
-                    if ui.add_sized([ui.available_width(), 28.0], egui::Button::new(t!("Reset to defaults")).corner_radius(14.0)).clicked() {
+                    if super::theme::pill_button(ui, t!("Reset to defaults")).clicked() {
                         self.checkpoint();
                         for a in &mut self.decals[index].layer.adjust {
                             a.kind = default_of(a.kind);
@@ -1649,24 +1652,38 @@ fn default_of(kind: AdjustKind) -> AdjustKind {
     PIXEL_ADJUST.iter().flatten().chain(IMAGE_ADJUST.iter()).copied().find(|k| std::mem::discriminant(k) == std::mem::discriminant(&kind)).unwrap_or(kind)
 }
 
-/// トーンカーブの欄。点をドラッグで動かし、線の上を押すと点を足す（8 つまで）。点をダブルクリックか右クリックで消す（両端は消せない）。
+/// トーンカーブの欄（PhotoCraft の「Curves」と同じ形: 左に出力、下に入力の濃淡の帯、4 × 4 の目盛り、四角い点、その下に入力と出力の数値）。
+/// 点をドラッグで動かし、線の上を押すと点を足す（8 つまで）。点をダブルクリックか右クリックで消す（両端は消せない）。
 fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
-    let side = (ui.available_width() - 4.0).clamp(120.0, 280.0);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
-    let painter = ui.painter_at(rect);
-    let visuals = ui.visuals();
-    painter.rect_filled(rect, 2.0, visuals.extreme_bg_color);
+    let bar = 10.0;
+    let side = (ui.available_width() - bar - 8.0).clamp(120.0, 280.0);
+    let (outer, _) = ui.allocate_exact_size(egui::vec2(side + bar + 4.0, side + bar + 4.0), egui::Sense::hover());
+    let rect = egui::Rect::from_min_size(egui::pos2(outer.left() + bar + 4.0, outer.top()), egui::vec2(side, side));
+    let response = ui.interact(rect, ui.scope_id().with("curve"), egui::Sense::click_and_drag());
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, 0.0, super::theme::SUNKEN);
+    // 濃淡の帯（左は出力、下は入力）。
+    let steps = 32;
+    for k in 0..steps {
+        let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
+        let g = |t: f32| egui::Color32::from_gray((t * 255.0) as u8);
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(outer.left(), rect.bottom() - side * t1), egui::pos2(outer.left() + bar, rect.bottom() - side * t0)), 0.0, g((t0 + t1) / 2.0));
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left() + side * t0, rect.bottom() + 4.0), egui::pos2(rect.left() + side * t1, rect.bottom() + 4.0 + bar)), 0.0, g((t0 + t1) / 2.0));
+    }
+    let grid = egui::Stroke::new(1.0, super::theme::HOVER);
     for k in 1..4 {
         let t = k as f32 / 4.0;
-        let stroke = egui::Stroke::new(1.0, visuals.weak_text_color().gamma_multiply(0.3));
-        painter.line_segment([egui::pos2(rect.left() + side * t, rect.top()), egui::pos2(rect.left() + side * t, rect.bottom())], stroke);
-        painter.line_segment([egui::pos2(rect.left(), rect.top() + side * t), egui::pos2(rect.right(), rect.top() + side * t)], stroke);
+        painter.vline(rect.left() + side * t, rect.y_range(), grid);
+        painter.hline(rect.x_range(), rect.top() + side * t, grid);
     }
+    painter.line_segment([rect.left_bottom(), rect.right_top()], egui::Stroke::new(1.0, super::theme::PRESSED));
     let to_screen = |p: [u8; 2]| egui::pos2(rect.left() + p[0] as f32 / 255.0 * side, rect.bottom() - p[1] as f32 / 255.0 * side);
     let from_screen = |p: egui::Pos2| [(((p.x - rect.left()) / side) * 255.0).round().clamp(0.0, 255.0) as u8, (((rect.bottom() - p.y) / side) * 255.0).round().clamp(0.0, 255.0) as u8];
     let n = *count as usize;
     let drag_id = response.id.with("point");
-    let mut dragging: Option<usize> = ui.data(|d| d.get_temp(drag_id));
+    let pick_id = response.id.with("picked");
+    let mut dragging: Option<usize> = ui.data(|d| d.get_temp::<usize>(drag_id));
+    let mut picked: Option<usize> = ui.data(|d| d.get_temp::<usize>(pick_id)).filter(|&i| i < n);
     let near = |p: egui::Pos2, pts: &[[u8; 2]]| pts.iter().enumerate().map(|(i, q)| (i, to_screen(*q).distance(p))).filter(|(_, d)| *d < 8.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
     if response.drag_started() && let Some(p) = response.interact_pointer_pos() {
         dragging = near(p, &points[..n]);
@@ -1675,10 +1692,18 @@ fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
             *count += 1;
             dragging = Some(n);
         }
+        picked = dragging;
     }
-    if response.clicked() && let Some(p) = response.interact_pointer_pos() && near(p, &points[..n]).is_none() && n < 8 {
-        points[n] = from_screen(p);
-        *count += 1;
+    if response.clicked() && let Some(p) = response.interact_pointer_pos() {
+        match near(p, &points[..n]) {
+            Some(i) => picked = Some(i),
+            None if n < 8 => {
+                points[n] = from_screen(p);
+                *count += 1;
+                picked = Some(n);
+            }
+            None => {}
+        }
     }
     if (response.double_clicked() || response.secondary_clicked()) && let Some(p) = response.interact_pointer_pos() && let Some(i) = near(p, &points[..n]) {
         let mut sorted: Vec<[u8; 2]> = points[..n].to_vec();
@@ -1689,6 +1714,7 @@ fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
             sorted.remove(pos);
             points[..sorted.len()].copy_from_slice(&sorted);
             *count -= 1;
+            picked = None;
         }
         dragging = None;
     }
@@ -1698,19 +1724,41 @@ fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
     if response.drag_stopped() {
         dragging = None;
     }
-    ui.data_mut(|d| d.insert_temp(drag_id, dragging));
     let n = *count as usize;
     let lut = crate::effects::curve_lut(&points[..n]);
     let line: Vec<egui::Pos2> = (0..=64).map(|k| { let x = k * 255 / 64; egui::pos2(rect.left() + x as f32 / 255.0 * side, rect.bottom() - lut[x] * side) }).collect();
-    painter.add(egui::Shape::line(line, egui::Stroke::new(1.6, visuals.text_color())));
-    for p in &points[..n] {
-        painter.circle(to_screen(*p), 3.5, visuals.extreme_bg_color, egui::Stroke::new(1.4, visuals.strong_text_color()));
+    painter.with_clip_rect(rect.expand(1.0)).add(egui::Shape::line(line, egui::Stroke::new(1.5, super::theme::TEXT)));
+    for (i, p) in points[..n].iter().enumerate() {
+        let box_ = egui::Rect::from_center_size(to_screen(*p), egui::vec2(7.0, 7.0));
+        let fill = if picked == Some(i) { egui::Color32::WHITE } else { super::theme::SUNKEN };
+        painter.rect(box_, 0.0, fill, egui::Stroke::new(1.2, egui::Color32::WHITE), egui::StrokeKind::Middle);
     }
     response.on_hover_text(t!("Drag a point to bend the curve. Click on the curve to add a point (up to 8). Double-click or right-click a point to remove it"));
-    if ui.small_button(t!("Reset")).clicked() {
-        *points = pakenoba_core::project::CURVE_STRAIGHT;
-        *count = 2;
-    }
+    // 入力と出力（選んだ点の値）。
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(picked.is_some(), |ui| {
+            let (mut input, mut output) = picked.map_or((0, 0), |i| (points[i][0] as i32, points[i][1] as i32));
+            ui.label(egui::RichText::new(t!("Input:")).color(super::theme::MUTED));
+            ui.add_sized([52.0, 20.0], egui::DragValue::new(&mut input).range(0..=255));
+            ui.label(egui::RichText::new(t!("Output:")).color(super::theme::MUTED));
+            ui.add_sized([52.0, 20.0], egui::DragValue::new(&mut output).range(0..=255));
+            if let Some(i) = picked {
+                points[i] = [input as u8, output as u8];
+            }
+        });
+    });
+    ui.small(egui::RichText::new(t!("Click to add a point · double-click or right-click to remove")).color(super::theme::FAINT));
+    // 覚えておくのは番号だけ（ないときは消す）。
+    ui.data_mut(|d| {
+        for (id, value) in [(drag_id, dragging), (pick_id, picked)] {
+            match value {
+                Some(v) => {
+                    d.insert_temp(id, v);
+                }
+                None => d.remove::<usize>(id),
+            }
+        }
+    });
 }
 
 #[cfg(test)]

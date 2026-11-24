@@ -29,6 +29,7 @@ mod home;
 mod transform;
 mod views;
 mod layers;
+mod theme;
 
 use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
@@ -149,13 +150,8 @@ fn setup_style(ctx: &egui::Context) {
             style.text_styles.insert(text_style, FontId::new(size, FontFamily::Proportional));
         }
         style.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
-        // 文字は、暗い地の上で、はっきり読める明るさにする（egui の既定は、本文も補足も暗すぎる）。
-        // 本文は地との明るさの比がおよそ 12:1、補足でも 7:1。
-        style.visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::from_gray(216);
-        style.visuals.widgets.inactive.fg_stroke.color = egui::Color32::from_gray(222);
-        style.visuals.weak_text_color = Some(egui::Color32::from_gray(164));
-        style.visuals.selection.bg_fill = TEAL;
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        // 色は PhotoCraft と同じ（app/theme.rs）。
+        theme::apply(style);
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     });
 }
