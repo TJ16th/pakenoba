@@ -308,7 +308,11 @@ struct Painter<'a> {
 impl Painter<'_> {
     /// 柄がかかる画素ごとに、`f(画素の番号, その画素の値（target の per 個）, 柄の座標, 柄の縁からの距離)` を呼ぶ。
     /// 柄の座標は、裏の柄では左右を逆にしたもの（絵の向き）。広い範囲は、行の束に分けて、別のスレッドで描く。
-    fn each_pixel<T: Send>(&self, decal: &Placed, target: &mut [T], per: usize, f: impl Fn(usize, &mut [T], P2, f32) + Sync) {
+    /// `tiled` なら、タイルの設定（`Layer::tile`）のある柄を、並べて敷き詰めた形で描く。
+    fn each_pixel<T: Send>(&self, decal: &Placed, target: &mut [T], per: usize, tiled: bool, f: impl Fn(usize, &mut [T], P2, f32) + Sync) {
+        if let Some(tile) = decal.layer.tile.filter(|_| tiled) {
+            return self.each_tiled_pixel(decal, tile, target, per, f);
+        }
         let (surface, tpl, w, back, frame) = (self.surface, self.tpl, self.w, self.back, &self.frame);
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
@@ -354,6 +358,60 @@ impl Painter<'_> {
                         }
                         let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
                         // 裏の柄は、裏から見て正しく読めるように、左右を逆にして描く。
+                        let o = ((y - first) * w + x) * per;
+                        f(y * w + x, &mut band[o..o + per], if back { [-q[0], q[1]] } else { q }, from_edge);
+                    }
+                }
+            };
+            let area = &mut target[y0 * w * per..y1 * w * per];
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+            if (x1 - x0) * (y1 - y0) < 150_000 || threads < 2 {
+                rows(y0, area);
+                continue;
+            }
+            let band_rows = (y1 - y0).div_ceil(threads).max(8);
+            let rows = &rows;
+            std::thread::scope(|scope| {
+                for (i, band) in area.chunks_mut(band_rows * w * per).enumerate() {
+                    scope.spawn(move || rows(y0 + i * band_rows, band));
+                }
+            });
+        }
+    }
+
+    /// タイルのように並べた柄の、かかる画素ごとに `f` を呼ぶ（引数は `each_pixel` と同じ。柄の座標は、そのタイルの中での座標）。
+    /// 並びは、展開図の上で柄の向きにまっすぐ続く。置いたパネルだけか、展開図のすべての面に敷く。
+    fn each_tiled_pixel<T: Send>(&self, decal: &Placed, tile: pakenoba_core::project::Tile, target: &mut [T], per: usize, f: impl Fn(usize, &mut [T], P2, f32) + Sync) {
+        let (tpl, w, back, frame) = (self.tpl, self.w, self.back, &self.frame);
+        let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
+        let to_decal = decal.place(tpl).inverse();
+        let grow = self.zone.map_or(0.0, |z| z.bleed);
+        for (index, panel) in tpl.panels.iter().enumerate() {
+            if !panel.takes_art() || (tile.panel_only && index != decal.panel) {
+                continue;
+            }
+            let outline = &panel.outline;
+            let lo = outline.iter().fold([f32::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+            let hi = outline.iter().fold([f32::NEG_INFINITY; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
+            let (x0, x1, y0, y1) = frame.span([lo[0] - grow, lo[1] - grow], [hi[0] + grow, hi[1] + grow]);
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
+            let rows = |first: usize, band: &mut [T]| {
+                let count = band.len() / (w * per);
+                for y in first..first + count {
+                    for x in x0..x1 {
+                        let at = frame.at(x, y);
+                        let shown = match self.zone {
+                            // 塗り足しのあるとき: 紙の外は、いちばん近いパネルのぶんだけ（敷き詰めた柄は、どこでもかかっている）。
+                            Some(zone) => inside(outline, at) || zone.reaches(y * w + x, index, at, |_| true),
+                            None => inside(outline, at) && !tpl.in_hole(at[0], at[1]),
+                        };
+                        if !shown {
+                            continue;
+                        }
+                        let Some(q) = tile.wrap(to_decal.point(at), decal.size) else { continue };
+                        let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
                         let o = ((y - first) * w + x) * per;
                         f(y * w + x, &mut band[o..o + per], if back { [-q[0], q[1]] } else { q }, from_edge);
                     }
@@ -468,7 +526,7 @@ impl Painter<'_> {
         let size = decal.size;
         let ppm = self.frame.ppm;
         let blend = decal.layer.blend;
-        self.each_pixel(decal, target, 4, |i, px, q, _| {
+        self.each_pixel(decal, target, 4, true, |i, px, q, _| {
             let color = picture.sample_at(q, size, ppm);
             let mut a = color[3] * opacity;
             if let Some(mask) = mask {
@@ -483,7 +541,7 @@ impl Painter<'_> {
 
     /// 選んでいる柄の枠と、カーソルの下の柄の枠。描画モードやグループに関係なく、いちばん上に描く。
     fn marks(&self, decal: &Placed, picked: bool, target: &mut [u8]) {
-        self.each_pixel(decal, target, 4, |_, px, q, from_edge| {
+        self.each_pixel(decal, target, 4, false, |_, px, q, from_edge| {
             let color = if picked && from_edge < 0.6 {
                 // 選んでいる柄の枠。縁から 0.6 mm を、点線で描く。
                 let dash = ((q[0] + q[1]) / 3.0).rem_euclid(2.0) < 1.0;
@@ -559,7 +617,7 @@ pub fn paint_mask(surface: &Surface, tpl: &Template, decal: &Placed, back: bool,
     let mask = decal.layer.mask.as_ref()?;
     let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, frame, wait: true, zone: None };
     let mut out = vec![0u8; w * h];
-    painter.each_pixel(decal, &mut out, 1, |_, px, q, _| px[0] = (mask_at(mask, q, decal.size) * 255.0).round() as u8);
+    painter.each_pixel(decal, &mut out, 1, true, |_, px, q, _| px[0] = (mask_at(mask, q, decal.size) * 255.0).round() as u8);
     Some(out)
 }
 

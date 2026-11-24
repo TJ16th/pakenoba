@@ -1231,3 +1231,13 @@ blend	Color	カラー
 	Sample pack	見本パック
 	The data folder was not found, so the sample pack cannot be installed.	データのフォルダが見つからないので、見本パックを入れられません。
 	This ZIP is not a PAKENOBA sample pack (pakenoba-samples.json is missing).	この ZIP は、パケノバの見本パックではありません（pakenoba-samples.json がありません）。
+	Tile	タイル
+	Repeat as tiles	タイル状に並べる
+	Repeat this artwork across the panels, like wallpaper. Move or turn the artwork to shift or turn the whole pattern.	この柄を、壁紙のように面いっぱいに並べます。柄を動かしたり回したりすると、並び全体がずれたり回ったりします。
+	Gap	すき間
+	W 	横 
+	H 	縦 
+	Row offset	段のずらし
+	How far each row is shifted sideways. 50% gives a brick (half-drop) pattern.	1 段ごとに横へずらす量。50% でレンガ積み（ハーフドロップ）になります。
+	Brick	レンガ
+	Only on this panel	この面だけ

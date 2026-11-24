@@ -302,11 +302,65 @@ pub struct Layer {
     pub fill: u8,
     /// 描画モード（下の絵との重ね方）。
     pub blend: Blend,
+    /// タイルのように並べて敷き詰める（None なら 1 つだけ）。
+    pub tile: Option<Tile>,
+}
+
+/// 柄を、タイルのように縦横に並べて敷き詰める設定。並べる向きは柄の向き（柄を回せば、並びも回る）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Tile {
+    /// 柄と柄のすき間（横、縦。0.1 mm 単位）。マイナスなら重ねて詰める。
+    pub gap: [i16; 2],
+    /// 1 段上がるごとに、横へずらす量（柄 1 つぶんの間隔に対する %、0〜99）。50 でレンガ積み（ハーフドロップ）。
+    pub shift: u8,
+    /// 置いたパネルの中だけに並べる。偽なら、展開図のすべての面に並べる。
+    pub panel_only: bool,
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::Tile;
+
+    #[test]
+    fn タイルは間隔ごとに繰り返し_すき間には描かない() {
+        let tile = Tile { gap: [20, 0], shift: 0, panel_only: false };
+        let size = [10.0, 6.0];
+        // もとの柄の中。
+        assert_eq!(tile.wrap([1.0, 1.0], size), Some([1.0, 1.0]));
+        // 右へ 1 つ（間隔 12 mm）。
+        let q = tile.wrap([13.0, 1.0], size).unwrap();
+        assert!((q[0] - 1.0).abs() < 1e-4 && (q[1] - 1.0).abs() < 1e-4);
+        // すき間。
+        assert_eq!(tile.wrap([6.0, 0.0], size), None);
+        // レンガ積み: 1 段上では、半分ずれる。
+        let brick = Tile { shift: 50, ..tile };
+        let q = brick.wrap([6.0 + 1.0, 6.0], size).unwrap();
+        assert!((q[0] - 1.0).abs() < 1e-4 && q[1].abs() < 1e-4, "{q:?}");
+    }
+}
+
+impl Tile {
+    /// すき間（mm）。
+    pub fn gap_mm(&self) -> [f32; 2] {
+        [self.gap[0] as f32 * 0.1, self.gap[1] as f32 * 0.1]
+    }
+
+    /// 柄の座標（もとの柄の中心が原点、mm）の点が、どれかのタイルの上なら、そのタイルの中での座標を返す。すき間なら None。
+    pub fn wrap(&self, q: [f32; 2], size: [f32; 2]) -> Option<[f32; 2]> {
+        let gap = self.gap_mm();
+        let step = [(size[0] + gap[0]).max(0.5), (size[1] + gap[1]).max(0.5)];
+        let row = ((q[1] + step[1] * 0.5) / step[1]).floor();
+        let y = q[1] - row * step[1];
+        let x0 = q[0] - row * step[0] * self.shift.min(99) as f32 / 100.0;
+        let column = ((x0 + step[0] * 0.5) / step[0]).floor();
+        let x = x0 - column * step[0];
+        (x.abs() <= size[0] * 0.5 && y.abs() <= size[1] * 0.5).then_some([x, y])
+    }
 }
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal }
+        Layer { id: 0, adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal, tile: None }
     }
 }
 
@@ -903,6 +957,9 @@ struct DecalEntry {
     /// 2026-11-24 の版で書いた、グループに入っている印（深さ 1 として読む）。
     #[serde(default, skip_serializing)]
     in_group: bool,
+    /// タイルのように並べる設定。並べないときは書かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tile: Option<TileEntry>,
     /// グループの入れ子の深さ。
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     depth: u8,
@@ -921,6 +978,20 @@ struct DecalEntry {
     /// 調整（下から順）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     adjust: Vec<AdjustEntry>,
+}
+
+/// タイルの並べ方（ファイルでの形）。
+#[derive(Serialize, Deserialize)]
+struct TileEntry {
+    /// すき間（横、縦。mm）。
+    #[serde(default)]
+    gap: [f64; 2],
+    /// 1 段ごとの横のずれ（%）。
+    #[serde(default)]
+    shift: u8,
+    /// 置いたパネルの中だけ。
+    #[serde(default, skip_serializing_if = "is_false")]
+    panel_only: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1265,7 +1336,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
+                    DecalEntry { id: placed.layer.id, asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect(), tile: placed.layer.tile.map(|t| TileEntry { gap: t.gap_mm().map(tidy), shift: t.shift, panel_only: t.panel_only }) }
                 })
                 .collect(),
             finishes: self
@@ -1702,7 +1773,8 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         };
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
         let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend } });
+        let tileable = !matches!(source, Source::Group { .. } | Source::Adjustment);
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { id: entry.id, adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend, tile: entry.tile.as_ref().filter(|_| tileable).map(|t| Tile { gap: t.gap.map(|g| (g * 10.0).round().clamp(-5000.0, 5000.0) as i16), shift: t.shift.min(99), panel_only: t.panel_only }) } });
     }
     tidy_groups(&mut decals);
 
@@ -1908,6 +1980,7 @@ mod tests {
                     mask: (panel % 3 == 1).then(|| Mask { w: 3 + panel as u32, h: 2, data: Arc::new((0..(3 + panel) * 2).map(|i| (i * 37) as u8).collect()), invert: panel % 2 == 0, enabled: panel % 5 != 1 }),
                     depth: 0,
                     clipped: panel % 2 == 1,
+                    tile: (panel % 3 == 2).then_some(Tile { gap: [25, -10], shift: 50, panel_only: panel % 2 == 0 }),
                 } }
             })
             .collect::<Vec<_>>();

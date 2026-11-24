@@ -375,6 +375,7 @@ impl App {
         if seams > 0 {
             ui.small(t!("Crosses {seams} seam(s)."));
         }
+        self.tile_properties(ui, index, locked);
         // 中身ごとの設定（文字、図形）、柄だけの調整、画像の道具、外のアプリで直す。
         self.text_properties(ui, index, locked);
         self.shape_properties(ui, index, locked);
@@ -384,6 +385,48 @@ impl App {
         ui.add_space(4.0);
         if ui.add_enabled(!locked, egui::Button::new(t!("Delete this artwork"))).on_hover_text("Delete").on_disabled_hover_text(t!("Locked artwork cannot be deleted")).clicked() {
             self.cmd_delete();
+        }
+    }
+
+    /// タイル（柄を縦横に並べて敷き詰める）。
+    fn tile_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
+        let earlier = self.snapshot();
+        let before = self.decals[index].layer.tile;
+        let mut on = before.is_some();
+        let mut tile = before.unwrap_or_default();
+        let mut gap = tile.gap_mm();
+        let mut shift = tile.shift as f32;
+        egui::CollapsingHeader::new(egui::RichText::new(t!("Tile")).strong()).id_salt("tile").default_open(before.is_some()).show(ui, |ui| {
+            ui.add_enabled_ui(!locked, |ui| {
+                ui.checkbox(&mut on, t!("Repeat as tiles")).on_hover_text(t!("Repeat this artwork across the panels, like wallpaper. Move or turn the artwork to shift or turn the whole pattern."));
+                ui.add_enabled_ui(on, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(t!("Gap")).color(super::theme::MUTED));
+                        ui.add(egui::DragValue::new(&mut gap[0]).range(-200.0..=500.0).speed(0.2).max_decimals(1).prefix(t!("W ")).suffix(" mm"));
+                        ui.add(egui::DragValue::new(&mut gap[1]).range(-200.0..=500.0).speed(0.2).max_decimals(1).prefix(t!("H ")).suffix(" mm"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(t!("Row offset")).color(super::theme::MUTED));
+                        ui.add(egui::DragValue::new(&mut shift).range(0.0..=99.0).speed(0.5).max_decimals(0).suffix(" %")).on_hover_text(t!("How far each row is shifted sideways. 50% gives a brick (half-drop) pattern."));
+                        if ui.small_button(t!("Brick")).clicked() {
+                            shift = if shift == 50.0 { 0.0 } else { 50.0 };
+                        }
+                    });
+                    ui.checkbox(&mut tile.panel_only, t!("Only on this panel"));
+                });
+            });
+        });
+        tile.gap = gap.map(|g| (g * 10.0).round().clamp(-2000.0, 5000.0) as i16);
+        tile.shift = shift.round().clamp(0.0, 99.0) as u8;
+        let after = on.then_some(tile);
+        if after != before {
+            self.decals[index].layer.tile = after;
+            self.art_dirty = true;
+            self.back_dirty = true;
+            if !self.editing {
+                self.history.record(earlier);
+            }
+            self.editing = true;
         }
     }
 
