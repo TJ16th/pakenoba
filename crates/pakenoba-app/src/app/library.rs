@@ -146,15 +146,80 @@ pub(super) struct Thumbs {
     frame: u64,
 }
 
-/// 画像のファイルから、一覧の絵を作る。
-fn make(path: &Path, px: usize) -> Result<Made, String> {
+/// 一覧の絵を、次に開いたときにも使えるように置いておく場所（中身の印と大きさで引く）。
+/// テストでは置かない（使う人のフォルダに書かないように）。
+fn cache_dir() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    super::settings::data_dir().map(|d| d.join("thumbnails"))
+}
+
+/// 置いておいた絵を読む。中身の印 `id` が同じなら、ファイルの場所や名前が変わっても使える。
+fn cached(dir: &Path, id: &str, px: usize) -> Option<Made> {
+    let file = std::fs::File::open(dir.join(format!("{id}-{px}.png"))).ok()?;
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file)).read_info().ok()?;
+    let size = reader.info().uncompressed_latin1_text.iter().find(|t| t.keyword == "pakenoba-size").and_then(|t| {
+        let (w, h) = t.text.split_once(' ')?;
+        Some([w.parse().ok()?, h.parse().ok()?])
+    })?;
+    let info = reader.info();
+    if info.width as usize != px || info.height as usize != px || info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    let mut rgba = vec![0u8; px * px * 4];
+    reader.next_frame(&mut rgba).ok()?;
+    Some(Made { rgba, size, id: id.to_owned() })
+}
+
+/// 作った絵を置いておく（書けなくても、かまわない）。
+fn keep(dir: &Path, made: &Made, px: usize) {
+    let write = || -> Option<()> {
+        std::fs::create_dir_all(dir).ok()?;
+        let path = dir.join(format!("{}-{px}.png", made.id));
+        let partial = path.with_extension("part");
+        let file = std::fs::File::create(&partial).ok()?;
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), px as u32, px as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        encoder.add_text_chunk("pakenoba-size".to_owned(), format!("{} {}", made.size[0], made.size[1])).ok()?;
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&made.rgba).ok()?;
+        writer.finish().ok()?;
+        std::fs::rename(&partial, &path).ok()
+    };
+    write();
+}
+
+/// 画像のファイルから、一覧の絵を作る。前に作った絵が置いてあれば、それを使う。
+/// SVG は、もとの大きさ（長いほう 2400 px）で描かずに、絵の大きさに合わせて小さく描く（ずっと速い）。
+fn make(path: &Path, px: usize, dir: Option<&Path>) -> Result<Made, String> {
     let bytes = std::fs::read(path).map_err(|e| t!("Could not open: {e}"))?;
-    let picture = decode_image(&bytes)?;
-    let Picture::Image { w, h, .. } = &picture else { return Err(t!("Not an image").to_owned()) };
-    let size = [*w, *h];
-    let rgba = thumbnail(&picture, [50.0, 50.0 * *h as f32 / *w as f32], px);
-    let id = project::Asset::new("", bytes, [0.0, 0.0], "").id().to_owned();
-    Ok(Made { rgba, size, id })
+    let asset = project::Asset::new("", bytes, [0.0, 0.0], "");
+    let id = asset.id().to_owned();
+    if let Some(made) = dir.and_then(|dir| cached(dir, &id, px)) {
+        return Ok(made);
+    }
+    let bytes = asset.bytes();
+    let (picture, size) = if crate::vector::is_svg(bytes) {
+        let (w, h, rgba) = crate::vector::decode_svg_long(bytes, (px * 2) as f32)?;
+        // 柄として置くときの大きさ（長いほうが 2400 px）を、画像の大きさとして見せる。
+        let scale = crate::vector::RASTER_LONG / w.max(h) as f32;
+        let size = [((w as f32 * scale).round() as usize).max(1), ((h as f32 * scale).round() as usize).max(1)];
+        (Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: true }, size)
+    } else {
+        let picture = decode_image(bytes)?;
+        let Picture::Image { w, h, .. } = &picture else { return Err(t!("Not an image").to_owned()) };
+        let size = [*w, *h];
+        (picture, size)
+    };
+    let rgba = thumbnail(&picture, [50.0, 50.0 * size[1] as f32 / size[0] as f32], px);
+    let made = Made { rgba, size, id };
+    if let Some(dir) = dir {
+        keep(dir, &made, px);
+    }
+    Ok(made)
 }
 
 impl Thumbs {
@@ -169,28 +234,54 @@ impl Thumbs {
         if !self.cache.contains_key(&key) {
             let send = self.send.get_or_insert_with(|| {
                 let (send, wanted) = mpsc::channel::<(PathBuf, usize)>();
-                let done = self.done_send.clone();
-                let ctx = ctx.clone();
+                // 頼まれたものの山。新しく頼まれたものから作る（流し見たあとで、いま見ている絵が後回しにならないように）。
+                let queue = std::sync::Arc::new((std::sync::Mutex::new((Vec::<(PathBuf, usize)>::new(), false)), std::sync::Condvar::new()));
+                let dir = cache_dir();
+                // 何人かで手分けして作る（SVG を描くのは重いので）。
+                let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).saturating_sub(1).clamp(1, 4);
+                for k in 0..workers {
+                    let (queue, done, ctx, dir) = (queue.clone(), self.done_send.clone(), ctx.clone(), dir.clone());
+                    std::thread::Builder::new()
+                        .name(format!("pakenoba-thumbs-{k}"))
+                        .spawn(move || {
+                            loop {
+                                let job = {
+                                    let (lock, ready) = &*queue;
+                                    let mut jobs = lock.lock().unwrap_or_else(|e| e.into_inner());
+                                    loop {
+                                        if let Some(job) = jobs.0.pop() {
+                                            break job;
+                                        }
+                                        // 一覧がなくなった（頼む係が終わった）ら、終わる。
+                                        if jobs.1 {
+                                            return;
+                                        }
+                                        jobs = ready.wait(jobs).unwrap_or_else(|e| e.into_inner());
+                                    }
+                                };
+                                let (path, px) = job;
+                                let result = make(&path, px, dir.as_deref());
+                                if done.send(Done { path, px, result }).is_err() {
+                                    return;
+                                }
+                                ctx.request_repaint();
+                            }
+                        })
+                        .expect("could not start the thumbnail thread");
+                }
+                // 頼みを受け取って、山に積む係。
                 std::thread::Builder::new()
                     .name("pakenoba-thumbs".to_owned())
                     .spawn(move || {
-                        // 新しく頼まれたものから作る（流し見たあとで、いま見ている絵が後回しにならないように）。
-                        let mut queue = Vec::new();
-                        loop {
-                            if queue.is_empty() {
-                                match wanted.recv() {
-                                    Ok(job) => queue.push(job),
-                                    Err(_) => return,
-                                }
-                            }
-                            queue.extend(wanted.try_iter());
-                            let Some((path, px)) = queue.pop() else { continue };
-                            let result = make(&path, px);
-                            if done.send(Done { path, px, result }).is_err() {
-                                return;
-                            }
-                            ctx.request_repaint();
+                        let (lock, ready) = &*queue;
+                        while let Ok(job) = wanted.recv() {
+                            let mut jobs = lock.lock().unwrap_or_else(|e| e.into_inner());
+                            jobs.0.push(job);
+                            jobs.0.extend(wanted.try_iter());
+                            ready.notify_all();
                         }
+                        lock.lock().unwrap_or_else(|e| e.into_inner()).1 = true;
+                        ready.notify_all();
                     })
                     .expect("could not start the thumbnail thread");
                 send
@@ -960,5 +1051,34 @@ mod tests {
         assert!(app.settings.collections.is_empty());
         assert_eq!(app.library.place, Place::Project);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod thumb_cache_tests {
+    use super::*;
+
+    #[test]
+    fn 一覧の絵は_置いておいて_次からはそれを使う() {
+        let dir = std::env::temp_dir().join(format!("pakenoba-thumbs-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("丸.svg");
+        std::fs::write(&svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" viewBox="0 0 40 20"><circle cx="10" cy="10" r="8" fill="#c81e28"/></svg>"##).unwrap();
+        let store = dir.join("cache");
+        let first = make(&svg, 64, Some(&store)).unwrap();
+        // 長いほうが 2400 px の大きさとして見せる。
+        assert_eq!(first.size, [2400, 1200]);
+        assert_eq!(std::fs::read_dir(&store).unwrap().count(), 1);
+        // 置いた絵を読む（中身が同じなら、名前が違っても）。
+        let copy = dir.join("写し.svg");
+        std::fs::copy(&svg, &copy).unwrap();
+        let again = cached(&store, &first.id, 64).expect("置いた絵が読める");
+        assert_eq!(again.rgba, first.rgba);
+        assert_eq!(again.size, first.size);
+        assert_eq!(make(&copy, 64, Some(&store)).unwrap().rgba, first.rgba);
+        // 大きさが違えば、別に作る。
+        assert!(cached(&store, &first.id, 32).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

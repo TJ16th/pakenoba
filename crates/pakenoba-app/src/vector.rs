@@ -36,6 +36,11 @@ fn on_big_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) ->
 
 /// SVG のファイルの中身を、RGBA（アルファは乗算なし）に描く。大きさは、SVG の縦横の比のまま、長いほうを [`RASTER_LONG`] px に。
 pub fn decode_svg(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
+    decode_svg_long(bytes, RASTER_LONG)
+}
+
+/// SVG を、長いほうが `long` px の絵に描く（一覧の小さな絵は、小さく描けば速い）。
+pub fn decode_svg_long(bytes: &[u8], long: f32) -> Result<(usize, usize, Vec<u8>), String> {
     let bytes = bytes.to_vec();
     on_big_stack(move || {
         let tree = tree::parse(&bytes, &tree::Limits::default(), &usvg::Options::default()).map_err(|e| t!("Could not read the SVG: {e}"))?;
@@ -44,7 +49,7 @@ pub fn decode_svg(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
         if !(sw > 0.0 && sh > 0.0) {
             return Err(t!("The SVG has no size").to_owned());
         }
-        let scale = RASTER_LONG / sw.max(sh);
+        let scale = long / sw.max(sh);
         let (w, h) = (((sw * scale).round() as u32).max(1), ((sh * scale).round() as u32).max(1));
         let pixmap = tree::draw::render(&tree, usvg::Transform::from_scale(w as f32 / sw, h as f32 / sh), w, h, 0, DRAW_BUDGET).map_err(|e| t!("Could not draw the SVG: {}", e.message))?;
         // resvg の絵はアルファを乗算しているので、戻す。
