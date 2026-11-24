@@ -325,8 +325,12 @@ fn plate_cmyk(rgb: [u8; 3]) -> [f32; 4] {
 /// - 加工の版は、版の名前の特色（Separation）で、オーバープリントにして、絵の上に重ねる。
 ///   版の形は 1 ビットのステンシル（画像マスク）なので、特色を見せない画面では、代わりの CMYK で絵の上に見える。
 /// - 最後のページに、加工の指示（`notes`。英数字だけ刷る）。
-pub fn print_ready_pdf(min: P2, max: P2, w: usize, h: usize, sides: &[ReadySide], title: &str, notes: &[String]) -> Result<Vec<u8>, String> {
+pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[ReadySide], title: &str, notes: &[String]) -> Result<Vec<u8>, String> {
+    let (w, h) = (frame.w, frame.h);
     let size = [max[0] - min[0], max[1] - min[1]];
+    // 画像の置き場所（mm。紙の左下からの、画像の左下と、幅と高さ）。画素の数どおりの大きさにする（実寸がずれないように）。
+    let image_at = [READY_MARGIN + frame.left - min[0], READY_MARGIN + frame.top - frame.h as f32 / frame.ppm - min[1]];
+    let image_size = [frame.w as f32 / frame.ppm, frame.h as f32 / frame.ppm];
     let k = PT_PER_MM;
     let m = READY_MARGIN;
     let (pw, ph) = (size[0] + 2.0 * m, size[1] + 2.0 * m);
@@ -411,8 +415,9 @@ pub fn print_ready_pdf(min: P2, max: P2, w: usize, h: usize, sides: &[ReadySide]
 
         let to_page = |p: P2| [(m + p[0] - min[0]) * k, (m + p[1] - min[1]) * k];
         let mut content = Content::new();
+        let place = [image_size[0] * k, 0.0, 0.0, image_size[1] * k, image_at[0] * k, image_at[1] * k];
         content.save_state();
-        content.transform([size[0] * k, 0.0, 0.0, size[1] * k, m * k, m * k]);
+        content.transform(place);
         content.x_object(Name(b"Im0"));
         content.restore_state();
         content.save_state();
@@ -422,7 +427,7 @@ pub fn print_ready_pdf(min: P2, max: P2, w: usize, h: usize, sides: &[ReadySide]
             content.save_state();
             content.set_fill_color_space(Name(cs.as_bytes()));
             content.set_fill_color([1.0]);
-            content.transform([size[0] * k, 0.0, 0.0, size[1] * k, m * k, m * k]);
+            content.transform(place);
             content.x_object(Name(mk.as_bytes()));
             content.restore_state();
         }
@@ -558,7 +563,8 @@ mod tests {
         let plates = [crate::art::Plate { name: "Foil Gold".into(), rgb: [212, 175, 55], ink }];
         let cuts = [([0.0, 0.0], [200.0, 0.0])];
         let side = ReadySide { label: "Front", rgba: &rgba, plates: &plates, cuts: &cuts, folds: &[] };
-        let bytes = print_ready_pdf([0.0, 0.0], [200.0, 100.0], w, h, &[side], "box", &["- Foil Gold (front)".into()]).unwrap();
+        let frame = crate::art::Frame { left: 0.0, top: 100.0, ppm: 0.1, w, h };
+        let bytes = print_ready_pdf([0.0, 0.0], [200.0, 100.0], frame, &[side], "box", &["- Foil Gold (front)".into()]).unwrap();
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("/Separation /Foil#20Gold"), "特色の名前");
         assert!(text.contains("/Separation /Die#20Cut") && text.contains("/Separation /Crease"));

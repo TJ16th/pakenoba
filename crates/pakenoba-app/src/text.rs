@@ -18,6 +18,10 @@ use vello_cpu::{Glyph, Pixmap, RenderContext, Resources, color, peniko};
 const TEXT_PX_PER_MM: f32 = 12.0;
 /// 1 枚の絵の画素の上限（大きすぎる文字は、細かさを落として描く）。
 const MAX_PIXELS: f32 = 24_000_000.0;
+/// 書き出しで描き直すときの、画素の上限。
+pub const EXPORT_MAX_PIXELS: f32 = 96_000_000.0;
+/// 画面用の文字の細かさ（1 mm あたりの画素）。これより細かく書き出すときは、描き直す。
+pub const SCREEN_TEXT_PPM: f32 = TEXT_PX_PER_MM;
 /// 求めたフォントにない文字を探す、ほかのフォント（ある順に使う）。
 const FALLBACK: [&str; 12] = ["Yu Gothic UI", "Yu Gothic", "Meiryo", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", "Noto Sans", "DejaVu Sans", "Arial", "Liberation Sans"];
 
@@ -97,6 +101,11 @@ impl Fonts {
 
     /// 文字を描く。
     pub fn render(&mut self, spec: &TextSpec) -> Result<TextArt, String> {
+        self.render_at(spec, TEXT_PX_PER_MM, MAX_PIXELS)
+    }
+
+    /// 細かさ（1 mm あたりの画素）を決めて描く（書き出し用）。絵が `max_pixels` を超えるときは、細かさを落とす。
+    pub fn render_at(&mut self, spec: &TextSpec, fine: f32, max_pixels: f32) -> Result<TextArt, String> {
         // 使うフォント: 求めたもの、なければ代わり。足りない文字は、ほかのフォントから探す。
         let mut chain: Vec<(String, Face)> = Vec::new();
         for name in std::iter::once(spec.font.clone()).chain(FALLBACK.iter().map(|s| s.to_string())) {
@@ -120,7 +129,7 @@ impl Fonts {
             let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1).max(1) as f32;
             (chars * spec.size * px_per_mm) * (lines.len() as f32 * spec.size * spec.leading.max(1.0) * px_per_mm)
         };
-        let px_per_mm = if area(TEXT_PX_PER_MM) > MAX_PIXELS { TEXT_PX_PER_MM * (MAX_PIXELS / area(TEXT_PX_PER_MM)).sqrt() } else { TEXT_PX_PER_MM };
+        let px_per_mm = if area(fine) > max_pixels { fine * (max_pixels / area(fine)).sqrt() } else { fine };
         let em = (spec.size * px_per_mm).max(1.0);
         let first_font = first.font().ok_or(t!("Could not read the font"))?;
         let metrics = first_font.metrics(Size::new(em), LocationRef::default());

@@ -10,8 +10,65 @@ use pakenoba_core::template::{P2, Role, Template, inside};
 pub const PX_PER_MM: f32 = 4.0;
 const PAPER: [u8; 3] = [240, 236, 228];
 
+/// 展開図の画像の、画素と mm の対応。画面では 1 mm 4 画素で、展開図の範囲ちょうど。
+/// 書き出しでは、細かさ（`ppm`）を上げ、まわりに余白（`pad`。塗り足しのぶん）を足せる。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    /// 画像の左の端と、上の端（展開図の mm。上が正）。
+    pub left: f32,
+    pub top: f32,
+    /// 1 mm あたりの画素。
+    pub ppm: f32,
+    pub w: usize,
+    pub h: usize,
+}
+
+impl Frame {
+    /// 展開図の範囲に、まわり `pad` mm を足した画像。
+    pub fn of(tpl: &Template, ppm: f32, pad: f32) -> Frame {
+        let w = ((tpl.max[0] - tpl.min[0] + 2.0 * pad) * ppm).ceil().max(2.0) as usize;
+        let h = ((tpl.max[1] - tpl.min[1] + 2.0 * pad) * ppm).ceil().max(2.0) as usize;
+        Frame { left: tpl.min[0] - pad, top: tpl.max[1] + pad, ppm, w, h }
+    }
+
+    /// 画面の細かさ（1 mm 4 画素、余白なし）。
+    pub fn screen(tpl: &Template) -> Frame {
+        Frame::of(tpl, PX_PER_MM, 0.0)
+    }
+
+    /// 書き出しの細かさ（dpi）と、余白（mm）。
+    pub fn dpi(tpl: &Template, dpi: f32, pad: f32) -> Frame {
+        Frame::of(tpl, dpi / 25.4, pad)
+    }
+
+    /// 展開図の点の、画像の上の位置（画素。小数）。
+    pub fn to_px(self, p: P2) -> [f32; 2] {
+        [(p[0] - self.left) * self.ppm, (self.top - p[1]) * self.ppm]
+    }
+
+    /// 画素 (x, y) の中心の、展開図の点。
+    pub fn at(&self, x: usize, y: usize) -> P2 {
+        [self.left + (x as f32 + 0.5) / self.ppm, self.top - (y as f32 + 0.5) / self.ppm]
+    }
+
+    /// 展開図の範囲（`lo`〜`hi`、mm）がかかる画素の範囲（x0..x1, y0..y1）。
+    pub fn span(&self, lo: P2, hi: P2) -> (usize, usize, usize, usize) {
+        let x0 = ((lo[0] - self.left) * self.ppm).floor().max(0.0) as usize;
+        let x1 = (((hi[0] - self.left) * self.ppm).ceil().max(0.0) as usize).min(self.w);
+        let y0 = ((self.top - hi[1]) * self.ppm).floor().max(0.0) as usize;
+        let y1 = (((self.top - lo[1]) * self.ppm).ceil().max(0.0) as usize).min(self.h);
+        (x0, x1, y0, y1)
+    }
+
+    /// 書き出しの dpi（表示用）。
+    pub fn dpi_value(&self) -> f32 {
+        self.ppm * 25.4
+    }
+}
+
 /// 展開図の画像。どちらも RGBA 8bit（アルファは乗算なし）で、同じ大きさ。
 pub struct SheetArt {
+    pub frame: Frame,
     pub w: usize,
     pub h: usize,
     pub art: Vec<u8>,
@@ -21,19 +78,17 @@ pub struct SheetArt {
     pub lines: Vec<u8>,
 }
 
-fn sheet_size(tpl: &Template) -> (usize, usize) {
-    (((tpl.max[0] - tpl.min[0]) * PX_PER_MM).ceil().max(2.0) as usize, ((tpl.max[1] - tpl.min[1]) * PX_PER_MM).ceil().max(2.0) as usize)
-}
-
+#[cfg(test)]
 fn to_px(tpl: &Template, p: P2) -> [f32; 2] {
-    [(p[0] - tpl.min[0]) * PX_PER_MM, (tpl.max[1] - p[1]) * PX_PER_MM]
+    Frame::screen(tpl).to_px(p)
 }
 
 /// 紙の色を、行の束 1 つぶん塗る。`band` は `first_row` 行目からの画素。
-fn fill_band(tpl: &Template, w: usize, h: usize, first_row: usize, band: &mut [u8]) {
+fn fill_band(tpl: &Template, frame: &Frame, first_row: usize, band: &mut [u8]) {
+    let (w, h) = (frame.w, frame.h);
     let last_row = (first_row + band.len() / (w * 4)).min(h);
     for panel in &tpl.panels {
-        let px: Vec<[f32; 2]> = panel.outline.iter().map(|&p| to_px(tpl, p)).collect();
+        let px: Vec<[f32; 2]> = panel.outline.iter().map(|&p| frame.to_px(p)).collect();
         let x0 = px.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min).floor().max(0.0) as usize;
         let x1 = (px.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max).ceil() as usize).min(w);
         let y0 = (px.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min).floor().max(0.0) as usize).max(first_row);
@@ -41,7 +96,7 @@ fn fill_band(tpl: &Template, w: usize, h: usize, first_row: usize, band: &mut [u
         let mut crossings: Vec<f32> = Vec::new();
         for y in y0..y1 {
             // この行が輪郭を横切る位置を求めて、その間だけを塗る（画素ごとに内側かどうかを調べるより、ずっと速い）。
-            let v = tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM;
+            let v = frame.top - (y as f32 + 0.5) / frame.ppm;
             crossings.clear();
             for i in 0..panel.outline.len() {
                 let (a, b) = (panel.outline[i], panel.outline[(i + 1) % panel.outline.len()]);
@@ -50,9 +105,9 @@ fn fill_band(tpl: &Template, w: usize, h: usize, first_row: usize, band: &mut [u
                 }
             }
             crossings.sort_by(f32::total_cmp);
-            let column = |u: f32| (((u - tpl.min[0]) * PX_PER_MM - 0.5).ceil().max(0.0) as usize).clamp(x0, x1);
+            let column = |u: f32| (((u - frame.left) * frame.ppm - 0.5).ceil().max(0.0) as usize).clamp(x0, x1);
             for x in crossings.chunks_exact(2).flat_map(|pair| column(pair[0])..column(pair[1])) {
-                let u = tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM;
+                let u = frame.left + (x as f32 + 0.5) / frame.ppm;
                 if tpl.in_hole(u, v) {
                     continue;
                 }
@@ -96,7 +151,14 @@ pub fn sheet_lines(tpl: &Template) -> (Vec<Segment>, Vec<Segment>) {
 }
 
 pub fn make_sheet_art(tpl: &Template) -> SheetArt {
-    let (w, h) = sheet_size(tpl);
+    make_sheet_art_at(tpl, Frame::screen(tpl))
+}
+
+/// 決めた細かさと余白で、紙とガイド線を作る（書き出し用）。線の太さは 0.4 mm。
+pub fn make_sheet_art_at(tpl: &Template, frame: Frame) -> SheetArt {
+    let (w, h) = (frame.w, frame.h);
+    let to_px = |_: &Template, p: P2| frame.to_px(p);
+    let width = 0.4 * frame.ppm;
     // 透明な部分にも紙の色を入れておく（拡大縮小したときに縁が黒ずまないように）。
     let mut art: Vec<u8> = [PAPER[0], PAPER[1], PAPER[2], 0].repeat(w * h);
 
@@ -105,7 +167,8 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
     let band_rows = h.div_ceil(threads).max(32);
     std::thread::scope(|scope| {
         for (band_index, band) in art.chunks_mut(band_rows * w * 4).enumerate() {
-            scope.spawn(move || fill_band(tpl, w, h, band_index * band_rows, band));
+            let frame = &frame;
+            scope.spawn(move || fill_band(tpl, frame, band_index * band_rows, band));
         }
     });
 
@@ -118,10 +181,10 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
     let mut glue = vec![0u8; w * h * 4];
     let (cuts, folds) = sheet_lines(tpl);
     for (a, b) in cuts {
-        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, CUT);
+        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), width, CUT);
     }
     for (a, b) in folds {
-        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), 1.6, FOLD);
+        draw_line(&mut lines, w, h, to_px(tpl, a), to_px(tpl, b), width, FOLD);
     }
     // のりしろには、のりを付ける面だと分かるよう、斜めの細い線を入れる。
     const GLUE: [u8; 4] = [226, 138, 40, 255];
@@ -133,7 +196,7 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
         let y1 = (px.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max).ceil() as usize).min(h);
         for y in y0..y1 {
             for x in x0..x1 {
-                let (u, v) = (tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM);
+                let [u, v] = frame.at(x, y);
                 if ((u - v) / 3.0).rem_euclid(1.0) < 0.14 && inside(&panel.outline, [u, v]) {
                     glue[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&GLUE);
                 }
@@ -148,22 +211,22 @@ pub fn make_sheet_art(tpl: &Template) -> SheetArt {
             to_px(tpl, [hole[0] + hole[2] * c.signum() * c.abs().sqrt(), hole[1] + hole[3] * s.signum() * s.abs().sqrt()])
         };
         for i in 0..64 {
-            draw_line(&mut lines, w, h, point(i), point(i + 1), 1.6, [30, 30, 34, 255]);
+            draw_line(&mut lines, w, h, point(i), point(i + 1), width, [30, 30, 34, 255]);
         }
     }
     for hinge in tpl.panels.iter().filter_map(|p| p.hinge.as_ref()) {
-        draw_line(&mut lines, w, h, to_px(tpl, hinge.a), to_px(tpl, hinge.b), 1.6, [0, 150, 220, 255]);
+        draw_line(&mut lines, w, h, to_px(tpl, hinge.a), to_px(tpl, hinge.b), width, [0, 150, 220, 255]);
     }
     // 曲線の折り線。
     for curved in tpl.panels.iter().filter_map(|p| p.curved.as_ref()) {
         for pair in curved.line.windows(2) {
-            draw_line(&mut lines, w, h, to_px(tpl, pair[0]), to_px(tpl, pair[1]), 1.6, [0, 150, 220, 255]);
+            draw_line(&mut lines, w, h, to_px(tpl, pair[0]), to_px(tpl, pair[1]), width, [0, 150, 220, 255]);
         }
     }
     // 表のガイドは、のりしろの斜線の上に、線を重ねたもの。
     let mut guides = glue;
     alpha_over(&mut guides, &lines);
-    SheetArt { w, h, art, guides, lines }
+    SheetArt { frame, w, h, art, guides, lines }
 }
 
 fn draw_line(buf: &mut [u8], w: usize, h: usize, a: [f32; 2], b: [f32; 2], width: f32, color: [u8; 4]) {
@@ -314,7 +377,7 @@ pub fn psd_is_back(bytes: &[u8]) -> bool {
 /// `painted` は、柄まで重ねた絵（ガイドなし）。統合した絵に使う。なければ、レイヤーを順に重ねて作る（グループや調整は効かない）。
 pub fn save_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLayer], painted: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let guides = t!("{guides} (cut lines, fold lines, glue flaps)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()), painted.map(<[u8]>::to_vec))
+    build_psd(sheet.w, sheet.h, sheet.frame.dpi_value(), (tr("Artwork"), custom.map_or_else(|| sheet.art.clone(), <[u8]>::to_vec)), decals.to_vec(), (guides, sheet.guides.clone()), painted.map(<[u8]>::to_vec))
 }
 
 /// 紙の裏の型紙を PSD にする。裏から見た向き（表を左右に裏返した向き）で書く。紙を裏返して刷るときの、そのままの向き。
@@ -328,7 +391,7 @@ pub fn save_back_psd(sheet: &SheetArt, custom: Option<&[u8]>, decals: &[DecalLay
     let flip_gray = |image: &[u8]| mirror_gray(image, sheet.w);
     let decals = decals.iter().map(|layer| DecalLayer { image: if layer.group.is_some() { Vec::new() } else { flip(&layer.image) }, mask: layer.mask.as_deref().map(flip_gray), ..layer.clone() }).collect();
     let guides = t!("{guides} (cut lines, fold lines)", guides = tr(GUIDE_LAYER_PREFIX));
-    build_psd(sheet.w, sheet.h, (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
+    build_psd(sheet.w, sheet.h, sheet.frame.dpi_value(), (tr(BACK_PAPER_LAYER), flip(&paper)), decals, (guides, flip(&sheet.lines)), painted.map(flip))
 }
 
 /// 白黒の画像（1 画素 1 バイト）を左右に裏返す。
@@ -349,7 +412,7 @@ pub fn mirror(image: &[u8], w: usize, h: usize) -> Vec<u8> {
 }
 
 /// PSD を組み立てる。いちばん下に `base`、その上に柄、いちばん上に `guides`。
-fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+fn build_psd(w: usize, h: usize, dpi: f32, base: (&str, Vec<u8>), decals: Vec<DecalLayer>, guides: (String, Vec<u8>), painted: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     let mut composite: Vec<u8> = [255u8, 255, 255, 255].repeat(w * h);
     match &painted {
         Some(painted) => alpha_over(&mut composite, painted),
@@ -364,7 +427,8 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
         }
     }
     alpha_over(&mut composite, &guides.1);
-    let mut builder = PsdBuilder::new(w as u32, h as u32);
+    // 解像度を入れておくと、Photoshop で実寸（mm）が合う。
+    let mut builder = PsdBuilder::new(w as u32, h as u32).resolution(dpi as f64);
     builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
     let mut open_groups = 0usize;
     for DecalLayer { name, image, visible, opacity, blend, mask, group, clipped, fill } in decals {
@@ -586,7 +650,7 @@ pub fn psd_is_dieline(bytes: &[u8]) -> bool {
 pub fn tests_psd(w: usize, h: usize, dieline: bool) -> Vec<u8> {
     let art = [30u8, 120, 200, 255].repeat(w * h);
     let guide_name = if dieline { format!("{GUIDE_LAYER_PREFIX}（切り線）") } else { "飾り".to_owned() };
-    build_psd(w, h, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4]), None).unwrap()
+    build_psd(w, h, 101.6, ("絵", art), Vec::new(), (guide_name, vec![0u8; w * h * 4]), None).unwrap()
 }
 
 /// 画像を、展開図の大きさ（`w` x `h`）に合わせる。近い画素を拾うだけの単純な拡大縮小。
@@ -611,7 +675,7 @@ mod tests {
         // 言語を切り替える前（日本語で書いていたころ）の名前。
         let (w, h) = (4, 4);
         let art = vec![255u8; w * h * 4];
-        let bytes = build_psd(w, h, ("紙の裏", art.clone()), vec![DecalLayer::shown("1（ロゴ）", art.clone())], ("ガイド（切り線、折り線）".to_owned(), art), None).unwrap();
+        let bytes = build_psd(w, h, 101.6, ("紙の裏", art.clone()), vec![DecalLayer::shown("1（ロゴ）", art.clone())], ("ガイド（切り線、折り線）".to_owned(), art), None).unwrap();
         let file = PsdFile::from_bytes(&bytes).unwrap();
         let names: Vec<String> = file.iter_layers().map(|l| l.name()).collect();
         assert_eq!(names[1], "3D artwork 1（ロゴ）");

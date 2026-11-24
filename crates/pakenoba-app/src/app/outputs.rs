@@ -46,11 +46,13 @@ pub(super) struct OutputSettings {
     /// 開けながら、少し回り込む。
     pub movie_turn: bool,
     pub print: PrintSettings,
+    /// 型紙の PSD と入稿用の PDF の細かさ（dpi。100 は画面と同じ）。
+    pub dpi: u32,
 }
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default() }
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350 }
     }
 }
 
@@ -292,29 +294,34 @@ impl App {
     /// 入稿用の PDF を保存する（ダイアログで場所を選ぶ）。
     pub(super) fn export_ready(&mut self) {
         let Some(path) = self.ask_output(t!("Save the print-ready PDF"), "PDF", "pdf", t!("print-ready")) else { return };
-        match self.ready_file(&path) {
-            Ok(pages) => self.say(t!("Saved {} ({pages} page(s), with the finishing instructions on the last page).", path.display())),
+        match self.with_sharp_text(|app| app.ready_file(&path)) {
+            Ok(pages) => {
+                let note = self.coarse_note();
+                self.say(format!("{}{note}", t!("Saved {} ({pages} page(s), with the finishing instructions on the last page).", path.display())));
+            }
             Err(e) => self.say(t!("Could not save the print-ready PDF: {e}")),
         }
     }
 
     /// 入稿用に刷る絵（紙の色は入れない。読み込んだ絵柄があれば、それごと）。展開図の表の向き。
-    fn ready_art(&self, back: bool) -> Vec<u8> {
-        let (w, h) = (self.sheet.w, self.sheet.h);
-        let (flat, printed) = compose_split(&self.sheet, back, self.custom[usize::from(back)].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::output(w, h, rgba)));
+    fn ready_art(&self, out: &super::export::OutSheet, back: bool) -> Vec<u8> {
+        let frame = out.sheet.frame;
+        let (flat, printed) = compose_split(&out.sheet, back, out.custom()[usize::from(back)], false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), back, Canvas::at(frame, rgba)));
         printed.unwrap_or(flat)
     }
 
     /// 入稿用の PDF を書き、ページの数を返す。表と、裏に柄があれば裏（裏から見た向き、左右を裏返す）。最後に指示のページ。
     pub(super) fn ready_file(&self, path: &Path) -> Result<usize, String> {
-        let (w, h) = (self.sheet.w, self.sheet.h);
+        let out = self.out_sheet();
+        let frame = out.sheet.frame;
+        let (w, h) = (frame.w, frame.h);
         let (min, max) = (self.template.min, self.template.max);
         let (cuts, folds) = sheet_lines(&self.template);
         let flip = |lines: &[(pakenoba_core::template::P2, pakenoba_core::template::P2)]| lines.iter().map(|&(a, b)| ([min[0] + max[0] - a[0], a[1]], [min[0] + max[0] - b[0], b[1]])).collect::<Vec<_>>();
-        let front = (self.ready_art(false), self.finish_plates(false));
+        let front = (self.ready_art(&out, false), self.finish_plates(false, frame));
         let back = self.has_back_decals().then(|| {
-            let plates = self.finish_plates(true).into_iter().map(|p| crate::art::Plate { ink: mirror_gray(&p.ink, w), ..p }).collect::<Vec<_>>();
-            (mirror(&self.ready_art(true), w, h), plates, flip(&cuts), flip(&folds))
+            let plates = self.finish_plates(true, frame).into_iter().map(|p| crate::art::Plate { ink: mirror_gray(&p.ink, w), ..p }).collect::<Vec<_>>();
+            (mirror(&self.ready_art(&out, true), w, h), plates, flip(&cuts), flip(&folds))
         });
         let mut sides = vec![ReadySide { label: "Front", rgba: &front.0, plates: &front.1, cuts: &cuts, folds: &folds }];
         if let Some((art, plates, cuts, folds)) = &back {
@@ -322,8 +329,28 @@ impl App {
         }
         let pages = sides.len() + 1;
         let title = self.project_name();
-        print_ready_pdf(min, max, w, h, &sides, &title, &self.finish_notes_ascii()).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
+        print_ready_pdf(min, max, frame, &sides, &title, &self.finish_notes_ascii()).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
         Ok(pages)
+    }
+
+    /// 書き出しの細かさを選ぶ（型紙の PSD と入稿用の PDF で共通）。画素の数と、細かさの足りない画像も出す。
+    fn resolution_choice(&mut self, ui: &mut egui::Ui) {
+        let label = |dpi: u32| if dpi <= 100 { t!("Same as the screen (about 100 dpi)").to_owned() } else { format!("{dpi} dpi") };
+        ui.horizontal(|ui| {
+            ui.label(t!("Resolution"));
+            egui::ComboBox::from_id_salt("export-dpi").selected_text(label(self.output.dpi)).show_ui(ui, |ui| {
+                for dpi in super::export::EXPORT_DPI {
+                    ui.selectable_value(&mut self.output.dpi, dpi, label(dpi));
+                }
+            });
+        });
+        let frame = self.export_frame();
+        ui.small(t!("{} x {} pixels. Text is drawn again at this resolution.", frame.w, frame.h));
+        let coarse = self.coarse_images();
+        if !coarse.is_empty() {
+            let list: Vec<String> = coarse.iter().map(|(name, dpi)| format!("{name} ({dpi} dpi)")).collect();
+            ui.colored_label(ui.visuals().warn_fg_color, t!("These images are coarse at actual size: {}", list.join(", ")));
+        }
     }
 
     /// 右（出力）: 選んだ出力の設定。
@@ -334,6 +361,7 @@ impl App {
             match self.output_kind {
                 0 => {
                     ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
+                    self.resolution_choice(ui);
                     if ui.button(t!("Save the dieline as PSD…")).clicked() {
                         self.export_psd();
                     }
@@ -425,16 +453,17 @@ impl App {
                 super::peek::PEEK_OUTPUT => self.peek_settings(ui),
                 READY_OUTPUT => {
                     ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
-                    let plates: Vec<String> = self.finish_plates(false).into_iter().chain(if self.has_back_decals() { self.finish_plates(true) } else { Vec::new() }).map(|p| p.name).collect();
+                    let plates = self.plate_names();
                     if plates.is_empty() {
                         ui.small(t!("There are no finishes (foil, embossing, spot UV, white ink) yet. Add them from the star button in the Layers panel."));
                     } else {
                         ui.label(t!("Plates: {}", plates.join(", ")));
                     }
+                    self.resolution_choice(ui);
                     if ui.button(t!("Save the print-ready PDF…")).clicked() {
                         self.export_ready();
                     }
-                    ui.small(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges. The artwork is about 100 dpi, so send high-resolution artwork separately for production."));
+                    ui.small(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges."));
                 }
                 _ => {}
             }
@@ -508,10 +537,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pakenoba-ready-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ready.pdf");
+        app.output.dpi = 100;
         let pages = app.ready_file(&path).unwrap();
         let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
-        for plate in app.finish_plates(false) {
-            let name = plate.name.replace(' ', "#20");
+        for name in app.plate_names() {
+            let name = name.replace(' ', "#20");
             assert!(text.contains(&format!("/Separation /{name}")), "{name}");
         }
         assert!(pages >= 2);

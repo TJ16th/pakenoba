@@ -321,7 +321,7 @@ impl App {
                 if self.actor != "person" && !self.finishes.is_empty() && super::export::notes_path(&path).exists() {
                     return Err(t!("{} already exists. AI does not overwrite files; choose another name.", super::export::notes_path(&path).display()));
                 }
-                let files = self.psd_files(&path)?;
+                let files = self.with_sharp_text(|app| app.psd_files(&path))?;
                 Ok(json!({ "files": files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>() }))
             }
             "export.pdf" => {
@@ -331,8 +331,9 @@ impl App {
             }
             "export.print_ready" => {
                 let path = self.checked_path(args, true)?;
-                let pages = self.ready_file(&path)?;
-                Ok(json!({ "path": path.display().to_string(), "pages": pages }))
+                let pages = self.with_sharp_text(|app| app.ready_file(&path))?;
+                let coarse: Vec<Value> = self.coarse_images().into_iter().map(|(name, dpi)| json!({ "layer": name, "dpi": dpi })).collect();
+                Ok(json!({ "path": path.display().to_string(), "pages": pages, "dpi": self.export_frame().dpi_value().round(), "coarse_images": coarse }))
             }
             "version.list" => Ok(Value::Array(self.versions.iter().map(|v| json!({ "name": v.name, "time": v.time, "auto": v.auto, "layers": v.project.decals.len() })).collect())),
             "version.keep" => {

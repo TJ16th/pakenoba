@@ -220,8 +220,8 @@ impl App {
 
     /// 書き出しに入れる、加工の版（同じ名前の版は 1 枚にまとめる）。版の形はぼかさない（縁の坂は、印刷所の型が作る）。
     /// 並びは、はじめに出てきた順。展開図の表の向き（裏の版は、書き出すときに裏返す）。
-    pub(crate) fn finish_plates(&self, back: bool) -> Vec<crate::art::Plate> {
-        let (w, h) = (self.sheet.w, self.sheet.h);
+    pub(crate) fn finish_plates(&self, back: bool, frame: crate::art::Frame) -> Vec<crate::art::Plate> {
+        let (w, h) = (frame.w, frame.h);
         let mut plates: Vec<crate::art::Plate> = Vec::new();
         for index in 0..self.finishes.len() {
             let finish = &self.finishes[index];
@@ -229,7 +229,7 @@ impl App {
             let mut shape = self.decals[link].clone();
             shape.layer = Layer { id: shape.layer.id, mask: shape.layer.mask.clone(), opacity: 100, fill: 100, blend: Blend::Normal, ..Layer::default() };
             let mut layer = vec![0u8; w * h * 4];
-            paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::screen(w, h, &mut layer));
+            paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::at(frame, &mut layer));
             let (name, rgb) = plate_name(finish);
             let at = match plates.iter().position(|p| p.name == name) {
                 Some(at) => at,
@@ -267,9 +267,25 @@ impl App {
         text
     }
 
+    /// 書き出す版の名前（描かずに、並びだけ）。
+    pub(crate) fn plate_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for index in 0..self.finishes.len() {
+            let finish = &self.finishes[index];
+            if finish.hidden || self.finish_link(index).is_none() {
+                continue;
+            }
+            let (name, _) = plate_name(finish);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
     /// 入稿用の PDF の指示のページに刷る行（英数字だけ。柄の名前は刷らない）。
     pub(crate) fn finish_notes_ascii(&self) -> Vec<String> {
-        let mut lines = Vec::new();
+        let mut lines = vec![format!("Resolution: {:.0} dpi (artwork and plates). The artwork is RGB.", self.export_frame().dpi_value()), String::new()];
         for index in 0..self.finishes.len() {
             let finish = &self.finishes[index];
             let Some(link) = self.finish_link(index).filter(|_| !finish.hidden) else { continue };
@@ -281,7 +297,7 @@ impl App {
             }
             lines.push(line);
         }
-        if lines.is_empty() {
+        if lines.len() == 2 {
             lines.push("- No finishes.".to_owned());
         }
         lines.push(String::new());
@@ -291,7 +307,6 @@ impl App {
             "the slope (edge width) and height are listed above.",
             "Die Cut = cut lines, Crease = fold lines (spot colors, overprint; not to be printed).",
             "The back page is seen from the back (mirrored left to right).",
-            "The artwork is RGB at about 100 dpi (4 px/mm). Use high-resolution artwork for production.",
             "Made with PAKENOBA. Check the die line against the printer's own die before production.",
         ] {
             lines.push(note.to_owned());

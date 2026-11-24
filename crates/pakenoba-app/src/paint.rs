@@ -10,7 +10,7 @@ use std::sync::Arc;
 use pakenoba_core::surface::{Decal, Surface};
 use pakenoba_core::template::{P2, Template, inside};
 
-use crate::art::PX_PER_MM;
+use crate::art::{Frame, PX_PER_MM};
 use pakenoba_core::project::Blend;
 
 /// 柄に重ねて描く印。選んでいる柄には点線の枠、カーソルの下の柄には色の枠。
@@ -88,8 +88,13 @@ impl Picture {
         }
     }
 
-    /// 柄の座標 `q`（中心が原点、mm、上が正）での色。RGB は 0〜255、アルファは 0〜1。
+    /// 柄の座標 `q`（中心が原点、mm、上が正）での色。RGB は 0〜255、アルファは 0〜1。縁は画面の細かさでなだらかにする。
     pub fn sample(&self, q: P2, size: P2) -> [f32; 4] {
+        self.sample_at(q, size, PX_PER_MM)
+    }
+
+    /// `sample` と同じ。縁は 1 mm あたり `ppm` 画素の細かさでなだらかにする（書き出し用）。
+    pub fn sample_at(&self, q: P2, size: P2, ppm: f32) -> [f32; 4] {
         const TEAL: [f32; 3] = [8.0, 126.0, 139.0];
         const AMBER: [f32; 3] = [242.0, 169.0, 0.0];
         const DARK: [f32; 3] = [23.0, 54.0, 56.0];
@@ -101,7 +106,7 @@ impl Picture {
                 let (x, y) = (q[0] / radius, q[1] / radius);
                 let rho = (x * x + y * y).sqrt();
                 // 縁は 1 画素ぶんの幅でなだらかにする。
-                let alpha = ((1.0 - rho) * radius * PX_PER_MM + 0.5).clamp(0.0, 1.0);
+                let alpha = ((1.0 - rho) * radius * ppm + 0.5).clamp(0.0, 1.0);
                 let head = (0.05..=0.60).contains(&y) && x.abs() < (0.60 - y) * 0.95;
                 let stem = (-0.55..=0.05).contains(&y) && x.abs() < 0.17;
                 let rgb = if rho > 0.84 {
@@ -121,14 +126,14 @@ impl Picture {
                 [rgb[0], rgb[1], rgb[2], 1.0]
             }
             Picture::Text(art) => Picture::sample_rgba(art.w, art.h, &art.rgba, q, size),
-            Picture::Shape(spec) => Picture::sample_shape(spec, q, half),
+            Picture::Shape(spec) => Picture::sample_shape(spec, q, half, ppm),
             Picture::Image { w, h, rgba, .. } => Picture::sample_rgba(*w, *h, rgba, q, size),
             Picture::Group { .. } | Picture::Adjustment => [0.0; 4],
         }
     }
 
     /// 図形の、柄の座標 `q` での色。縁からの距離（内側が負）で、塗りと線を決める。縁は 1 画素ぶんでなだらかにする。
-    fn sample_shape(spec: &pakenoba_core::project::ShapeSpec, q: P2, half: P2) -> [f32; 4] {
+    fn sample_shape(spec: &pakenoba_core::project::ShapeSpec, q: P2, half: P2, ppm: f32) -> [f32; 4] {
         use pakenoba_core::project::ShapeKind;
         let d = match spec.kind {
             ShapeKind::Rect => {
@@ -142,7 +147,7 @@ impl Picture {
                 (n - 1.0) * half[0].min(half[1])
             }
         };
-        let cover = |edge: f32| (0.5 - edge * PX_PER_MM).clamp(0.0, 1.0);
+        let cover = |edge: f32| (0.5 - edge * ppm).clamp(0.0, 1.0);
         let inside = cover(d);
         if inside <= 0.0 {
             return [0.0; 4];
@@ -191,17 +196,24 @@ pub struct Canvas<'a> {
     pub rgba: &'a mut [u8],
     /// 調整した絵ができるまで待つ（書き出すとき）。待たないときは、できるまで元の絵で描く。
     pub wait: bool,
+    /// 画素と mm の対応。None なら画面の細かさ（展開図の範囲ちょうど、1 mm 4 画素）。
+    pub frame: Option<Frame>,
 }
 
 impl<'a> Canvas<'a> {
     /// 画面に出すための描き込み先（調整した絵を待たない）。
     pub fn screen(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
-        Canvas { w, h, rgba, wait: false }
+        Canvas { w, h, rgba, wait: false, frame: None }
     }
 
     /// 書き出すための描き込み先（調整した絵ができるまで待つ）。
     pub fn output(w: usize, h: usize, rgba: &'a mut [u8]) -> Canvas<'a> {
-        Canvas { w, h, rgba, wait: true }
+        Canvas { w, h, rgba, wait: true, frame: None }
+    }
+
+    /// 書き出すための描き込み先で、細かさと余白を決めたもの。
+    pub fn at(frame: Frame, rgba: &'a mut [u8]) -> Canvas<'a> {
+        Canvas { w: frame.w, h: frame.h, rgba, wait: true, frame: Some(frame) }
     }
 }
 
@@ -279,14 +291,14 @@ struct Painter<'a> {
     decals: &'a [Placed],
     back: bool,
     w: usize,
-    h: usize,
+    frame: Frame,
     wait: bool,
 }
 
 impl Painter<'_> {
     /// 柄がかかる画素ごとに、`f(画素の場所, 柄の座標)` を呼ぶ。柄の座標は、裏の柄では左右を逆にしたもの（絵の向き）。
     fn each_pixel(&self, decal: &Placed, mut f: impl FnMut(usize, P2, f32)) {
-        let (surface, tpl, w, h, back) = (self.surface, self.tpl, self.w, self.h, self.back);
+        let (surface, tpl, w, back, frame) = (self.surface, self.tpl, self.w, self.back, &self.frame);
         let half = [decal.size[0] * 0.5, decal.size[1] * 0.5];
         // 近いパネルのぶんを最後に描く（一周して重なったところでは、手前のものが上に来る）。
         for piece in surface.layout(tpl, decal).iter().rev() {
@@ -301,13 +313,10 @@ impl Painter<'_> {
             if lo[0] >= hi[0] || lo[1] >= hi[1] {
                 continue;
             }
-            let x0 = ((lo[0] - tpl.min[0]) * PX_PER_MM).floor().max(0.0) as usize;
-            let x1 = (((hi[0] - tpl.min[0]) * PX_PER_MM).ceil().max(0.0) as usize).min(w);
-            let y0 = ((tpl.max[1] - hi[1]) * PX_PER_MM).floor().max(0.0) as usize;
-            let y1 = (((tpl.max[1] - lo[1]) * PX_PER_MM).ceil().max(0.0) as usize).min(h);
+            let (x0, x1, y0, y1) = frame.span(lo, hi);
             for y in y0..y1 {
                 for x in x0..x1 {
-                    let at = [tpl.min[0] + (x as f32 + 0.5) / PX_PER_MM, tpl.max[1] - (y as f32 + 0.5) / PX_PER_MM];
+                    let at = frame.at(x, y);
                     let q = to_decal.point(at);
                     if q[0].abs() > half[0] || q[1].abs() > half[1] || !inside(outline, at) || tpl.in_hole(at[0], at[1]) {
                         continue;
@@ -412,7 +421,7 @@ impl Painter<'_> {
         let mask = decal.layer.mask.as_ref().filter(|m| m.enabled);
         let size = decal.size;
         self.each_pixel(decal, |o, q, _| {
-            let color = picture.sample(q, size);
+            let color = picture.sample_at(q, size, self.frame.ppm);
             let mut a = color[3] * opacity;
             if let Some(mask) = mask {
                 a *= mask_at(mask, q, size);
@@ -481,8 +490,10 @@ pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32, clip: Option
 /// 柄を、展開図の画像に描く。`selected` の柄には、枠を付ける。
 /// 描くのは、`back` で指定した面（表か裏）の柄だけ。隠した柄は描かない。グループと調整レイヤーも、ここで効かせる。
 pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks, back: bool, canvas: Canvas) {
-    let Canvas { w, h, rgba, wait } = canvas;
-    let painter = Painter { surface, tpl, decals, back, w, h, wait };
+    let Canvas { w, h, rgba, wait, frame } = canvas;
+    let frame = frame.unwrap_or_else(|| Frame::screen(tpl));
+    debug_assert_eq!((frame.w, frame.h), (w, h));
+    let painter = Painter { surface, tpl, decals, back, w, frame, wait };
     let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
     painter.stack(&items, rgba, 1.0, 0);
     for &index in &items {
@@ -495,9 +506,10 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
 }
 
 /// 柄 1 つのマスクを、展開図の大きさの白黒の絵にする（PSD のレイヤーマスク用。柄のない所は 0）。
-pub fn paint_mask(surface: &Surface, tpl: &Template, decal: &Placed, back: bool, w: usize, h: usize) -> Option<Vec<u8>> {
+pub fn paint_mask(surface: &Surface, tpl: &Template, decal: &Placed, back: bool, frame: Frame) -> Option<Vec<u8>> {
+    let (w, h) = (frame.w, frame.h);
     let mask = decal.layer.mask.as_ref()?;
-    let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, h, wait: true };
+    let painter = Painter { surface, tpl, decals: std::slice::from_ref(decal), back, w, frame, wait: true };
     let mut out = vec![0u8; w * h];
     painter.each_pixel(decal, |o, q, _| out[o / 4] = (mask_at(mask, q, decal.size) * 255.0).round() as u8);
     Some(out)

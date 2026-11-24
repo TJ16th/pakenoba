@@ -4,7 +4,23 @@ use pakenoba_i18n::t;
 use std::path::{Path, PathBuf};
 
 use super::App;
-use crate::art::{Plate, add_spot_channels, mirror_gray, save_back_psd, save_psd};
+use crate::paint::Picture;
+use crate::art::{Frame, Plate, SheetArt, add_spot_channels, make_sheet_art_at, mirror_gray, save_back_psd, save_psd};
+
+/// 書き出しの細かさ（dpi）の選択肢。100 は画面と同じ（1 mm 4 画素）。
+pub(super) const EXPORT_DPI: [u32; 4] = [100, 300, 350, 600];
+
+/// 書き出し用の、細かさを決めた展開図（紙、ガイド線、読み込んだ展開図の絵）。
+pub(super) struct OutSheet {
+    pub sheet: SheetArt,
+    pub custom: [Option<Vec<u8>>; 2],
+}
+
+impl OutSheet {
+    pub fn custom(&self) -> [Option<&[u8]>; 2] {
+        [self.custom[0].as_deref(), self.custom[1].as_deref()]
+    }
+}
 
 /// 裏の型紙のファイルの名前。表の名前に「_裏」を足す（例: 箱_型紙.psd → 箱_型紙_裏.psd）。
 pub(super) fn back_path(front: &Path) -> PathBuf {
@@ -29,6 +45,73 @@ fn with_psd(path: PathBuf) -> PathBuf {
 }
 
 impl App {
+    /// 書き出しの細かさ（出力の設定の dpi）。
+    pub(super) fn export_frame(&self) -> Frame {
+        match self.output.dpi {
+            0..=100 => Frame::screen(&self.template),
+            dpi => Frame::dpi(&self.template, dpi as f32, 0.0),
+        }
+    }
+
+    /// 書き出しの細かさで、展開図を作り直す（画面の細かさなら、そのまま写す）。
+    pub(super) fn out_sheet(&self) -> OutSheet {
+        let frame = self.export_frame();
+        let sheet = make_sheet_art_at(&self.template, frame);
+        let custom = [0, 1].map(|side| self.bases[side].as_ref().map(|base| base.fitted([frame.w, frame.h])));
+        OutSheet { sheet, custom }
+    }
+
+    /// 書き出しの細かさが文字の絵より細かければ、文字を描き直してから `f` を呼び、あとで元に戻す。
+    /// 描き直せなかった文字は、そのまま（画面の細かさ）で書き出す。
+    pub(super) fn with_sharp_text<R>(&mut self, f: impl FnOnce(&Self) -> R) -> R {
+        let ppm = self.export_frame().ppm;
+        if ppm <= crate::text::SCREEN_TEXT_PPM * 1.05 {
+            return f(self);
+        }
+        let mut kept = Vec::new();
+        for index in 0..self.decals.len() {
+            if let Picture::Text(art) = &self.decals[index].picture
+                && let Ok(sharp) = self.fonts.render_at(&art.spec, ppm, crate::text::EXPORT_MAX_PIXELS)
+            {
+                let old = std::mem::replace(&mut self.decals[index].picture, Picture::Text(std::sync::Arc::new(sharp)));
+                kept.push((index, old));
+            }
+        }
+        let result = f(self);
+        for (index, old) in kept {
+            self.decals[index].picture = old;
+        }
+        result
+    }
+
+    /// 書き出しの細かさに対して、置いた画像の細かさが足りないもの（名前と、実寸での dpi）。
+    pub(super) fn coarse_images(&self) -> Vec<(String, u32)> {
+        let dpi = self.export_frame().dpi_value();
+        let need = dpi.min(300.0) * 0.8;
+        let mut out = Vec::new();
+        for (index, decal) in self.decals.iter().enumerate() {
+            if let Picture::Image { w, h, vector: false, .. } = &decal.picture
+                && !decal.layer.hidden
+            {
+                let real = (*w as f32 / (decal.size[0] / 25.4)).min(*h as f32 / (decal.size[1] / 25.4));
+                if real < need {
+                    out.push((self.layer_label(index), real.round() as u32));
+                }
+            }
+        }
+        out
+    }
+
+    /// 細かさの足りない画像があれば、知らせる文（先頭に改行）。なければ空。
+    pub(super) fn coarse_note(&self) -> String {
+        let coarse = self.coarse_images();
+        if coarse.is_empty() {
+            return String::new();
+        }
+        let list: Vec<String> = coarse.iter().map(|(name, dpi)| format!("{name} ({dpi} dpi)")).collect();
+        format!("\n{}", t!("These images are coarse at actual size: {}", list.join(", ")))
+    }
+
     /// 裏に置いた柄があるか。
     pub(super) fn has_back_decals(&self) -> bool {
         self.decals.iter().any(|decal| decal.back) || self.bases[1].is_some()
@@ -55,14 +138,12 @@ impl App {
 
     /// 型紙の PSD を書く（ダイアログのあと）。
     pub(super) fn write_psds(&mut self, path: &Path) {
-        match self.psd_files(path) {
+        match self.with_sharp_text(|app| app.psd_files(path)) {
             Ok(files) => {
                 let others: Vec<String> = files[1..].iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
-                if others.is_empty() {
-                    self.say(t!("Saved: {}", path.display()));
-                } else {
-                    self.say(t!("Saved: {} (and {})", path.display(), others.join(", ")));
-                }
+                let mut message = if others.is_empty() { t!("Saved: {}", path.display()) } else { t!("Saved: {} (and {})", path.display(), others.join(", ")) };
+                message.push_str(&self.coarse_note());
+                self.say(message);
             }
             Err(e) => self.say(e),
         }
@@ -71,16 +152,18 @@ impl App {
     /// 型紙の PSD を書き、書いたファイルを返す（表と、裏に柄があれば裏）。
     /// 加工があれば、版をスポットカラーチャンネルとして入れ、指示書（`名前_finishes.txt`）も横に置く。
     pub(super) fn psd_files(&self, path: &Path) -> Result<Vec<PathBuf>, String> {
-        let front = self.finish_plates(false);
-        save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false), Some(&self.painted(false)))
+        let out = self.out_sheet();
+        let (sheet, custom) = (&out.sheet, out.custom());
+        let front = self.finish_plates(false, sheet.frame);
+        save_psd(sheet, custom[0], &self.decal_layers_in(sheet, custom, false), Some(&self.painted_in(sheet, custom, false)))
             .and_then(|bytes| add_spot_channels(bytes, &front))
             .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))
             .map_err(|e| t!("Could not save: {e}"))?;
         let mut files = vec![path.to_owned()];
         if self.has_back_decals() {
             let back = back_path(path);
-            let plates: Vec<Plate> = self.finish_plates(true).into_iter().map(|p| Plate { ink: mirror_gray(&p.ink, self.sheet.w), ..p }).collect();
-            save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true), Some(&self.painted(true)))
+            let plates: Vec<Plate> = self.finish_plates(true, sheet.frame).into_iter().map(|p| Plate { ink: mirror_gray(&p.ink, sheet.w), ..p }).collect();
+            save_back_psd(sheet, custom[1], &self.decal_layers_in(sheet, custom, true), Some(&self.painted_in(sheet, custom, true)))
                 .and_then(|bytes| add_spot_channels(bytes, &plates))
                 .and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string()))
                 .map_err(|e| t!("Saved the front, but could not save the back: {e}"))?;
@@ -99,7 +182,6 @@ impl App {
 mod tests {
     use super::super::Initial;
     use super::*;
-    use crate::paint::Picture;
 
     #[test]
     fn 裏の名前は_表の名前に裏を足す() {
@@ -135,6 +217,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut app = App::new(&Initial::default());
+        app.output.dpi = 100;
         app.add_decal(Picture::Logo, [46.0, 46.0]);
         let link = app.decals[0].layer.id;
         app.finishes = vec![Finish::foil(Foil::Gold, link), Finish::emboss(link, false), Finish::foil(Foil::Gold, link)];
@@ -165,6 +248,27 @@ mod tests {
         let foil = &planes[base * n..(base + 1) * n];
         assert!(foil.contains(&0) && foil.contains(&255));
         assert!(std::fs::read_to_string(notes_path(&path)).unwrap().contains("Emboss"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn 書き出しは_選んだ解像度で_実寸が合う() {
+        let dir = std::env::temp_dir().join(format!("pakenoba-dpi-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(&Initial::default());
+        app.add_decal(Picture::Logo, [46.0, 46.0]);
+        app.output.dpi = 300;
+        let path = dir.join("hi.psd");
+        app.write_psds(&path);
+        let file = craft_psd::PsdFile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        let frame = app.export_frame();
+        assert_eq!((file.header.width as usize, file.header.height as usize), (frame.w, frame.h));
+        // 展開図の幅（mm）と、画素の数と解像度から求めた幅が合う。
+        let mm = file.header.width as f64 / (file.resolution().unwrap().h_res_fixed as f64 / 65536.0) * 25.4;
+        let width = (app.template.max[0] - app.template.min[0]) as f64;
+        assert!((mm - width).abs() < 0.2, "{mm} mm / {width} mm");
+        assert!(frame.w > app.sheet.w * 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
