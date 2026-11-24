@@ -917,7 +917,9 @@ impl App {
                 if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
                     self.cmd_group();
                 }
-                let foil = icons::bare_button(ui, size, false, artwork.is_some(), t!("Add foil stamping or embossing in the shape of the selected artwork"), icons::draw_foil);
+                // 加工を選んでいるときは、その加工の元の柄へ足す（白押しとエンボスを同じ柄に、など）。
+                let target = self.finish_target().filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.sealed());
+                let foil = icons::bare_button(ui, size, false, artwork.or(target).is_some(), t!("Add foil stamping or embossing in the shape of the selected artwork"), icons::draw_foil);
                 egui::Popup::menu(&foil).show(|ui| {
                     ui.set_min_width(200.0);
                     ui.weak(t!("Foil stamping"));

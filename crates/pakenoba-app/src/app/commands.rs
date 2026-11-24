@@ -761,6 +761,25 @@ mod tests {
     }
 
     #[test]
+    fn 白押しを選んだまま_同じ柄にエンボスを足せる() {
+        let mut app = app();
+        app.select_only(Some(0));
+        app.add_finish(pakenoba_core::material::FinishKind::White, false);
+        assert_eq!(app.finishes.len(), 1);
+        // 足した白押しを選ぶ（柄の選択は外れる）。
+        app.select_only(None);
+        app.finish_selected = Some(0);
+        assert_eq!(app.finish_target(), Some(0));
+        app.add_emboss(false);
+        assert_eq!(app.finishes.len(), 2);
+        assert_eq!(app.finishes[0].link, app.finishes[1].link);
+        // 白版とエンボスの高さが、両方入る。
+        let maps = app.finish_maps(app.decals[0].back).unwrap();
+        assert!(maps[1].chunks_exact(4).any(|p| p[2] > 200), "白版");
+        assert!(maps[0].chunks_exact(4).any(|p| p[3] > 140), "エンボス");
+    }
+
+    #[test]
     fn 柄に箔を押し_種類を変え_外せて_元に戻せる() {
         let mut app = app();
         let id = i64::from(app.decals[0].layer.id);

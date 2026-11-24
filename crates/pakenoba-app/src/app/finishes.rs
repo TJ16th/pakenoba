@@ -456,8 +456,17 @@ impl App {
     }
 
     /// 選んでいる柄に、箔押しを付ける。
+    /// 加工を足す先の柄: 選んでいる柄。加工を選んでいるときは、その加工の元の柄
+    /// （白押しを付けたあとに、続けて同じ柄へエンボスを足せるように）。
+    pub(super) fn finish_target(&self) -> Option<usize> {
+        match self.selected.filter(|&i| i < self.decals.len()) {
+            Some(i) => Some(i),
+            None => self.finish_selected.filter(|&f| f < self.finishes.len()).and_then(|f| self.finish_link(f)),
+        }
+    }
+
     pub(super) fn add_foil(&mut self, foil: Foil) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        let Some(index) = self.finish_target() else { return };
         self.ensure_ids();
         let id = self.decals[index].layer.id;
         self.person("finish.add", json!({ "id": id, "kind": "foil", "foil": foil.key() }));
@@ -465,7 +474,7 @@ impl App {
 
     /// 選んでいる柄の形で、部分 UV ニスか白版を付ける。
     pub(super) fn add_finish(&mut self, kind: FinishKind, matte: bool) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        let Some(index) = self.finish_target() else { return };
         self.ensure_ids();
         let id = self.decals[index].layer.id;
         self.person("finish.add", json!({ "id": id, "kind": kind.key(), "matte": matte }));
@@ -473,7 +482,7 @@ impl App {
 
     /// 選んでいる柄の形で、エンボス（`deboss` が真ならデボス）を付ける。
     pub(super) fn add_emboss(&mut self, deboss: bool) {
-        let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
+        let Some(index) = self.finish_target() else { return };
         self.ensure_ids();
         let id = self.decals[index].layer.id;
         self.person("finish.add", json!({ "id": id, "kind": "emboss", "deboss": deboss }));
