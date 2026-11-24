@@ -293,6 +293,30 @@ pub fn clip_base(decals: &[Placed], index: usize) -> Option<usize> {
     }
 }
 
+/// 画面に描いた、敷き詰めた柄の絵（柄と並べ方と画面の大きさで引く）。いくつかだけ覚える。
+static TILED: std::sync::Mutex<Vec<(String, Arc<Vec<u8>>)>> = std::sync::Mutex::new(Vec::new());
+
+/// 敷き詰めた柄の絵。覚えていればそれを、なければ `make` で描いて覚える。
+fn tiled_layer(key: &str, make: impl FnOnce() -> Vec<u8>) -> Arc<Vec<u8>> {
+    {
+        let mut kept = TILED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = kept.iter().position(|(k, _)| k == key) {
+            let hit = kept.remove(at);
+            let layer = hit.1.clone();
+            kept.push(hit);
+            return layer;
+        }
+    }
+    let layer = Arc::new(make());
+    let mut kept = TILED.lock().unwrap_or_else(|e| e.into_inner());
+    kept.push((key.to_owned(), layer.clone()));
+    // 表と裏で数枚ずつ。古いものから忘れる。
+    while kept.len() > 4 {
+        kept.remove(0);
+    }
+    layer
+}
+
 /// 描くときに使う、決まった値。
 struct Painter<'a> {
     surface: &'a Surface,
@@ -399,21 +423,46 @@ impl Painter<'_> {
             }
             let rows = |first: usize, band: &mut [T]| {
                 let count = band.len() / (w * per);
+                let mut cuts: Vec<f32> = Vec::new();
                 for y in first..first + count {
-                    for x in x0..x1 {
-                        let at = frame.at(x, y);
-                        let shown = match self.zone {
-                            // 塗り足しのあるとき: 紙の外は、いちばん近いパネルのぶんだけ（敷き詰めた柄は、どこでもかかっている）。
-                            Some(zone) => inside(outline, at) || zone.reaches(y * w + x, index, at, |_| true),
-                            None => inside(outline, at) && !tpl.in_hole(at[0], at[1]),
-                        };
-                        if !shown {
-                            continue;
+                    // 画素ごとに輪郭の内外を調べずに、行ごとに輪郭と交わる所を求めて、内側の区間だけを塗る（敷き詰めると範囲が広いので）。
+                    let x_range: Vec<(usize, usize)> = if self.zone.is_some() {
+                        vec![(x0, x1)]
+                    } else {
+                        let line = frame.at(0, y)[1];
+                        cuts.clear();
+                        for i in 0..outline.len() {
+                            let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+                            if (a[1] > line) != (b[1] > line) {
+                                cuts.push(a[0] + (line - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                            }
                         }
-                        let Some(q) = tile.wrap(to_decal.point(at), decal.size) else { continue };
-                        let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
-                        let o = ((y - first) * w + x) * per;
-                        f(y * w + x, &mut band[o..o + per], if back { [-q[0], q[1]] } else { q }, from_edge);
+                        cuts.sort_by(f32::total_cmp);
+                        cuts.chunks_exact(2)
+                            .map(|pair| {
+                                let from = (((pair[0] - frame.left) * frame.ppm - 0.5).ceil().max(0.0) as usize).max(x0);
+                                let to = (((pair[1] - frame.left) * frame.ppm - 0.5).ceil().max(0.0) as usize).min(x1);
+                                (from, to)
+                            })
+                            .filter(|(a, b)| a < b)
+                            .collect()
+                    };
+                    for (from, to) in x_range {
+                        for x in from..to {
+                            let at = frame.at(x, y);
+                            let shown = match self.zone {
+                                // 塗り足しのあるとき: 紙の外は、いちばん近いパネルのぶんだけ（敷き詰めた柄は、どこでもかかっている）。
+                                Some(zone) => inside(outline, at) || zone.reaches(y * w + x, index, at, |_| true),
+                                None => !tpl.in_hole(at[0], at[1]),
+                            };
+                            if !shown {
+                                continue;
+                            }
+                            let Some(q) = tile.wrap(to_decal.point(at), decal.size) else { continue };
+                            let from_edge = (half[0] - q[0].abs()).min(half[1] - q[1].abs());
+                            let o = ((y - first) * w + x) * per;
+                            f(y * w + x, &mut band[o..o + per], if back { [-q[0], q[1]] } else { q }, from_edge);
+                        }
                     }
                 }
             };
@@ -526,6 +575,57 @@ impl Painter<'_> {
         let size = decal.size;
         let ppm = self.frame.ppm;
         let blend = decal.layer.blend;
+        // 敷き詰めた柄は、展開図の全体にかかって重いので、画面に描くときは、描いた絵を覚えておいて重ねるだけにする
+        // （ほかの柄を動かしている間に、毎回描き直さない）。
+        if let Some(tile) = decal.layer.tile.filter(|_| !self.wait) {
+            let key = format!(
+                "{}|{:?}|{tile:?}|{:?}|{:?}|{}|{:p}|{:?}{:?}{}",
+                crate::effects::picture_key(&picture, size),
+                decal.decal,
+                mask.map(|m| (Arc::as_ptr(&m.data) as usize, m.invert)),
+                self.frame,
+                self.back,
+                self.tpl,
+                self.tpl.min,
+                self.tpl.max,
+                self.zone.is_some()
+            );
+            let layer = tiled_layer(&key, || {
+                let mut layer = vec![0u8; self.w * self.frame.h * 4];
+                self.each_pixel(decal, &mut layer, 4, true, |_, px, q, _| {
+                    let color = picture.sample_at(q, size, ppm);
+                    let mut a = color[3];
+                    if let Some(mask) = mask {
+                        a *= mask_at(mask, q, size);
+                    }
+                    px.copy_from_slice(&[color[0].round().clamp(0.0, 255.0) as u8, color[1].round().clamp(0.0, 255.0) as u8, color[2].round().clamp(0.0, 255.0) as u8, (a * 255.0).round().clamp(0.0, 255.0) as u8]);
+                });
+                layer
+            });
+            // 重ねるのも、行の束に分けて手分けする。
+            let compose = |first: usize, band: &mut [u8]| {
+                let from = &layer[first * 4..first * 4 + band.len()];
+                for (k, (px, src)) in band.chunks_exact_mut(4).zip(from.chunks_exact(4)).enumerate() {
+                    if src[3] == 0 {
+                        continue;
+                    }
+                    let mut a = src[3] as f32 / 255.0 * opacity;
+                    if let Some(clip) = clip {
+                        a *= clip[first + k] as f32 / 255.0;
+                    }
+                    crate::blend::over(px, [src[0] as f32, src[1] as f32, src[2] as f32], a, blend);
+                }
+            };
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+            let chunk = (target.len() / 4).div_ceil(threads).max(4096) * 4;
+            let compose = &compose;
+            std::thread::scope(|scope| {
+                for (i, band) in target.chunks_mut(chunk).enumerate() {
+                    scope.spawn(move || compose(i * chunk / 4, band));
+                }
+            });
+            return;
+        }
         self.each_pixel(decal, target, 4, true, |i, px, q, _| {
             let color = picture.sample_at(q, size, ppm);
             let mut a = color[3] * opacity;

@@ -462,7 +462,7 @@ pub fn busy() -> bool {
     CACHE.lock().unwrap_or_else(|e| e.into_inner()).slots.values().any(|s| matches!(s, Slot::Running))
 }
 
-fn picture_key(picture: &Picture, size: [f32; 2]) -> String {
+pub(crate) fn picture_key(picture: &Picture, size: [f32; 2]) -> String {
     match picture {
         Picture::Image { rgba, .. } => format!("i{:p}", Arc::as_ptr(rgba)),
         Picture::Text(art) => format!("t{:p}", Arc::as_ptr(art)),
