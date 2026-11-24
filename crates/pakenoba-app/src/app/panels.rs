@@ -162,15 +162,15 @@ impl App {
                 });
                 ui.separator();
                 self.properties(ui);
-                ui.add_space(6.0);
-                ui.separator();
+                ui.add_space(12.0);
                 self.layers(ui);
             });
         });
     }
 
     fn properties(&mut self, ui: &mut egui::Ui) {
-        ui.strong(t!("Properties"));
+        icons::panel_tabs(ui, &[t!("Properties")], 0);
+        ui.add_space(6.0);
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else {
             ui.weak(t!("Select artwork to see its settings here."));
             return;
@@ -444,72 +444,6 @@ impl App {
             }
         });
         ui.small(t!("The tuck and side flaps are the same at the top and bottom."));
-    }
-
-    /// レイヤーの欄の頭: 選んでいる柄の描画モードと不透明度（Photoshop のレイヤーパネルと同じ場所）。
-    /// いくつも選んでいれば、まとめて変える。柄を選んでいなければ、押せない形で出す。
-    pub(super) fn blend_controls(&mut self, ui: &mut egui::Ui) {
-        use pakenoba_core::project::Blend;
-        let mut targets: Vec<usize> = self.selected.into_iter().chain(self.extra.iter().copied()).filter(|&i| self.decals.get(i).is_some_and(|d| !d.layer.locked)).collect();
-        // グループを選んでいるときは、グループの設定だけを変える（いっしょに選んでいる中身は変えない）。
-        if let Some(header) = self.selected.filter(|&i| matches!(self.decals.get(i).map(|d| &d.picture), Some(crate::paint::Picture::Group { .. }))) {
-            targets.retain(|&i| i == header);
-        }
-        let first = targets.first().map(|&i| self.decals[i].layer.clone());
-        let mut blend = first.as_ref().map_or(Blend::Normal, |l| l.blend);
-        let mut opacity = first.as_ref().map_or(100.0, |l| l.opacity as f32);
-        let (blend0, opacity0) = (blend, opacity);
-        // 「Color」は、色の欄の「色」と同じ英語なので、描画モードの名前は文脈「blend」で訳す（Photoshop と同じ「カラー」）。
-        let name = |mode: Blend| match mode {
-            Blend::Color => pakenoba_i18n::trc("blend", mode.label()),
-            Blend::PassThrough => t!("Pass Through"),
-            _ => pakenoba_i18n::tr(mode.label()),
-        };
-        ui.add_enabled_ui(first.is_some(), |ui| {
-            ui.horizontal(|ui| {
-                // グループには「通過」がある（Photoshop と同じく、いちばん上）。
-                let groups = !targets.is_empty() && targets.iter().all(|&i| matches!(self.decals[i].picture, crate::paint::Picture::Group { .. }));
-                egui::ComboBox::from_id_salt("blend-mode").width(130.0).selected_text(name(blend)).show_ui(ui, |ui| {
-                    if groups {
-                        ui.selectable_value(&mut blend, Blend::PassThrough, name(Blend::PassThrough));
-                    }
-                    for entry in Blend::MENU {
-                        match entry {
-                            Some(mode) => {
-                                ui.selectable_value(&mut blend, mode, name(mode));
-                            }
-                            None => {
-                                ui.separator();
-                            }
-                        }
-                    }
-                })
-                .response
-                .on_hover_text(t!("Blend mode: how this artwork mixes with what is below it"));
-                ui.label(t!("Opacity"));
-                ui.add_sized([62.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut opacity).range(0.0..=100.0).speed(0.5).max_decimals(0).suffix(" %"));
-            });
-        })
-        .response
-        .on_disabled_hover_text(t!("Select artwork to set its blend mode and opacity"));
-        if blend != blend0 || opacity != opacity0 {
-            let earlier = self.snapshot();
-            for &i in &targets {
-                let layer = &mut self.decals[i].layer;
-                if blend != blend0 {
-                    layer.blend = blend;
-                }
-                if opacity != opacity0 {
-                    layer.opacity = opacity.round().clamp(0.0, 100.0) as u8;
-                }
-            }
-            (self.art_dirty, self.back_dirty) = (true, true);
-            // ドラッグのひと続きは、1 回ぶんにまとめる（数値の欄と同じ）。
-            if !self.editing || blend != blend0 {
-                self.history.record(earlier);
-            }
-            self.editing = blend == blend0;
-        }
     }
 
     /// 左（出力）: 出力の種類。

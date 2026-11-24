@@ -252,6 +252,8 @@ pub struct DecalLayer {
     pub group: Option<PsdGroup>,
     /// すぐ下のレイヤーでクリップしている（PSD のクリッピングマスク）。
     pub clipped: bool,
+    /// 塗り（%）。
+    pub fill: u8,
 }
 
 /// PSD のグループの区切り。
@@ -264,7 +266,7 @@ pub enum PsdGroup {
 
 impl DecalLayer {
     pub fn shown(name: impl Into<String>, image: Vec<u8>) -> DecalLayer {
-        DecalLayer { name: name.into(), image, visible: true, opacity: 100, blend: Default::default(), mask: None, group: None, clipped: false }
+        DecalLayer { name: name.into(), image, visible: true, opacity: 100, blend: Default::default(), mask: None, group: None, clipped: false, fill: 100 }
     }
 }
 
@@ -325,7 +327,7 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
         None => {
             alpha_over(&mut composite, &base.1);
             for layer in decals.iter().filter(|layer| layer.visible && layer.group.is_none()) {
-                let opacity = layer.opacity.min(100) as f32 / 100.0;
+                let opacity = layer.opacity.min(100) as f32 / 100.0 * layer.fill.min(100) as f32 / 100.0;
                 for (dst, src) in composite.chunks_exact_mut(4).zip(layer.image.chunks_exact(4)) {
                     crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
                 }
@@ -336,7 +338,7 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
     let mut builder = PsdBuilder::new(w as u32, h as u32);
     builder.push_layer(LayerSpec::new(base.0, 0, 0, w as u32, h as u32, PixelData::Rgba8(base.1)));
     let mut open_groups = 0usize;
-    for DecalLayer { name, image, visible, opacity, blend, mask, group, clipped } in decals {
+    for DecalLayer { name, image, visible, opacity, blend, mask, group, clipped, fill } in decals {
         match group {
             Some(PsdGroup::Start { open }) => {
                 open_groups += 1;
@@ -370,6 +372,9 @@ fn build_psd(w: usize, h: usize, base: (&str, Vec<u8>), decals: Vec<DecalLayer>,
         spec.opacity = ((opacity.min(100) as u32 * 255 + 50) / 100) as u8;
         spec.blend_mode = crate::blend::psd(blend);
         spec.clipping = clipped;
+        if fill < 100 {
+            spec.fill_opacity = Some(((fill as u32 * 255 + 50) / 100) as u8);
+        }
         if let Some(mask) = mask {
             let data: Vec<u8> = (y0..y1).flat_map(|y| mask[y * w + x0..y * w + x1].iter().copied()).collect();
             spec.mask = Some(craft_psd::MaskSpec { rect: craft_psd::Rect { top: y0 as i32, left: x0 as i32, bottom: y1 as i32, right: x1 as i32 }, data, default_color: 0, disabled: false });

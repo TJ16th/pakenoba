@@ -501,6 +501,8 @@ struct App {
     adjust_focus: Option<(usize, usize)>,
     /// 調整した絵ができた回数の、最後に見た値（変わったら描き直す）。
     effects_seen: u64,
+    /// レイヤーの絞り込み。
+    layer_filter: layers::LayerFilter,
     /// レイヤーの欄の、小さな絵（行の番号と、柄か（0）マスクか（1））。
     thumbs: std::collections::HashMap<(usize, u8), (Vec<u8>, egui::TextureHandle)>,
     /// 立体の表示を平行投影で見る（遠近を付けない）。
@@ -657,6 +659,7 @@ impl App {
             adjust_focus: None,
             effects_seen: 0,
             thumbs: Default::default(),
+            layer_filter: Default::default(),
             ortho: false,
             home: initial.home,
             home_shape: None,
@@ -950,7 +953,7 @@ impl App {
         let start_of = |header: usize| {
             let g = &self.decals[header];
             let Picture::Group { open } = g.picture else { unreachable!() };
-            DecalLayer { name: name_of(header), image: Vec::new(), visible: !g.layer.hidden, opacity: g.layer.opacity, blend: g.layer.blend, mask: None, group: Some(PsdGroup::Start { open }), clipped: false }
+            DecalLayer { name: name_of(header), image: Vec::new(), visible: !g.layer.hidden, opacity: g.layer.opacity, blend: g.layer.blend, mask: None, group: Some(PsdGroup::Start { open }), clipped: false, fill: 100 }
         };
         let mut out = Vec::new();
         // いま開いているグループ（外側から）。
@@ -998,18 +1001,18 @@ impl App {
                         (None, true) => compose_back(&self.sheet, self.custom[1].as_deref(), false, draw),
                     };
                     let mut plain = decal.clone();
-                    (plain.layer.opacity, plain.layer.blend) = (100, project::Blend::Normal);
+                    (plain.layer.opacity, plain.layer.fill, plain.layer.blend) = (100, 100, project::Blend::Normal);
                     crate::paint::adjust_below(&plain, &mut image, 1.0, None);
-                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask: None, group: None, clipped: decal.layer.clipped }
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask: None, group: None, clipped: decal.layer.clipped, fill: decal.layer.fill }
                 }
                 _ => {
                     let mut image = vec![0u8; w * h * 4];
                     let mut shown = decal.clone();
                     // レイヤーの絵は、不透明度、描画モード、マスク、クリップを効かせずに描き、PSD のレイヤーの設定として入れる。
-                    (shown.layer.hidden, shown.layer.opacity, shown.layer.blend, shown.layer.depth, shown.layer.clipped, shown.layer.mask) = (false, 100, Default::default(), 0, false, None);
+                    (shown.layer.hidden, shown.layer.opacity, shown.layer.fill, shown.layer.blend, shown.layer.depth, shown.layer.clipped, shown.layer.mask) = (false, 100, 100, Default::default(), 0, false, None);
                     paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas::output(w, h, &mut image));
                     let mask = decal.layer.mask.as_ref().filter(|m| m.enabled).and_then(|_| crate::paint::paint_mask(&self.surface, &self.template, decal, back, w, h));
-                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None, clipped: decal.layer.clipped }
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None, clipped: decal.layer.clipped, fill: decal.layer.fill }
                 }
             };
             out.push(layer);

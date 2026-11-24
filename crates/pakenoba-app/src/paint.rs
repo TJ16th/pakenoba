@@ -406,7 +406,8 @@ impl Painter<'_> {
     }
 
     fn artwork(&self, decal: &Placed, target: &mut [u8], scale: f32, clip: Option<&[u8]>) {
-        let opacity = decal.layer.opacity.min(100) as f32 / 100.0 * scale;
+        // 塗りも、不透明度と同じく掛ける（レイヤースタイルがないので、Photoshop と同じ見た目）。
+        let opacity = decal.layer.opacity.min(100) as f32 / 100.0 * decal.layer.fill.min(100) as f32 / 100.0 * scale;
         let picture = crate::effects::shown(decal, self.wait);
         let mask = decal.layer.mask.as_ref().filter(|m| m.enabled);
         let size = decal.size;
@@ -456,7 +457,7 @@ pub fn mask_at(mask: &pakenoba_core::project::Mask, q: P2, size: P2) -> f32 {
 /// 調整レイヤーを、下の絵（`target`）に効かせる。透明な所はそのまま。透明度は変えない。
 pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32, clip: Option<&[u8]>) {
     let stack: Vec<_> = crate::effects::enabled(&placed.layer.adjust).into_iter().filter(|k| k.per_pixel()).collect();
-    let opacity = placed.layer.opacity.min(100) as f32 / 100.0 * scale;
+    let opacity = placed.layer.opacity.min(100) as f32 / 100.0 * placed.layer.fill.min(100) as f32 / 100.0 * scale;
     if stack.is_empty() || opacity <= 0.0 {
         return;
     }

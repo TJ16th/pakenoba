@@ -292,13 +292,15 @@ pub struct Layer {
     pub lock_position: bool,
     /// 不透明度（0〜100%）。
     pub opacity: u8,
+    /// 塗り（0〜100%。Photoshop の「塗り」。レイヤーの中身だけに効く。いまはレイヤースタイルがないので、不透明度と同じ効き方。グループにはない）。
+    pub fill: u8,
     /// 描画モード（下の絵との重ね方）。
     pub blend: Blend,
 }
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, blend: Blend::Normal }
+        Layer { adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, fill: 100, blend: Blend::Normal }
     }
 }
 
@@ -783,6 +785,9 @@ struct DecalEntry {
     /// 描画モード。通常のときは書かない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blend: Option<String>,
+    /// 塗り（%）。100 のときは書かない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<u8>,
     /// 柄でないレイヤーの種類（`group` か `adjustment`）。柄のときは書かない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
@@ -1148,7 +1153,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), fill: (placed.layer.fill < 100).then_some(placed.layer.fill), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
         }
@@ -1463,7 +1468,8 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             None => None,
         };
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, blend } });
+        let fill = if matches!(source, Source::Group { .. }) { 100 } else { entry.fill.unwrap_or(100).min(100) };
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, fill, blend } });
     }
     tidy_groups(&mut decals);
 
@@ -1621,6 +1627,7 @@ mod tests {
                     lock_pixels: panel % 4 == 2,
                     lock_position: panel % 6 == 1,
                     opacity: [100, 35, 0][panel % 3],
+                    fill: [100, 60, 5][panel % 3],
                     blend: Blend::MENU.iter().flatten().copied().nth(panel % 26).unwrap_or_default(),
                     adjust: match panel % 4 {
                         0 => vec![],

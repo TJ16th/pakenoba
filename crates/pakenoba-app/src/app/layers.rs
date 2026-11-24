@@ -140,6 +140,51 @@ fn shrink(w: usize, h: usize, rgba: &[u8], mw: usize, mh: usize) -> Vec<u8> {
     out
 }
 
+/// レイヤーの行の高さ、目の列の幅、入れ子 1 段の字下げ、柄の下の小さな行の高さ（PhotoCraft の欄に合わせた大きさ）。
+const ROW_H: f32 = 36.0;
+const EYE_W: f32 = 28.0;
+const DEPTH_W: f32 = 16.0;
+const SUB_H: f32 = 22.0;
+
+/// アイコンを描く関数。
+type Draw = fn(&egui::Painter, egui::Pos2, egui::Stroke);
+
+/// レイヤーの絞り込み（名前と、種類: 画像、調整、文字、図形）。
+#[derive(Clone, Default)]
+pub(in crate::app) struct LayerFilter {
+    pub text: String,
+    pub kinds: [bool; 4],
+}
+
+impl LayerFilter {
+    pub fn active(&self) -> bool {
+        !self.text.trim().is_empty() || self.kinds.iter().any(|&k| k)
+    }
+}
+
+/// 欄の中の、細い区切りの線。
+fn line(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color));
+}
+
+/// 紙の表と裏の見出し（小さな灰色の字）。
+fn face_caption(ui: &mut egui::Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    ui.painter().text(egui::pos2(rect.left() + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.5), ui.visuals().weak_text_color());
+}
+
+/// 描く相手の小さな絵の、四隅のかぎ（PhotoCraft と同じ）。
+fn brackets(painter: &egui::Painter, rect: egui::Rect) {
+    let r = rect.expand(2.5);
+    let l = 6.0;
+    let s = egui::Stroke::new(1.6, egui::Color32::WHITE);
+    for (corner, dx, dy) in [(r.left_top(), 1.0, 1.0), (r.right_top(), -1.0, 1.0), (r.left_bottom(), 1.0, -1.0), (r.right_bottom(), -1.0, -1.0)] {
+        painter.line_segment([corner, corner + egui::vec2(l * dx, 0.0)], s);
+        painter.line_segment([corner, corner + egui::vec2(0.0, l * dy)], s);
+    }
+}
+
 /// 小さな絵の、画素の数と、画面での大きさ。
 const THUMB_PX: usize = 48;
 const THUMB_PT: f32 = 26.0;
@@ -247,27 +292,33 @@ impl App {
         }
     }
 
-    /// 右の欄の、レイヤー。
+    /// 右の欄の、レイヤー（PhotoCraft のレイヤーの欄と同じ並び）。
+    /// 上から: 見出しのタブ、絞り込み、描画モードと不透明度、ロックと塗り、レイヤーの一覧、いちばん下のボタン。
     pub(super) fn layers(&mut self, ui: &mut egui::Ui) {
-        ui.strong(t!("Layers"));
-        self.blend_controls(ui);
-        self.lock_controls(ui);
-        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            if ui.checkbox(&mut self.show_guides, t!("Guides (cut lines, fold lines, glue flaps)")).changed() {
-                self.art_dirty = true;
-                self.back_dirty = true;
-            }
-            // 紙の表と裏に分けて、上に重なっているものから並べる。
-            let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
+        icons::panel_tabs(ui, &[t!("Layers")], 0);
+        ui.add_space(6.0);
+        self.layer_filter_row(ui);
+        ui.add_space(4.0);
+        self.layer_controls(ui);
+        ui.add_space(6.0);
+        let filtering = self.layer_filter.active();
+        // 紙の表と裏に分けて、上に重なっているものから並べる。
+        let mut rows_at: Vec<(usize, egui::Rect)> = Vec::new();
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            line(ui);
             for back in [false, true] {
-                ui.label(if back { t!("Back (inside of the box)") } else { t!("Front (outside of the box)") });
-                let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back).collect();
+                let rows: Vec<usize> = (0..self.decals.len()).rev().filter(|&i| self.decals[i].back == back && self.filter_shows(i)).collect();
+                if back && rows.is_empty() && self.bases[1].is_none() && !self.decals.iter().any(|d| d.back) {
+                    continue;
+                }
+                face_caption(ui, if back { t!("Back (inside of the box)") } else { t!("Front (outside of the box)") });
                 if rows.is_empty() && self.bases[back as usize].is_none() {
-                    ui.small(t!("　No artwork"));
+                    face_caption(ui, if filtering { t!("No layers match the filter") } else { t!("No artwork") });
                 }
                 for index in rows {
-                    // 閉じたグループの中身は出さない。
-                    if crate::paint::ancestors(&self.decals, index).iter().any(|&g| matches!(self.decals[g].picture, Picture::Group { open: false })) {
+                    // 閉じたグループの中身は出さない（絞り込んでいる間は、開いて出す）。
+                    if !filtering && crate::paint::ancestors(&self.decals, index).iter().any(|&g| matches!(self.decals[g].picture, Picture::Group { open: false })) {
                         continue;
                     }
                     if let Some(rect) = self.layer_row(ui, index) {
@@ -275,118 +326,315 @@ impl App {
                     }
                     self.adjust_rows(ui, index);
                 }
-                self.base_layer(ui, back as usize);
+                if !filtering {
+                    self.base_layer(ui, back as usize);
+                }
             }
-            self.drag_layer(ui, &rows_at);
         });
-        ui.add_space(2.0);
+        self.drag_layer(ui, &rows_at);
+        ui.add_space(4.0);
+        line(ui);
         self.layer_buttons(ui);
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         self.psd_loader(ui);
     }
 
-    /// レイヤーの行 1 つ。行の場所を返す（名前を変えている間は返さない）。
-    /// 並びは Photoshop と同じ: 目、（字下げ）、（グループなら開け閉め）、小さな絵、マスクの小さな絵、名前、fx、ロックの印。
-    fn layer_row(&mut self, ui: &mut egui::Ui, index: usize) -> Option<egui::Rect> {
-        let row = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            let layer = self.decals[index].layer.clone();
-            if icons::eye_button(ui, !layer.hidden).clicked() {
-                self.checkpoint();
-                self.decals[index].layer.hidden = !layer.hidden;
-                (self.art_dirty, self.back_dirty) = (true, true);
-            }
-            if layer.depth > 0 {
-                ui.add_space(16.0 * layer.depth as f32);
-            }
-            if layer.clipped {
-                // クリップしているものは、少し字下げして、下向きの曲がった矢印（Photoshop と同じ）。
-                ui.add_space(4.0);
-                let base = crate::paint::clip_base(&self.decals, index).map(|b| self.layer_label(b)).unwrap_or_default();
-                ui.weak("↳").on_hover_text(t!("Clipped to \"{base}\" (shows only where it is visible)"));
-            }
-            if let Picture::Group { open } = self.decals[index].picture {
-                let arrow = if open { "▾" } else { "▸" };
-                if ui.add(egui::Button::new(arrow).small().frame(false)).on_hover_text(if open { t!("Close the group") } else { t!("Open the group") }).clicked() {
-                    // 開け閉めは、元に戻す記録に入れない（見た目だけ）。保存はする。
-                    self.decals[index].picture = Picture::Group { open: !open };
+    /// 絞り込みの段（PhotoCraft の「種類」の段と同じ形）: 名前で探す欄と、種類のボタン。
+    fn layer_filter_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::hover());
+            icons::draw_search(ui.painter(), rect.center(), egui::Stroke::new(1.1, ui.visuals().weak_text_color()));
+            ui.add(egui::TextEdit::singleline(&mut self.layer_filter.text).hint_text(t!("Name")).desired_width(86.0));
+            ui.add_space(6.0);
+            let kinds: [(&str, Draw); 4] = [(t!("Image layers"), icons::draw_image), (t!("Adjustment layers"), icons::draw_adjust), (t!("Text layers"), icons::draw_type), (t!("Shape layers"), icons::draw_square)];
+            for (k, (tip, draw)) in kinds.into_iter().enumerate() {
+                if icons::bare_button(ui, egui::vec2(24.0, 22.0), self.layer_filter.kinds[k], true, tip, draw).clicked() {
+                    self.layer_filter.kinds[k] = !self.layer_filter.kinds[k];
                 }
             }
-            let thumb = self.layer_thumb(ui, index);
-            let mut mask_click = None;
-            if layer.mask.is_some() {
-                let r = self.mask_thumb(ui, index);
-                if r.clicked() {
-                    mask_click = Some(ui.input(|i| i.modifiers.shift));
-                }
-                r.context_menu(|ui| self.mask_menu(ui, index));
+            if self.layer_filter.active() && ui.small_button("✕").on_hover_text(t!("Show all layers")).clicked() {
+                self.layer_filter = LayerFilter::default();
             }
-            if let Some(shift) = mask_click {
-                if shift {
-                    // Shift+クリックで、マスクを使う・使わない（Photoshop と同じ）。
-                    if !layer.sealed() {
-                        self.checkpoint();
-                        if let Some(m) = &mut self.decals[index].layer.mask {
-                            m.enabled = !m.enabled;
-                        }
-                        (self.art_dirty, self.back_dirty) = (true, true);
-                    }
-                } else {
-                    self.select_only(Some(index));
-                    self.toggle_brush();
-                }
-            }
-            ui.add_space(2.0);
-            if let Some((renamed, text)) = &mut self.renaming
-                && *renamed == index
-            {
-                let edit = ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
-                if !edit.has_focus() && !edit.lost_focus() {
-                    edit.request_focus();
-                }
-                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if cancel || edit.lost_focus() {
-                    let text = text.trim().to_owned();
-                    self.renaming = None;
-                    if !cancel {
-                        let name = (!text.is_empty()).then_some(text);
-                        if name != self.decals[index].layer.name {
-                            self.checkpoint();
-                            self.decals[index].layer.name = name;
-                        }
-                    }
-                }
-                return None;
-            }
-            // 右の端に、ロックの印と、調整の印（fx）。
-            let right = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                if layer.locked {
-                    icons::lock_mark(ui, true, t!("All locked"));
-                } else if layer.lock_pixels || layer.lock_position {
-                    let tip = match (layer.lock_pixels, layer.lock_position) {
-                        (true, true) => t!("Image and position locked"),
-                        (true, false) => t!("Image locked"),
-                        _ => t!("Position locked"),
-                    };
-                    icons::lock_mark(ui, false, tip);
-                }
-                if !layer.adjust.is_empty() && is_artwork(&self.decals[index].picture) {
-                    ui.weak("fx").on_hover_text(t!("Has adjustments for this artwork only"));
-                }
-                let mut label = self.layer_label(index);
-                if self.is_editing(&self.decals[index].picture) {
-                    label.push_str(t!(" (being edited elsewhere)"));
-                }
-                let text = if layer.hidden { egui::RichText::new(label).weak() } else { egui::RichText::new(label) };
-                let text = if matches!(self.decals[index].picture, Picture::Group { .. }) { text.strong() } else { text };
-                let selected = self.is_selected(index);
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| ui.selectable_label(selected, text)).inner.interact(egui::Sense::click_and_drag())
-            });
-            // 小さな絵を押しても、行を押したのと同じ。
-            Some(if thumb.clicked() { thumb.union(right.inner) } else { right.inner })
         });
-        let response = row.inner?;
+    }
+
+    /// 絞り込みに合うか。グループは、中身のどれかが合えば出す。
+    fn filter_shows(&self, index: usize) -> bool {
+        let f = &self.layer_filter;
+        if !f.active() {
+            return true;
+        }
+        let fits = |i: usize| {
+            let kind = match self.decals[i].picture {
+                Picture::Group { .. } => return false,
+                Picture::Adjustment => 1,
+                Picture::Text(_) => 2,
+                Picture::Shape(_) => 3,
+                _ => 0,
+            };
+            let by_kind = !f.kinds.iter().any(|&k| k) || f.kinds[kind];
+            let by_name = f.text.trim().is_empty() || self.layer_label(i).to_lowercase().contains(&f.text.trim().to_lowercase());
+            by_kind && by_name
+        };
+        match self.decals[index].picture {
+            Picture::Group { .. } => members_of(&self.decals, index).into_iter().any(fits),
+            _ => fits(index),
+        }
+    }
+
+    /// 描画モードと不透明度、ロックと塗りの 2 段（PhotoCraft と同じ並び）。選んでいるレイヤーすべてに効く。
+    fn layer_controls(&mut self, ui: &mut egui::Ui) {
+        let mut targets: Vec<usize> = self.selection();
+        let header = self.selected.filter(|&i| matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. })));
+        if let Some(h) = header {
+            targets.retain(|&i| i == h);
+        }
+        let first = targets.first().map(|&i| self.decals[i].layer.clone());
+        let live = first.is_some();
+        let layer = first.unwrap_or_default();
+        let editable = live && !layer.locked;
+        let (mut blend, mut opacity, mut fill) = (layer.blend, layer.opacity as f32, layer.fill as f32);
+        let name = |mode: Blend| match mode {
+            Blend::Color => pakenoba_i18n::trc("blend", mode.label()),
+            Blend::PassThrough => t!("Pass Through"),
+            _ => pakenoba_i18n::tr(mode.label()),
+        };
+        let groups = header.is_some();
+        let mut lock: Option<u8> = None;
+        let field = egui::vec2(58.0, 22.0);
+        ui.add_enabled_ui(editable, |ui| {
+            ui.horizontal(|ui| {
+                let combo_w = (ui.available_width() - 130.0).max(90.0);
+                egui::ComboBox::from_id_salt("blend-mode").width(combo_w).selected_text(name(blend)).show_ui(ui, |ui| {
+                    if groups {
+                        ui.selectable_value(&mut blend, Blend::PassThrough, name(Blend::PassThrough));
+                    }
+                    for entry in Blend::MENU {
+                        match entry {
+                            Some(mode) => {
+                                ui.selectable_value(&mut blend, mode, name(mode));
+                            }
+                            None => {
+                                ui.separator();
+                            }
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(t!("Blend mode: how this artwork mixes with what is below it"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_sized(field, egui::DragValue::new(&mut opacity).range(0.0..=100.0).speed(0.5).max_decimals(0).suffix(" %"));
+                    ui.label(t!("Opacity:"));
+                });
+            });
+        })
+        .response
+        .on_disabled_hover_text(t!("Select artwork to set its blend mode and opacity"));
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(live, |ui| {
+                ui.label(t!("Lock:"));
+                ui.spacing_mut().item_spacing.x = 1.0;
+                let size = egui::vec2(22.0, 20.0);
+                let all = layer.locked;
+                if icons::bare_button(ui, size, layer.lock_pixels || all, live && !all, t!("Lock image: adjustments and the mask cannot be changed"), icons::draw_brush).clicked() {
+                    lock = Some(0);
+                }
+                if icons::bare_button(ui, size, layer.lock_position || all, live && !all, t!("Lock position: cannot be moved, resized or rotated"), icons::draw_move).clicked() {
+                    lock = Some(1);
+                }
+                if icons::bare_button(ui, size, all, live, t!("Lock all: cannot be grabbed, changed or deleted"), icons::draw_lock).clicked() {
+                    lock = Some(2);
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(editable && !groups, |ui| {
+                    ui.add_sized(field, egui::DragValue::new(&mut fill).range(0.0..=100.0).speed(0.5).max_decimals(0).suffix(" %"))
+                        .on_hover_text(t!("Fill: the opacity of the layer's own content"))
+                        .on_disabled_hover_text(t!("Groups have no fill"));
+                    ui.label(t!("Fill:"));
+                });
+            });
+        });
+        if let Some(which) = lock {
+            self.checkpoint();
+            for &i in &targets {
+                let l = &mut self.decals[i].layer;
+                match which {
+                    0 => l.lock_pixels = !layer.lock_pixels,
+                    1 => l.lock_position = !layer.lock_position,
+                    _ => l.locked = !layer.locked,
+                }
+            }
+            self.grab = None;
+            if self.brush_target().is_none() {
+                self.brush = None;
+            }
+        }
+        let changed_blend = blend != layer.blend;
+        if live && (changed_blend || opacity != layer.opacity as f32 || fill != layer.fill as f32) {
+            let earlier = self.snapshot();
+            for &i in &targets {
+                let is_group = matches!(self.decals[i].picture, Picture::Group { .. });
+                let l = &mut self.decals[i].layer;
+                if l.locked {
+                    continue;
+                }
+                if changed_blend {
+                    l.blend = if blend == Blend::PassThrough && !is_group { Blend::Normal } else { blend };
+                }
+                if opacity != layer.opacity as f32 {
+                    l.opacity = opacity.round().clamp(0.0, 100.0) as u8;
+                }
+                if fill != layer.fill as f32 && !is_group {
+                    l.fill = fill.round().clamp(0.0, 100.0) as u8;
+                }
+            }
+            (self.art_dirty, self.back_dirty) = (true, true);
+            // ドラッグのひと続きは、1 回ぶんにまとめる（数値の欄と同じ）。
+            if !self.editing || changed_blend {
+                self.history.record(earlier);
+            }
+            self.editing = !changed_blend;
+        }
+    }
+
+    /// レイヤーの行 1 つ（PhotoCraft と同じ形）。行の場所を返す。
+    /// 左から: 目（区切りの線）、字下げ、（クリップの ↳）、（グループの開け閉め）、小さな絵、マスクの小さな絵、名前と種類の 2 行、fx、ロックの印。
+    fn layer_row(&mut self, ui: &mut egui::Ui, index: usize) -> Option<egui::Rect> {
+        let layer = self.decals[index].layer.clone();
+        let selected = self.is_selected(index);
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::click_and_drag());
+        let visuals = ui.visuals().clone();
+        let painter = ui.painter().clone();
+        if selected {
+            painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(30));
+        } else if response.hovered() {
+            painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(10));
+        }
+        painter.hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
+        // 目の列と、区切りの線。
+        let eye = egui::Rect::from_min_size(rect.min, egui::vec2(EYE_W, ROW_H));
+        painter.vline(eye.right(), rect.y_range(), egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
+        if ui.put(egui::Rect::from_center_size(eye.center(), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, !layer.hidden)).clicked() {
+            self.checkpoint();
+            self.decals[index].layer.hidden = !layer.hidden;
+            (self.art_dirty, self.back_dirty) = (true, true);
+        }
+        let mut x = eye.right() + 6.0 + DEPTH_W * layer.depth as f32;
+        let cy = rect.center().y;
+        if layer.clipped {
+            let base = crate::paint::clip_base(&self.decals, index).map(|b| self.layer_label(b)).unwrap_or_default();
+            let mark = ui.put(egui::Rect::from_center_size(egui::pos2(x + 6.0, cy), egui::vec2(12.0, ROW_H)), egui::Label::new(egui::RichText::new("↳").color(visuals.weak_text_color())));
+            mark.on_hover_text(t!("Clipped to \"{base}\" (shows only where it is visible)"));
+            x += 14.0;
+        }
+        if let Picture::Group { open } = self.decals[index].picture {
+            let arrow = if open { "▾" } else { "▸" };
+            let r = ui.put(egui::Rect::from_center_size(egui::pos2(x + 7.0, cy), egui::vec2(14.0, 18.0)), egui::Button::new(arrow).small().frame(false));
+            if r.on_hover_text(if open { t!("Close the group") } else { t!("Open the group") }).clicked() {
+                // 開け閉めは、元に戻す記録に入れない（見た目だけ）。保存はする。
+                self.decals[index].picture = Picture::Group { open: !open };
+            }
+            x += 16.0;
+        }
+        // 小さな絵。描く相手（柄かマスク）には、四隅のかぎ（PhotoCraft と同じ）。
+        let painting = self.brush.is_some() && self.selected == Some(index);
+        let thumb_rect = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
+        let thumb = self.layer_thumb(ui, index, thumb_rect);
+        if selected && !painting && is_artwork(&self.decals[index].picture) {
+            brackets(&painter, thumb_rect);
+        }
+        x += THUMB_PT + 4.0;
+        let mut mask_click = None;
+        if layer.mask.is_some() {
+            let mask_rect = egui::Rect::from_center_size(egui::pos2(x + THUMB_PT / 2.0, cy), egui::vec2(THUMB_PT, THUMB_PT));
+            let r = self.mask_thumb(ui, index, mask_rect);
+            if painting {
+                brackets(&painter, mask_rect);
+            }
+            if r.clicked() {
+                mask_click = Some(ui.input(|i| i.modifiers.shift));
+            }
+            r.context_menu(|ui| self.mask_menu(ui, index));
+            x += THUMB_PT + 4.0;
+        }
+        if let Some(shift) = mask_click {
+            if shift {
+                // Shift+クリックで、マスクを使う・使わない（Photoshop と同じ）。
+                if !layer.sealed() {
+                    self.checkpoint();
+                    if let Some(m) = &mut self.decals[index].layer.mask {
+                        m.enabled = !m.enabled;
+                    }
+                    (self.art_dirty, self.back_dirty) = (true, true);
+                }
+            } else {
+                self.select_only(Some(index));
+                self.toggle_brush();
+            }
+        }
+        // 右の端: ロックの印と fx。
+        let mut right = rect.right() - 6.0;
+        if layer.locked || layer.lock_pixels || layer.lock_position {
+            let tip = if layer.locked {
+                t!("All locked")
+            } else {
+                match (layer.lock_pixels, layer.lock_position) {
+                    (true, true) => t!("Image and position locked"),
+                    (true, false) => t!("Image locked"),
+                    _ => t!("Position locked"),
+                }
+            };
+            ui.put(egui::Rect::from_center_size(egui::pos2(right - 7.0, cy), egui::vec2(14.0, 16.0)), |ui: &mut egui::Ui| {
+                icons::lock_mark(ui, layer.locked, tip);
+                ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
+            });
+            right -= 18.0;
+        }
+        if !layer.adjust.is_empty() && is_artwork(&self.decals[index].picture) {
+            let fx = ui.put(egui::Rect::from_center_size(egui::pos2(right - 9.0, cy), egui::vec2(18.0, 16.0)), egui::Label::new(egui::RichText::new("fx").italics().color(visuals.text_color())));
+            fx.on_hover_text(t!("Has adjustments for this artwork only"));
+            right -= 22.0;
+        }
+        // 名前と、その下に種類（PhotoCraft と同じ 2 行）。
+        let name_rect = egui::Rect::from_min_max(egui::pos2(x + 2.0, rect.top() + 2.0), egui::pos2(right.max(x + 20.0), rect.bottom() - 2.0));
+        if let Some((renamed, text)) = &mut self.renaming
+            && *renamed == index
+        {
+            let edit = ui.put(egui::Rect::from_center_size(name_rect.center(), egui::vec2(name_rect.width(), 22.0)), egui::TextEdit::singleline(text));
+            if !edit.has_focus() && !edit.lost_focus() {
+                edit.request_focus();
+            }
+            let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if cancel || edit.lost_focus() {
+                let text = text.trim().to_owned();
+                self.renaming = None;
+                if !cancel {
+                    let name = (!text.is_empty()).then_some(text);
+                    if name != self.decals[index].layer.name {
+                        self.checkpoint();
+                        self.decals[index].layer.name = name;
+                    }
+                }
+            }
+            ui.advance_cursor_after_rect(rect);
+            return None;
+        }
+        let mut label = self.layer_label(index);
+        if self.is_editing(&self.decals[index].picture) {
+            label.push_str(t!(" (being edited elsewhere)"));
+        }
+        let kind = match &self.decals[index].picture {
+            Picture::Adjustment => layer.adjust.first().map_or_else(|| self.decals[index].picture.label().to_owned(), |a| adjust_label(a.kind).to_owned()),
+            p => p.label().to_owned(),
+        };
+        let ink = if layer.hidden { visuals.weak_text_color() } else { visuals.strong_text_color() };
+        let clip = painter.with_clip_rect(name_rect);
+        clip.text(egui::pos2(name_rect.left(), cy - 7.5), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.0), ink);
+        clip.text(egui::pos2(name_rect.left(), cy + 8.0), egui::Align2::LEFT_CENTER, kind, egui::FontId::proportional(11.5), visuals.weak_text_color());
+
+        let response = if thumb.clicked() { thumb.union(response) } else { response };
         if response.hovered() {
             self.hover_now = Some(index);
         }
@@ -408,94 +656,126 @@ impl App {
             self.layer_drag = Some(index);
         }
         let response = response.on_hover_text(t!("Double-click to rename. Drag to change the stacking order"));
-        response.context_menu(|ui| {
-            if ui.button(t!("Rename")).clicked() {
-                self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
+        response.context_menu(|ui| self.layer_menu(ui, index));
+        // 行の中に置いた部品で、次の行の位置がずれないように。
+        ui.advance_cursor_after_rect(rect);
+        Some(rect)
+    }
+
+    /// レイヤーの行の右クリックの項目。
+    fn layer_menu(&mut self, ui: &mut egui::Ui, index: usize) {
+        if ui.button(t!("Rename")).clicked() {
+            self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
+            ui.close();
+        }
+        if !matches!(self.decals[index].picture, Picture::Group { .. }) {
+            let label = if self.decals[index].layer.clipped { t!("Release clipping mask") } else { t!("Create clipping mask") };
+            if ui.button(label).on_hover_text(t!("Show this layer only where the layer below it is visible (Ctrl+Alt+G)")).clicked() {
+                self.toggle_clip(index);
                 ui.close();
             }
-            if !matches!(self.decals[index].picture, Picture::Group { .. }) {
-                let label = if self.decals[index].layer.clipped { t!("Release clipping mask") } else { t!("Create clipping mask") };
-                if ui.button(label).on_hover_text(t!("Show this layer only where the layer below it is visible (Ctrl+Alt+G)")).clicked() {
-                    self.toggle_clip(index);
+        }
+        match self.decals[index].picture {
+            Picture::Group { .. } => {
+                if ui.button(t!("Ungroup")).clicked() {
+                    self.ungroup(index);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(t!("Delete")).clicked() {
+                    self.delete_selected();
                     ui.close();
                 }
             }
-            match self.decals[index].picture {
-                Picture::Group { .. } => {
-                    if ui.button(t!("Ungroup")).clicked() {
-                        self.ungroup(index);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(t!("Delete")).clicked() {
-                        self.delete_selected();
-                        ui.close();
-                    }
-                }
-                Picture::Adjustment => {
-                    ui.separator();
-                    if ui.button(t!("Delete")).clicked() {
-                        self.delete_selected();
-                        ui.close();
-                    }
-                }
-                _ => {
-                    if self.decals[index].layer.depth > 0 && ui.button(t!("Take out of the group")).clicked() {
-                        self.take_out_of_group(index);
-                        ui.close();
-                    }
-                    ui.separator();
-                    self.decal_menu(ui);
+            Picture::Adjustment => {
+                ui.separator();
+                if ui.button(t!("Delete")).clicked() {
+                    self.delete_selected();
+                    ui.close();
                 }
             }
-        });
-        Some(row.response.rect)
+            _ => {
+                if self.decals[index].layer.depth > 0 && ui.button(t!("Take out of the group")).clicked() {
+                    self.take_out_of_group(index);
+                    ui.close();
+                }
+                ui.separator();
+                self.decal_menu(ui);
+            }
+        }
     }
 
-    /// 柄の行の下に、柄だけに効く調整を、上から（あとで効くものから）並べる。
+    /// 柄の行の下に、柄だけに効く調整を並べる（PhotoCraft の「効果」と同じ形: 見出しの行と、上から、あとで効くものから）。
     fn adjust_rows(&mut self, ui: &mut egui::Ui, index: usize) {
         if !is_artwork(&self.decals[index].picture) || self.decals[index].layer.adjust.is_empty() {
             return;
         }
-        let indent = 20.0 + 16.0 * self.decals[index].layer.depth as f32;
-        for k in (0..self.decals[index].layer.adjust.len()).rev() {
+        let depth = self.decals[index].layer.depth as f32;
+        let n = self.decals[index].layer.adjust.len();
+        // 見出しの行（目で、すべてを切り替える）。
+        let all_on = self.decals[index].layer.adjust.iter().any(|a| a.on);
+        let toggled_all = self.sub_row(ui, depth, all_on, t!("Adjustments"), true, false).0;
+        if toggled_all {
+            self.checkpoint();
+            for a in &mut self.decals[index].layer.adjust {
+                a.on = !all_on;
+            }
+            (self.art_dirty, self.back_dirty) = (true, true);
+        }
+        for k in (0..n).rev() {
             let a = self.decals[index].layer.adjust[k].clone();
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.add_space(indent);
-                if icons::eye_button(ui, a.on).clicked() {
-                    self.checkpoint();
-                    self.decals[index].layer.adjust[k].on = !a.on;
-                    (self.art_dirty, self.back_dirty) = (true, true);
-                }
-                let focused = self.adjust_focus == Some((index, k));
-                let text = egui::RichText::new(adjust_label(a.kind)).small();
-                let text = if a.on { text } else { text.weak() };
-                if ui.selectable_label(focused, text).on_hover_text(t!("Click to change its settings in Properties")).clicked() {
-                    self.select_only(Some(index));
-                    self.adjust_focus = Some((index, k));
-                }
-            });
+            let focused = self.adjust_focus == Some((index, k));
+            let (toggled, clicked) = self.sub_row(ui, depth, a.on, adjust_label(a.kind), false, focused);
+            if toggled {
+                self.checkpoint();
+                self.decals[index].layer.adjust[k].on = !a.on;
+                (self.art_dirty, self.back_dirty) = (true, true);
+            }
+            if clicked {
+                self.select_only(Some(index));
+                self.adjust_focus = Some((index, k));
+            }
         }
     }
 
-    /// 欄のいちばん下の、アイコンのボタン（Photoshop と同じ並び: マスク、調整、グループ、削除）。
+    /// 柄の下の、小さな行（目と名前）。目を押したか、行を押したかを返す。
+    fn sub_row(&mut self, ui: &mut egui::Ui, depth: f32, on: bool, label: &str, heading: bool, focused: bool) -> (bool, bool) {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SUB_H), egui::Sense::click());
+        let visuals = ui.visuals().clone();
+        if focused {
+            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_white_alpha(22));
+        } else if response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_white_alpha(8));
+        }
+        ui.painter().vline(rect.left() + EYE_W, rect.y_range(), egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
+        let eye = ui.put(egui::Rect::from_center_size(egui::pos2(rect.left() + EYE_W / 2.0, rect.center().y), egui::vec2(20.0, 18.0)), |ui: &mut egui::Ui| icons::eye_button(ui, on));
+        let x = rect.left() + EYE_W + 6.0 + DEPTH_W * depth + THUMB_PT / 2.0 + if heading { 0.0 } else { 18.0 };
+        let ink = if on { visuals.text_color() } else { visuals.weak_text_color() };
+        if heading {
+            icons::draw_adjust(ui.painter(), egui::pos2(x + 2.0, rect.center().y), egui::Stroke::new(1.0, ink));
+        }
+        ui.painter().text(egui::pos2(x + if heading { 14.0 } else { 0.0 }, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), ink);
+        let clicked = response.on_hover_text(t!("Click to change its settings in Properties")).clicked();
+        ui.advance_cursor_after_rect(rect);
+        (eye.clicked(), clicked && !heading)
+    }
+
+    /// 欄のいちばん下の、枠のないアイコンのボタン（PhotoCraft と同じ並びの、パケノバにあるもの: マスク、調整、グループ、削除）。
     fn layer_buttons(&mut self, ui: &mut egui::Ui) {
         let index = self.selected.filter(|&i| i < self.decals.len());
         let artwork = index.filter(|&i| is_artwork(&self.decals[i].picture) && !self.decals[i].layer.sealed());
-        let size = egui::vec2(30.0, 24.0);
+        let size = egui::vec2(28.0, 26.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.spacing_mut().item_spacing.x = 4.0;
                 let deletable = index.is_some_and(|i| !self.decals[i].layer.locked);
-                if icons::small_icon_button(ui, size, false, deletable, t!("Delete the selected layers"), icons::draw_trash).clicked() {
+                if icons::bare_button(ui, size, false, deletable, t!("Delete the selected layers"), icons::draw_trash).clicked() {
                     self.delete_selected();
                 }
-                if icons::small_icon_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
+                if icons::bare_button(ui, size, false, true, t!("Put the selected layers in a group (Ctrl+G)"), icons::draw_folder).clicked() {
                     self.group_selected();
                 }
-                let adjust = icons::small_icon_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
+                let adjust = icons::bare_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
                 egui::Popup::menu(&adjust).show(|ui| {
                     ui.set_min_width(240.0);
                     ui.weak(t!("Adjustment layer (everything below)"));
@@ -520,7 +800,7 @@ impl App {
                     });
                 });
                 let can_mask = artwork.is_some_and(|i| self.decals[i].layer.mask.is_none());
-                let mask = icons::small_icon_button(ui, size, false, can_mask, t!("Add a layer mask to the selected artwork"), icons::draw_mask);
+                let mask = icons::bare_button(ui, size, false, can_mask, t!("Add a layer mask to the selected artwork"), icons::draw_mask);
                 egui::Popup::menu(&mask).show(|ui| {
                     ui.set_min_width(220.0);
                     if ui.button(t!("Reveal all")).on_hover_text(t!("A white mask that shows everything. Paint black with the brush to hide parts")).clicked() {
@@ -540,86 +820,41 @@ impl App {
         });
     }
 
-    /// ロックの段（Photoshop の 2 段目と同じ）。画像、位置、すべて。選んでいるレイヤーすべてに効く。
-    fn lock_controls(&mut self, ui: &mut egui::Ui) {
-        let mut targets: Vec<usize> = self.selection();
-        if let Some(header) = self.selected.filter(|&i| matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. }))) {
-            targets.retain(|&i| i == header);
-        }
-        let first = targets.first().map(|&i| self.decals[i].layer.clone());
-        let enabled = first.is_some();
-        let layer = first.unwrap_or_default();
-        let mut change: Option<u8> = None;
-        ui.horizontal(|ui| {
-            ui.label(t!("Lock:"));
-            ui.spacing_mut().item_spacing.x = 1.0;
-            let size = egui::vec2(24.0, 20.0);
-            let all = layer.locked;
-            if icons::small_icon_button(ui, size, layer.lock_pixels || all, enabled && !all, t!("Lock image: adjustments and the mask cannot be changed"), icons::draw_brush).clicked() {
-                change = Some(0);
-            }
-            if icons::small_icon_button(ui, size, layer.lock_position || all, enabled && !all, t!("Lock position: cannot be moved, resized or rotated"), icons::draw_move).clicked() {
-                change = Some(1);
-            }
-            if icons::small_icon_button(ui, size, all, enabled, t!("Lock all: cannot be grabbed, changed or deleted"), icons::draw_lock).clicked() {
-                change = Some(2);
-            }
-        });
-        let Some(which) = change else { return };
-        self.checkpoint();
-        for i in targets {
-            let l = &mut self.decals[i].layer;
-            match which {
-                0 => l.lock_pixels = !layer.lock_pixels,
-                1 => l.lock_position = !layer.lock_position,
-                _ => l.locked = !layer.locked,
-            }
-        }
-        self.grab = None;
-        if self.brush_target().is_none() {
-            self.brush = None;
-        }
-    }
-
-    /// 行の小さな絵（柄の絵。グループと調整レイヤーは印）。
-    fn layer_thumb(&mut self, ui: &mut egui::Ui, index: usize) -> egui::Response {
-        let side = egui::vec2(THUMB_PT, THUMB_PT);
+    /// 行の小さな絵（柄の絵。グループと調整レイヤーは印）を、`rect` に置く。
+    fn layer_thumb(&mut self, ui: &mut egui::Ui, index: usize, rect: egui::Rect) -> egui::Response {
+        let visuals = ui.visuals().clone();
         match self.decals[index].picture {
             Picture::Group { .. } => {
-                let r = ui.allocate_exact_size(side, egui::Sense::click()).1;
-                icons::draw_folder(ui.painter(), r.rect.center(), egui::Stroke::new(1.3, ui.visuals().text_color()));
+                let r = ui.interact(rect, ui.scope_id().with(("thumb", index)), egui::Sense::click());
+                icons::draw_folder(ui.painter(), rect.center(), egui::Stroke::new(1.3, visuals.text_color()));
                 r
             }
             Picture::Adjustment => {
-                let r = ui.allocate_exact_size(side, egui::Sense::click()).1;
-                ui.painter().rect_stroke(r.rect.shrink(1.0), 2.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()), egui::StrokeKind::Inside);
-                icons::draw_adjust(ui.painter(), r.rect.center(), egui::Stroke::new(1.2, ui.visuals().text_color()));
+                let r = ui.interact(rect, ui.scope_id().with(("thumb", index)), egui::Sense::click());
+                ui.painter().rect_filled(rect, 2.0, visuals.extreme_bg_color);
+                icons::draw_adjust(ui.painter(), rect.center(), egui::Stroke::new(1.2, visuals.strong_text_color()));
                 r
             }
             _ => {
                 let pixels = picture_thumb(&self.decals[index]);
                 let id = self.thumb_texture(ui.ctx(), (index, 0), pixels);
-                let r = ui.add(egui::Image::new((id, side)).sense(egui::Sense::click()));
-                ui.painter().rect_stroke(r.rect, 1.0, egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color), egui::StrokeKind::Outside);
+                let r = ui.put(rect, egui::Image::new((id, rect.size())).sense(egui::Sense::click()));
+                ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color), egui::StrokeKind::Outside);
                 r
             }
         }
     }
 
-    /// 行のマスクの小さな絵。筆で描いている間は、白い枠で囲む（Photoshop と同じく、描く相手がマスクだと分かるように）。
-    fn mask_thumb(&mut self, ui: &mut egui::Ui, index: usize) -> egui::Response {
-        let side = egui::vec2(THUMB_PT, THUMB_PT);
+    /// 行のマスクの小さな絵を、`rect` に置く。
+    fn mask_thumb(&mut self, ui: &mut egui::Ui, index: usize, rect: egui::Rect) -> egui::Response {
         let pixels = mask_thumb_pixels(&self.decals[index]);
         let id = self.thumb_texture(ui.ctx(), (index, 1), pixels);
-        let r = ui.add(egui::Image::new((id, side)).sense(egui::Sense::click()));
-        let painting = self.brush.is_some() && self.selected == Some(index);
-        let frame = if painting { egui::Stroke::new(2.0, egui::Color32::WHITE) } else { egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color) };
-        ui.painter().rect_stroke(r.rect, 1.0, frame, egui::StrokeKind::Outside);
+        let r = ui.put(rect, egui::Image::new((id, rect.size())).sense(egui::Sense::click()));
         if self.decals[index].layer.mask.as_ref().is_some_and(|m| !m.enabled) {
             // 使っていないマスクには、赤いばつ（Photoshop と同じ）。
             let red = egui::Stroke::new(1.6, egui::Color32::from_rgb(220, 40, 40));
-            ui.painter().line_segment([r.rect.left_top(), r.rect.right_bottom()], red);
-            ui.painter().line_segment([r.rect.right_top(), r.rect.left_bottom()], red);
+            ui.painter().line_segment([rect.left_top(), rect.right_bottom()], red);
+            ui.painter().line_segment([rect.right_top(), rect.left_bottom()], red);
         }
         r.on_hover_text(t!("Layer mask. Click to paint on it with the brush, Shift+click to switch it off or on. Right-click for more"))
     }
@@ -932,18 +1167,24 @@ impl App {
         let mut remove = None;
         let mut swap = None;
         let focus = self.adjust_focus.filter(|(i, _)| *i == index).map(|(_, k)| k);
-        let header = if layer_only { t!("Adjustments") } else { t!("Adjustments (this artwork only)") };
-        egui::CollapsingHeader::new(header).id_salt(("adjust-list", index)).default_open(true).show(ui, |ui| {
-            ui.add_enabled_ui(!locked, |ui| {
-                let n = list.len();
-                for k in (0..n).rev() {
-                    let a = &mut list[k];
-                    let open = focus.is_none_or(|f| f == k);
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut a.on, "").on_hover_text(t!("Switch this adjustment on or off"));
-                        let label = egui::RichText::new(adjust_label(a.kind)).strong();
-                        ui.label(if a.on { label } else { label.weak() });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let mut reset = None;
+        ui.add_enabled_ui(!locked, |ui| {
+            if !layer_only {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(t!("Adjustments (this artwork only)")).strong());
+            }
+            let n = list.len();
+            for k in (0..n).rev() {
+                let a = &mut list[k];
+                // 調整の見出し（PhotoCraft と同じく、印と名前）。いくつもあるときは、切り替え、順、外すのボタン。
+                let open = layer_only || focus.is_none_or(|f| f == k);
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
+                    icons::draw_adjust(ui.painter(), rect.center(), egui::Stroke::new(1.1, ui.visuals().strong_text_color()));
+                    let label = egui::RichText::new(adjust_label(a.kind)).strong();
+                    ui.label(if a.on { label } else { label.weak() });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if n > 1 || !layer_only {
                             if ui.small_button("✕").on_hover_text(t!("Remove this adjustment")).clicked() {
                                 remove = Some(k);
                             }
@@ -953,18 +1194,27 @@ impl App {
                             if ui.add_enabled(k + 1 < n, egui::Button::new("▲").small()).on_hover_text(t!("Apply later")).clicked() {
                                 swap = Some((k, k + 1));
                             }
-                        });
+                        }
                     });
-                    if open {
-                        adjust_numbers(ui, &mut a.kind);
+                });
+                if open {
+                    adjust_numbers(ui, &mut a.kind);
+                    if !layer_only || n > 1 {
+                        ui.checkbox(&mut a.on, t!("Adjustment visible"));
                     }
-                    ui.add_space(2.0);
+                    if !layer_only && ui.add_sized([ui.available_width(), 26.0], egui::Button::new(t!("Reset to defaults")).corner_radius(13.0)).clicked() {
+                        reset = Some(k);
+                    }
                 }
-                if n > 1 {
-                    ui.weak(t!("Applied from the bottom up, like in Photoshop."));
-                }
-            });
+                ui.add_space(6.0);
+            }
+            if n > 1 {
+                ui.weak(t!("Applied from the bottom up, like in Photoshop."));
+            }
         });
+        if let Some(k) = reset {
+            list[k].kind = default_of(list[k].kind);
+        }
         if let Some(k) = remove {
             list.remove(k);
             self.adjust_focus = None;
@@ -1006,16 +1256,14 @@ impl App {
     /// プロパティの欄: グループの見出しや、調整レイヤーを選んでいるとき。
     pub(super) fn layer_properties(&mut self, ui: &mut egui::Ui, index: usize) {
         let locked = self.decals[index].layer.locked;
-        egui::Grid::new("layer-properties").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Type"));
-            ui.label(self.decals[index].picture.label());
-            ui.end_row();
-            ui.label(t!("Side of sheet"));
-            ui.label(if self.decals[index].back { t!("Back") } else { t!("Front") });
-            ui.end_row();
-        });
         match self.decals[index].picture {
             Picture::Group { .. } => {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
+                    icons::draw_folder(ui.painter(), rect.center(), egui::Stroke::new(1.1, ui.visuals().strong_text_color()));
+                    ui.label(egui::RichText::new(t!("Group")).strong());
+                    ui.weak(if self.decals[index].back { t!("Back") } else { t!("Front") });
+                });
                 let count = members_of(&self.decals, index).len();
                 ui.small(t!("{count} layer(s) in this group. Drag layers onto the group to add them."));
                 ui.small(t!("\"Pass Through\" mixes the contents with what is below as if there were no group. Other blend modes mix the group as one picture."));
@@ -1029,21 +1277,45 @@ impl App {
                 });
             }
             Picture::Adjustment => {
-                ui.small(t!("Applies to all layers below it. Inside a group that is not \"Pass Through\", only to the layers below it in the group."));
                 self.adjust_properties(ui, index, locked);
+                // PhotoCraft と同じ: 調整を表示、下のレイヤーでクリップ、初期設定に戻す。
                 ui.add_enabled_ui(!locked, |ui| {
-                    ui.menu_button(t!("Add to this adjustment layer"), |ui| {
-                        if let Some(kind) = pixel_adjust_menu(ui) {
+                    ui.horizontal(|ui| {
+                        let mut visible = !self.decals[index].layer.hidden;
+                        if ui.checkbox(&mut visible, t!("Adjustment visible")).changed() {
                             self.checkpoint();
-                            self.decals[index].layer.adjust.push(Adjustment::new(kind));
+                            self.decals[index].layer.hidden = !visible;
                             (self.art_dirty, self.back_dirty) = (true, true);
-                            ui.close();
+                        }
+                        let mut clipped = self.decals[index].layer.clipped;
+                        if ui.checkbox(&mut clipped, t!("Clip to layer below")).changed() {
+                            self.toggle_clip(index);
+                        }
+                    });
+                    if ui.add_sized([ui.available_width(), 28.0], egui::Button::new(t!("Reset to defaults")).corner_radius(14.0)).clicked() {
+                        self.checkpoint();
+                        for a in &mut self.decals[index].layer.adjust {
+                            a.kind = default_of(a.kind);
+                        }
+                        (self.art_dirty, self.back_dirty) = (true, true);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.menu_button(t!("Add to this adjustment layer"), |ui| {
+                            if let Some(kind) = pixel_adjust_menu(ui) {
+                                self.checkpoint();
+                                self.decals[index].layer.adjust.push(Adjustment::new(kind));
+                                (self.art_dirty, self.back_dirty) = (true, true);
+                                ui.close();
+                            }
+                        });
+                        if ui.button(t!("Delete")).clicked() {
+                            self.delete_selected();
                         }
                     });
                 });
-                if ui.add_enabled(!locked, egui::Button::new(t!("Delete"))).clicked() {
-                    self.delete_selected();
-                }
+                ui.add_space(2.0);
+                ui.weak(t!("Applies to all layers below it. Inside a group that is not \"Pass Through\", only to the layers below it in the group."));
             }
             _ => {}
         }
@@ -1250,40 +1522,60 @@ impl App {
     }
 }
 
+/// 数値の欄の 1 項目（PhotoCraft と同じ形: 上の行に名前と数値、下の行に幅いっぱいのスライダー）。
+fn num_row<T: egui::emath::Numeric>(ui: &mut egui::Ui, label: &str, value: &mut T, range: std::ops::RangeInclusive<T>, suffix: &str, decimals: usize, log: bool) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_sized([62.0, 20.0], egui::DragValue::new(value).range(range.clone()).max_decimals(decimals).suffix(suffix));
+        });
+    });
+    ui.scope(|ui| {
+        ui.spacing_mut().slider_width = ui.available_width() - 4.0;
+        ui.add(egui::Slider::new(value, range).show_value(false).logarithmic(log));
+    });
+    ui.add_space(2.0);
+}
+
+/// `i16` の数値を、整数の欄で直す。
+fn num_i16(ui: &mut egui::Ui, label: &str, value: &mut i16, range: std::ops::RangeInclusive<i16>, suffix: &str) {
+    let mut v = *value as i32;
+    num_row(ui, label, &mut v, *range.start() as i32..=*range.end() as i32, suffix, 0, false);
+    *value = v as i16;
+}
+
+/// `u8` の数値を、整数の欄で直す。
+fn num_u8(ui: &mut egui::Ui, label: &str, value: &mut u8, range: std::ops::RangeInclusive<u8>, suffix: &str) {
+    let mut v = *value as i32;
+    num_row(ui, label, &mut v, *range.start() as i32..=*range.end() as i32, suffix, 0, false);
+    *value = v as u8;
+}
+
 /// 調整の数値の欄。
 fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
-    let slider = |ui: &mut egui::Ui, value: &mut i16, range: std::ops::RangeInclusive<i16>, label: &str| {
-        let mut v = *value as i32;
-        ui.add(egui::Slider::new(&mut v, *range.start() as i32..=*range.end() as i32).text(label));
-        *value = v as i16;
-    };
     match kind {
         AdjustKind::BrightnessContrast { brightness, contrast } => {
-            slider(ui, brightness, -150..=150, t!("Brightness"));
-            slider(ui, contrast, -50..=100, t!("Contrast"));
+            num_i16(ui, t!("Brightness"), brightness, -150..=150, "");
+            num_i16(ui, t!("Contrast"), contrast, -50..=100, "");
         }
         AdjustKind::HueSaturation { hue, saturation, lightness } => {
-            slider(ui, hue, -180..=180, t!("Hue"));
-            slider(ui, saturation, -100..=100, t!("Saturation"));
-            slider(ui, lightness, -100..=100, t!("Lightness"));
+            num_i16(ui, t!("Hue"), hue, -180..=180, " °");
+            num_i16(ui, t!("Saturation"), saturation, -100..=100, " %");
+            num_i16(ui, t!("Lightness"), lightness, -100..=100, " %");
         }
         AdjustKind::Levels { black, white, gamma } => {
-            let (mut b, mut w) = (*black as i32, *white as i32);
-            ui.add(egui::Slider::new(&mut b, 0..=253).text(t!("Black point")));
-            ui.add(egui::Slider::new(&mut w, 2..=255).text(t!("White point")));
+            let (mut b, mut w) = (*black, *white);
+            num_u8(ui, t!("Black point"), &mut b, 0..=253, "");
             let mut g = *gamma as f32 / 100.0;
-            ui.add(egui::Slider::new(&mut g, 0.1..=9.99).logarithmic(true).max_decimals(2).text(t!("Midtones")));
-            *kind = AdjustKind::Levels { black: b as u8, white: w as u8, gamma: (g * 100.0).round() as u16 }.clamped();
+            num_row(ui, t!("Midtones"), &mut g, 0.1..=9.99, "", 2, true);
+            num_u8(ui, t!("White point"), &mut w, 2..=255, "");
+            *kind = AdjustKind::Levels { black: b, white: w, gamma: (g * 100.0).round() as u16 }.clamped();
         }
         AdjustKind::ClearBackground { tolerance } => {
-            let mut v = *tolerance as i32;
-            ui.add(egui::Slider::new(&mut v, 1..=200).text(t!("Tolerance"))).on_hover_text(t!("How close a color must be to count as the background. Larger values make more of the picture transparent"));
-            *tolerance = v as u8;
+            num_u8(ui, t!("Tolerance"), tolerance, 1..=200, "");
         }
         AdjustKind::ReduceColors { colors } => {
-            let mut v = *colors as i32;
-            ui.add(egui::Slider::new(&mut v, 2..=64).text(t!("Colors")));
-            *colors = v as u8;
+            num_u8(ui, t!("Colors"), colors, 2..=64, "");
         }
         AdjustKind::Subject { fine } => {
             ui.checkbox(fine, t!("High quality (downloads a 176 MB model the first time)")).on_hover_text(t!("Uses a larger model for finer edges. It is downloaded once and kept on this PC"));
@@ -1296,29 +1588,25 @@ fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
         }
         AdjustKind::Exposure { exposure, offset, gamma } => {
             let mut e = *exposure as f32 / 100.0;
-            ui.add(egui::Slider::new(&mut e, -20.0..=20.0).max_decimals(2).text(t!("Exposure")));
+            num_row(ui, t!("Exposure"), &mut e, -20.0..=20.0, "", 2, false);
             *exposure = (e * 100.0).round() as i16;
             let mut o = *offset as f32 / 1000.0;
-            ui.add(egui::Slider::new(&mut o, -0.5..=0.5).max_decimals(3).text(t!("Offset")));
+            num_row(ui, t!("Offset"), &mut o, -0.5..=0.5, "", 3, false);
             *offset = (o * 1000.0).round() as i16;
             let mut g = *gamma as f32 / 100.0;
-            ui.add(egui::Slider::new(&mut g, 0.01..=9.99).logarithmic(true).max_decimals(2).text(t!("Gamma correction")));
+            num_row(ui, t!("Gamma correction"), &mut g, 0.01..=9.99, "", 2, true);
             *gamma = (g * 100.0).round().clamp(1.0, 999.0) as u16;
         }
         AdjustKind::Vibrance { vibrance, saturation } => {
-            slider(ui, vibrance, -100..=100, t!("Vibrance"));
-            slider(ui, saturation, -100..=100, t!("Saturation"));
+            num_i16(ui, t!("Vibrance"), vibrance, -100..=100, "");
+            num_i16(ui, t!("Saturation"), saturation, -100..=100, "");
         }
         AdjustKind::ColorBalance { shadows, midtones, highlights, preserve } => {
             for (label, values) in [(t!("Shadows"), shadows), (t!("Midtones"), midtones), (t!("Highlights"), highlights)] {
-                ui.label(label);
+                ui.strong(label);
                 for (k, (lo, hi)) in [(t!("Cyan"), t!("Red")), (t!("Magenta"), t!("Green")), (t!("Yellow"), t!("Blue"))].into_iter().enumerate() {
                     let mut v = values[k] as i32;
-                    ui.horizontal(|ui| {
-                        ui.small(lo);
-                        ui.add(egui::Slider::new(&mut v, -100..=100));
-                        ui.small(hi);
-                    });
+                    num_row(ui, &format!("{lo} — {hi}"), &mut v, -100..=100, "", 0, false);
                     values[k] = v as i8;
                 }
             }
@@ -1326,9 +1614,7 @@ fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
         }
         AdjustKind::BlackWhite { weights } => {
             for (k, label) in [t!("Reds"), t!("Yellows"), t!("Greens"), t!("Cyans"), t!("Blues"), t!("Magentas")].into_iter().enumerate() {
-                let mut v = weights[k] as i32;
-                ui.add(egui::Slider::new(&mut v, -200..=300).suffix(" %").text(label));
-                weights[k] = v as i16;
+                num_i16(ui, label, &mut weights[k], -200..=300, " %");
             }
         }
         AdjustKind::PhotoFilter { color, density, preserve } => {
@@ -1336,20 +1622,14 @@ fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
                 ui.label(t!("Color"));
                 ui.color_edit_button_srgb(color);
             });
-            let mut d = *density as i32;
-            ui.add(egui::Slider::new(&mut d, 0..=100).suffix(" %").text(t!("Density")));
-            *density = d as u8;
+            num_u8(ui, t!("Density"), density, 0..=100, " %");
             ui.checkbox(preserve, t!("Preserve luminosity"));
         }
         AdjustKind::Posterize { levels } => {
-            let mut v = *levels as i32;
-            ui.add(egui::Slider::new(&mut v, 2..=255).text(t!("Levels")));
-            *levels = v as u8;
+            num_u8(ui, t!("Levels"), levels, 2..=255, "");
         }
         AdjustKind::Threshold { level } => {
-            let mut v = *level as i32;
-            ui.add(egui::Slider::new(&mut v, 1..=255).text(t!("Threshold level")));
-            *level = v as u8;
+            num_u8(ui, t!("Threshold level"), level, 1..=255, "");
         }
         AdjustKind::GradientMap { from, to, reverse } => {
             ui.horizontal(|ui| {
@@ -1364,9 +1644,14 @@ fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
     }
 }
 
+/// 調整の、はじめの値（「初期設定に戻す」）。
+fn default_of(kind: AdjustKind) -> AdjustKind {
+    PIXEL_ADJUST.iter().flatten().chain(IMAGE_ADJUST.iter()).copied().find(|k| std::mem::discriminant(k) == std::mem::discriminant(&kind)).unwrap_or(kind)
+}
+
 /// トーンカーブの欄。点をドラッグで動かし、線の上を押すと点を足す（8 つまで）。点をダブルクリックか右クリックで消す（両端は消せない）。
 fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
-    let side = 160.0;
+    let side = (ui.available_width() - 4.0).clamp(120.0, 280.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     let visuals = ui.visuals();

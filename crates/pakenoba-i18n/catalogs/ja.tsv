@@ -51,7 +51,6 @@
 	Could not make the adjusted picture: {e}	調整した絵を作れませんでした: {e}
 	{stem} ({}).png	{stem}（{}）.png
 	Applied "{}". It is a new asset, "{name}", and the original asset is unchanged. Press Ctrl+Z to undo.	「{}」をしました。新しい素材「{name}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
-	How close a color must be to count as the background. Larger values make more of the picture transparent	同じ色とみなす幅。大きいほど、多く透明になります
 	Trim margins	余白を切り落とす
 	Cuts away the transparent area around the picture. It stays where it appears now	まわりの透明な部分を切り落とします。見える位置は変わりません
 # pakenoba-app/src/app/assets.rs
@@ -352,7 +351,6 @@
 	Guides (cut lines, fold lines, glue flaps)	ガイド（切り線、折り線、のりしろ）
 	Back (inside of the box)	裏（箱の内側）
 	Front (outside of the box)	表（箱の外側）
-	　No artwork	　柄はありません
 	 (being edited elsewhere)	（外で編集中）
 	Double-click to rename. Drag to change the stacking order	ダブルクリックで名前を変える。ドラッグで重なり順を変える
 	Rename	名前を変える
@@ -687,7 +685,6 @@
 	Close this tab	このタブを閉じる
 	New project in a new tab (Ctrl+N)	新しいタブで、新しい案件を始める（Ctrl+N）
 	Blend mode: how this artwork mixes with what is below it	描画モード: この柄を、下の絵とどう混ぜるか
-	Opacity	不透明度
 	Select artwork to set its blend mode and opacity	柄を選ぶと、描画モードと不透明度を変えられます
 	Normal	通常
 	Darken	比較（暗）
@@ -784,7 +781,6 @@ blend	Color	カラー
 	Reveal all	すべて表示
 	Select subject	被写体を選択
 	Show (white)	見せる（白）
-	Switch this adjustment on or off	この調整を効かせる・切る
 	Take out of the group	グループから出す
 	The downloaded model was damaged, so it was not used. Please try again.	取ってきたモデルが壊れていたので、使いませんでした。もう一度試してください。
 	The high-quality model is not on this PC yet. Until it is, nothing is cut out.	高画質のモデルは、まだこの PC にありません。届くまでは、切り抜きません。
@@ -855,3 +851,19 @@ blend	Color	カラー
 	Vibrance	自然な彩度
 	Yellow	イエロー
 	Yellows	イエロー系
+# PhotoCraft に合わせたレイヤーの欄
+	Adjustment layers	調整レイヤー
+	Adjustment visible	調整を表示
+	Clip to layer below	下のレイヤーでクリップ
+	Fill:	塗り:
+	Fill: the opacity of the layer's own content	塗り: レイヤーの中身の不透明度
+	Groups have no fill	グループには塗りはありません
+	Image layers	画像のレイヤー
+	Name	名前
+	No artwork	柄はありません
+	No layers match the filter	絞り込みに合うレイヤーはありません
+	Opacity:	不透明度:
+	Reset to defaults	初期設定に戻す
+	Shape layers	図形のレイヤー
+	Show all layers	すべてのレイヤーを出す
+	Text layers	文字のレイヤー

@@ -120,24 +120,6 @@ pub(super) fn link_button(ui: &mut egui::Ui, linked: bool) -> egui::Response {
     response.on_hover_text(if linked { t!("Width and height keep their ratio (click to change them separately)") } else { t!("Width and height change separately (click to keep their ratio)") })
 }
 
-/// レイヤーの欄の、アイコンだけの小さなボタン（ロックの段と、いちばん下の段）。`on` なら押した色、`enabled` でなければ薄く。
-pub(super) fn small_icon_button(ui: &mut egui::Ui, size: egui::Vec2, on: bool, enabled: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Pos2, Stroke)) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
-    let visuals = ui.visuals();
-    let (fill, color) = if !enabled {
-        (if on { visuals.selection.bg_fill.gamma_multiply(0.5) } else { Color32::TRANSPARENT }, visuals.weak_text_color().gamma_multiply(0.6))
-    } else if on {
-        (visuals.selection.bg_fill, Color32::WHITE)
-    } else if response.hovered() {
-        (visuals.widgets.hovered.bg_fill, visuals.strong_text_color())
-    } else {
-        (visuals.widgets.inactive.weak_bg_fill, visuals.text_color())
-    };
-    ui.painter().rect_filled(rect, 3.0, fill);
-    icon(ui.painter(), rect.center(), Stroke::new(1.2, color));
-    response.on_hover_text(tip).on_disabled_hover_text(tip)
-}
-
 /// 筆（画像をロック）。16 × 16 の枠の中。
 pub(super) fn draw_brush(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.line_segment([c + vec2(-1.0, 1.0), c + vec2(5.0, -5.0)], Stroke::new(stroke.width + 0.6, stroke.color));
@@ -204,4 +186,86 @@ pub(super) fn lock_mark(ui: &mut egui::Ui, all: bool, tip: &str) {
     let shackle: Vec<Pos2> = (0..=10).map(|k| { let a = std::f32::consts::PI * k as f32 / 10.0; pos2(c.x - 2.4 * a.cos(), c.y - 0.5 - 2.8 * a.sin()) }).collect();
     ui.painter().add(Shape::line(shackle, Stroke::new(1.1, color)));
     response.on_hover_text(tip);
+}
+
+/// 枠のないアイコンのボタン（PhotoCraft のレイヤーの欄と同じ形）。押してあるときと、カーソルが乗ったときだけ地を塗る。
+pub(super) fn bare_button(ui: &mut egui::Ui, size: egui::Vec2, on: bool, enabled: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Pos2, Stroke)) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
+    let visuals = ui.visuals();
+    let color = if !enabled {
+        visuals.weak_text_color().gamma_multiply(0.55)
+    } else if on || response.hovered() {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color().gamma_multiply(0.85)
+    };
+    if on {
+        ui.painter().rect_filled(rect, 3.0, Color32::from_white_alpha(if enabled { 34 } else { 18 }));
+    } else if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, 3.0, Color32::from_white_alpha(16));
+    }
+    icon(ui.painter(), rect.center(), Stroke::new(1.15, color));
+    response.on_hover_text(tip).on_disabled_hover_text(tip)
+}
+
+/// 山と太陽の入った四角（画像のレイヤー）。
+pub(super) fn draw_image(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let r = Rect::from_center_size(c, vec2(13.0, 11.0));
+    painter.rect_stroke(r, 1.0, stroke, StrokeKind::Middle);
+    painter.add(Shape::line(vec![r.left_bottom() + vec2(1.0, -1.5), c + vec2(-1.5, 0.5), c + vec2(1.0, 2.5), c + vec2(3.0, 0.8), r.right_bottom() + vec2(-1.0, -1.5)], stroke));
+    painter.circle_stroke(c + vec2(2.8, -2.2), 1.3, stroke);
+}
+
+/// T の字（文字のレイヤー）。
+pub(super) fn draw_type(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.line_segment([c + vec2(-5.0, -5.0), c + vec2(5.0, -5.0)], stroke);
+    painter.line_segment([c + vec2(0.0, -5.0), c + vec2(0.0, 5.5)], stroke);
+    painter.line_segment([c + vec2(-2.0, 5.5), c + vec2(2.0, 5.5)], stroke);
+}
+
+/// 四角（図形のレイヤー）。
+pub(super) fn draw_square(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.5, stroke, StrokeKind::Middle);
+}
+
+/// 虫めがね（絞り込み）。
+pub(super) fn draw_search(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    painter.circle_stroke(c + vec2(-1.2, -1.2), 4.0, stroke);
+    painter.line_segment([c + vec2(1.8, 1.8), c + vec2(5.0, 5.0)], stroke);
+}
+
+/// 三本線（欄のメニュー）。
+pub(super) fn draw_menu(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    for dy in [-4.0, 0.0, 4.0] {
+        painter.line_segment([c + vec2(-6.0, dy), c + vec2(6.0, dy)], stroke);
+    }
+}
+
+/// 欄の見出しのタブの帯（PhotoCraft の「Layers | Channels | Paths ≡」と同じ形）。押されたタブの番号を返す。
+pub(super) fn panel_tabs(ui: &mut egui::Ui, tabs: &[&str], active: usize) -> Option<usize> {
+    let height = 30.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let visuals = ui.visuals().clone();
+    // 帯は欄より少し暗く、選んでいるタブは欄と同じ色（PhotoCraft と同じ）。
+    let bar = visuals.panel_fill.lerp_to_gamma(Color32::BLACK, 0.18);
+    ui.painter().rect_filled(rect, 0.0, bar);
+    let mut x = rect.left();
+    let mut clicked = None;
+    for (i, label) in tabs.iter().enumerate() {
+        let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), visuals.text_color());
+        let w = galley.size().x + 24.0;
+        let tab = Rect::from_min_size(pos2(x, rect.top()), vec2(w, height));
+        let response = ui.interact(tab, ui.scope_id().with(("panel-tab", label)), Sense::click());
+        if i == active {
+            ui.painter().rect_filled(tab, 0.0, visuals.panel_fill);
+        }
+        let color = if i == active { visuals.strong_text_color() } else { visuals.weak_text_color() };
+        ui.painter().galley_with_override_text_color(pos2(tab.left() + 12.0, tab.center().y - galley.size().y / 2.0), galley, color);
+        if response.clicked() {
+            clicked = Some(i);
+        }
+        x += w;
+    }
+    draw_menu(ui.painter(), pos2(rect.right() - 14.0, rect.center().y), Stroke::new(1.1, visuals.weak_text_color()));
+    clicked
 }
