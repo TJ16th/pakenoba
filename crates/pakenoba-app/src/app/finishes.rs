@@ -7,7 +7,7 @@
 use pakenoba_i18n::t;
 
 use eframe::egui;
-use pakenoba_core::material::{Finish, Foil};
+use pakenoba_core::material::{DEFAULT_WAVE, Finish, Foil};
 use pakenoba_core::project::{Blend, Layer};
 use serde_json::{Value, json};
 
@@ -63,11 +63,13 @@ impl App {
             paint(&self.surface, &self.template, std::slice::from_ref(&shape), Marks::default(), back, Canvas::screen(w, h, &mut layer));
             let map = map.get_or_insert_with(|| vec![0u8; w * h * 4]);
             let code = foil_code(finish.foil);
+            let wave = (finish.wave.min(100) as u32 * 255 / 100) as u8;
             for (m, p) in map.chunks_exact_mut(4).zip(layer.chunks_exact(4)) {
                 if p[3] > 0 {
                     // 上に重ねた加工が勝つ（量は大きいほう）。
                     m[0] = m[0].max(p[3]);
                     m[1] = code;
+                    m[2] = wave;
                     m[3] = 255;
                 }
             }
@@ -113,7 +115,7 @@ impl App {
             self.finishes
                 .iter()
                 .enumerate()
-                .map(|(i, f)| json!({ "id": f.id, "kind": "foil", "foil": f.foil.key(), "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden }))
+                .map(|(i, f)| json!({ "id": f.id, "kind": "foil", "foil": f.foil.key(), "artwork": f.link, "artwork_found": self.finish_link(i).is_some(), "name": f.name, "hidden": f.hidden, "wave": f.wave }))
                 .collect(),
         )
     }
@@ -133,7 +135,11 @@ impl App {
                     None => Foil::Gold,
                 };
                 self.checkpoint();
-                self.finishes.push(Finish { id: 0, foil, link: self.decals[index].layer.id, name: None, hidden: false });
+                let wave = match args.get("wave") {
+                    Some(v) => v.as_u64().filter(|&w| w <= 100).ok_or_else(|| t!("\"wave\" is a number from 0 to 100").to_owned())? as u8,
+                    None => DEFAULT_WAVE,
+                };
+                self.finishes.push(Finish { id: 0, foil, link: self.decals[index].layer.id, name: None, hidden: false, wave });
                 self.ensure_finish_ids();
                 let new = self.finishes.len() - 1;
                 self.select_finish(Some(new));
@@ -145,6 +151,9 @@ impl App {
                 let mut next = self.finishes[index].clone();
                 if let Some(key) = args.get("foil").and_then(Value::as_str) {
                     next.foil = Foil::from_key(key).ok_or_else(|| t!("Unknown foil \"{key}\""))?;
+                }
+                if let Some(v) = args.get("wave") {
+                    next.wave = v.as_u64().filter(|&w| w <= 100).ok_or_else(|| t!("\"wave\" is a number from 0 to 100").to_owned())? as u8;
                 }
                 if let Some(hidden) = args.get("visible").and_then(Value::as_bool) {
                     next.hidden = !hidden;
@@ -208,6 +217,31 @@ impl App {
                     ui.selectable_value(&mut foil, f, f.label());
                 }
             });
+            ui.end_row();
+            ui.label(egui::RichText::new(t!("Waviness")).color(super::theme::MUTED));
+            let mut wave = self.finishes[index].wave;
+            let r = ui.add(egui::Slider::new(&mut wave, 0..=100).suffix(" %")).on_hover_text(t!("Small waves in the pressed foil. 0 is flat like a mirror. More waves make the reflection break up and glitter"));
+            if r.drag_started() {
+                self.wave_before = Some(self.finishes[index].wave);
+            }
+            if wave != self.finishes[index].wave {
+                if r.dragged() {
+                    // 引いている間は見た目だけ変え、離したときに 1 回の操作にする。
+                    self.finishes[index].wave = wave;
+                    (self.art_dirty, self.back_dirty) = (true, true);
+                } else {
+                    self.person("finish.set", json!({ "id": id, "wave": wave }));
+                }
+            }
+            if r.drag_stopped()
+                && let Some(before) = self.wave_before.take()
+            {
+                let after = self.finishes[index].wave;
+                self.finishes[index].wave = before;
+                if after != before {
+                    self.person("finish.set", json!({ "id": id, "wave": after }));
+                }
+            }
             ui.end_row();
             ui.label(egui::RichText::new(t!("Shape from")).color(super::theme::MUTED));
             match self.finish_link(index) {

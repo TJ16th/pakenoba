@@ -172,7 +172,12 @@ pub struct Finish {
     /// 使う人が付けた名前。
     pub name: Option<String>,
     pub hidden: bool,
+    /// 押した箔の小さなうねり（0〜100%）。0 は鏡のように平ら。
+    pub wave: u8,
 }
+
+/// 箔のうねりの、はじめの値（%）。
+pub const DEFAULT_WAVE: u8 = 20;
 
 #[cfg(test)]
 mod tests {

@@ -186,7 +186,7 @@ impl App {
         (d.sides, [d.w, d.d, d.h, d.t, d.bulge, d.roof].map(f32::to_bits)).hash(&mut hasher);
         (self.material.paper.key(), self.material.coat.key()).hash(&mut hasher);
         for f in &self.finishes {
-            (f.id, f.foil, f.link, &f.name, f.hidden).hash(&mut hasher);
+            (f.id, f.foil, f.link, &f.name, f.hidden, f.wave).hash(&mut hasher);
         }
         for asset in &self.assets {
             if let Some(stored) = &asset.stored {

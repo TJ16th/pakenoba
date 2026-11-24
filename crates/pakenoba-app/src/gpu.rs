@@ -295,7 +295,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             let e = 0.4;
             let hx = foil_height(mm + vec2<f32>(e, 0.0)) - foil_height(mm - vec2<f32>(e, 0.0));
             let hy = foil_height(mm + vec2<f32>(0.0, e)) - foil_height(mm - vec2<f32>(0.0, e));
-            nf = normalize(nf - (hx * t_mm + hy * b_mm) / (2.0 * e));
+            // うねりの強さは、加工ごとに B に入れてある（0〜1。0.5 で、はじめに決めた強さの 1 倍）。
+            nf = normalize(nf - (hx * t_mm + hy * b_mm) / (2.0 * e) * foil.b * 2.0);
         }
         let nvf = max(dot(nf, v), 1e-4);
         let rf = reflect(-v, nf);

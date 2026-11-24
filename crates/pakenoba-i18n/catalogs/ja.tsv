@@ -1119,3 +1119,6 @@ blend	Color	カラー
 	Changed the foil	箔を変えた
 	Removed the foil	箔を外した
 	"id" is missing	「id」がありません
+	Waviness	うねり
+	Small waves in the pressed foil. 0 is flat like a mirror. More waves make the reflection break up and glitter	押した箔の小さなうねり。0 は鏡のように平ら。大きいほど映り込みが乱れて、きらめく
+	"wave" is a number from 0 to 100	「wave」は 0〜100 の数です
