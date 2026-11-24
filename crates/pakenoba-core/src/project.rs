@@ -170,7 +170,8 @@ pub enum Source {
     Text(TextSpec),
     /// 図形（四角、丸）。絵は持たず、形と色から描く。
     Shape(ShapeSpec),
-    /// グループの見出し。中身は、並びの中で、この見出しのすぐ前に続く `in_group` の柄。`open` はレイヤーの欄で開いているか。
+    /// グループの見出し。中身は、並びの中で、この見出しのすぐ前に続く、見出しより深い（`Layer::depth` が大きい）レイヤー。
+    /// `open` はレイヤーの欄で開いているか。
     /// 場所と大きさは使わない。
     Group { open: bool },
     /// 調整レイヤー（`Layer::adjust` を、下の絵すべてに効かせる）。場所と大きさは使わない。
@@ -275,8 +276,10 @@ pub struct Layer {
     pub adjust: Vec<Adjustment>,
     /// レイヤーマスク。
     pub mask: Option<Mask>,
-    /// すぐ上のグループに入っている（グループの中身は、並びの中でグループの見出しのすぐ前に続けて置く）。
-    pub in_group: bool,
+    /// グループの入れ子の深さ（0 はどのグループにも入っていない）。グループの中身は、並びの中で、見出しのすぐ前に、見出しより深くして続けて置く。
+    pub depth: u8,
+    /// すぐ下のレイヤーでクリップしている（クリッピングマスク。下のレイヤーの見えている所にだけ出る）。
+    pub clipped: bool,
     /// 使う人が付けた名前。None なら、画面では「番号（種類）」と出す。
     pub name: Option<String>,
     /// 隠している（箱にも、書き出す型紙にも描かない。型紙の PSD では、隠したレイヤーとして入れる）。
@@ -295,7 +298,7 @@ pub struct Layer {
 
 impl Default for Layer {
     fn default() -> Self {
-        Layer { adjust: Vec::new(), mask: None, in_group: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, blend: Blend::Normal }
+        Layer { adjust: Vec::new(), mask: None, depth: 0, clipped: false, name: None, hidden: false, locked: false, lock_pixels: false, lock_position: false, opacity: 100, blend: Blend::Normal }
     }
 }
 
@@ -484,7 +487,30 @@ pub enum AdjustKind {
     ReduceColors { colors: u8 },
     /// 主な被写体だけを残す（被写体のまわりを透明にする）。`fine` なら、大きいモデルで細かく。
     Subject { fine: bool },
+    /// トーンカーブ（RGB まとめて）。点は入力と出力（0〜255）。`count` 個だけ使う（2〜8）。
+    Curves { points: [[u8; 2]; 8], count: u8 },
+    /// 露光量（100 倍、-2000〜2000）、オフセット（1000 倍、-500〜500）、ガンマ（100 倍、1〜999）。
+    Exposure { exposure: i16, offset: i16, gamma: u16 },
+    /// 自然な彩度と彩度（-100〜100）。
+    Vibrance { vibrance: i16, saturation: i16 },
+    /// カラーバランス。シャドウ、中間調、ハイライトごとに、シアン-レッド、マゼンタ-グリーン、イエロー-ブルー（-100〜100）。
+    ColorBalance { shadows: [i8; 3], midtones: [i8; 3], highlights: [i8; 3], preserve: bool },
+    /// 白黒。レッド、イエロー、グリーン、シアン、ブルー、マゼンタの重み（%、-200〜300）。
+    BlackWhite { weights: [i16; 6] },
+    /// レンズフィルター。色と、適用量（%）。`preserve` なら明るさを保つ。
+    PhotoFilter { color: [u8; 3], density: u8, preserve: bool },
+    /// ポスタリゼーション（階調の数、2〜255）。
+    Posterize { levels: u8 },
+    /// 2 階調化（しきい値、1〜255）。
+    Threshold { level: u8 },
+    /// グラデーションマップ（暗い所の色から、明るい所の色へ）。
+    GradientMap { from: [u8; 3], to: [u8; 3], reverse: bool },
 }
+
+/// トーンカーブの、はじめの点（まっすぐ）。
+pub const CURVE_STRAIGHT: [[u8; 2]; 8] = [[0, 0], [255, 255], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]];
+/// 白黒の、はじめの重み（Photoshop の初期値）。
+pub const BLACK_WHITE_DEFAULT: [i16; 6] = [40, 60, 40, 60, 20, 80];
 
 impl AdjustKind {
     /// 案件のファイルに書く名前。
@@ -498,12 +524,21 @@ impl AdjustKind {
             AdjustKind::FlattenShading => "flatten_shading",
             AdjustKind::ReduceColors { .. } => "reduce_colors",
             AdjustKind::Subject { .. } => "subject",
+            AdjustKind::Curves { .. } => "curves",
+            AdjustKind::Exposure { .. } => "exposure",
+            AdjustKind::Vibrance { .. } => "vibrance",
+            AdjustKind::ColorBalance { .. } => "color_balance",
+            AdjustKind::BlackWhite { .. } => "black_white",
+            AdjustKind::PhotoFilter { .. } => "photo_filter",
+            AdjustKind::Posterize { .. } => "posterize",
+            AdjustKind::Threshold { .. } => "threshold",
+            AdjustKind::GradientMap { .. } => "gradient_map",
         }
     }
 
     /// 画素ごとに決まる調整か（調整レイヤーとして、下の絵すべてに効かせられるもの）。
     pub fn per_pixel(self) -> bool {
-        matches!(self, AdjustKind::BrightnessContrast { .. } | AdjustKind::HueSaturation { .. } | AdjustKind::Levels { .. } | AdjustKind::Invert)
+        !matches!(self, AdjustKind::ClearBackground { .. } | AdjustKind::FlattenShading | AdjustKind::ReduceColors { .. } | AdjustKind::Subject { .. })
     }
 
     /// 数値を、それぞれの範囲の中へ寄せる。
@@ -517,6 +552,29 @@ impl AdjustKind {
             }
             AdjustKind::ClearBackground { tolerance } => AdjustKind::ClearBackground { tolerance: tolerance.clamp(1, 200) },
             AdjustKind::ReduceColors { colors } => AdjustKind::ReduceColors { colors: colors.clamp(2, 64) },
+            AdjustKind::Curves { mut points, count } => {
+                let count = count.clamp(2, 8);
+                // 入力の順に並べ、同じ入力の点は 1 つにする。
+                let mut used: Vec<[u8; 2]> = points[..count as usize].to_vec();
+                used.sort_by_key(|p| p[0]);
+                used.dedup_by_key(|p| p[0]);
+                if used.len() < 2 {
+                    used = vec![[0, 0], [255, 255]];
+                }
+                points = [[0, 0]; 8];
+                points[..used.len()].copy_from_slice(&used);
+                AdjustKind::Curves { points, count: used.len() as u8 }
+            }
+            AdjustKind::Exposure { exposure, offset, gamma } => AdjustKind::Exposure { exposure: exposure.clamp(-2000, 2000), offset: offset.clamp(-500, 500), gamma: gamma.clamp(1, 999) },
+            AdjustKind::Vibrance { vibrance, saturation } => AdjustKind::Vibrance { vibrance: vibrance.clamp(-100, 100), saturation: saturation.clamp(-100, 100) },
+            AdjustKind::ColorBalance { shadows, midtones, highlights, preserve } => {
+                let c = |v: [i8; 3]| v.map(|x| x.clamp(-100, 100));
+                AdjustKind::ColorBalance { shadows: c(shadows), midtones: c(midtones), highlights: c(highlights), preserve }
+            }
+            AdjustKind::BlackWhite { weights } => AdjustKind::BlackWhite { weights: weights.map(|w| w.clamp(-200, 300)) },
+            AdjustKind::PhotoFilter { color, density, preserve } => AdjustKind::PhotoFilter { color, density: density.min(100), preserve },
+            AdjustKind::Posterize { levels } => AdjustKind::Posterize { levels: levels.max(2) },
+            AdjustKind::Threshold { level } => AdjustKind::Threshold { level: level.max(1) },
             other => other,
         }
     }
@@ -731,9 +789,15 @@ struct DecalEntry {
     /// グループを、レイヤーの欄で閉じている。
     #[serde(default, skip_serializing_if = "is_false")]
     closed: bool,
-    /// すぐ上のグループに入っている。
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// 2026-11-24 の版で書いた、グループに入っている印（深さ 1 として読む）。
+    #[serde(default, skip_serializing)]
     in_group: bool,
+    /// グループの入れ子の深さ。
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    depth: u8,
+    /// すぐ下のレイヤーでクリップしている。
+    #[serde(default, skip_serializing_if = "is_false")]
+    clipped: bool,
     /// 文字の柄（`asset`、`builtin` のかわりに書く）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<TextEntry>,
@@ -789,6 +853,46 @@ struct AdjustEntry {
     colors: Option<i64>,
     #[serde(default, skip_serializing_if = "is_false")]
     fine: bool,
+    /// トーンカーブの点（入力、出力）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    points: Vec<[i64; 2]>,
+    /// 露光量（100 倍）、オフセット（1000 倍）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exposure: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offset: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vibrance: Option<i64>,
+    /// カラーバランス（シアン-レッド、マゼンタ-グリーン、イエロー-ブルー）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shadows: Option<[i64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    midtones: Option<[i64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    highlights: Option<[i64; 3]>,
+    /// 明るさを保つ（カラーバランス、レンズフィルター）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    preserve: bool,
+    /// 白黒の重み（レッド、イエロー、グリーン、シアン、ブルー、マゼンタ）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    weights: Option<[i64; 6]>,
+    /// 色（`#rrggbb`。レンズフィルター）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    density: Option<i64>,
+    /// 階調の数（ポスタリゼーション）、しきい値（2 階調化）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    levels: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<i64>,
+    /// グラデーションマップの両端の色（`#rrggbb`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    to: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    reverse: bool,
 }
 
 impl AdjustEntry {
@@ -803,6 +907,18 @@ impl AdjustEntry {
             AdjustKind::ReduceColors { colors } => e.colors = n(colors.into()),
             AdjustKind::Subject { fine } => e.fine = fine,
             AdjustKind::Invert | AdjustKind::FlattenShading => {}
+            AdjustKind::Curves { points, count } => e.points = points[..count as usize].iter().map(|p| [p[0].into(), p[1].into()]).collect(),
+            AdjustKind::Exposure { exposure, offset, gamma } => (e.exposure, e.offset, e.gamma) = (n(exposure.into()), n(offset.into()), n(gamma.into())),
+            AdjustKind::Vibrance { vibrance, saturation } => (e.vibrance, e.saturation) = (n(vibrance.into()), n(saturation.into())),
+            AdjustKind::ColorBalance { shadows, midtones, highlights, preserve } => {
+                let w = |v: [i8; 3]| Some(v.map(i64::from));
+                (e.shadows, e.midtones, e.highlights, e.preserve) = (w(shadows), w(midtones), w(highlights), preserve);
+            }
+            AdjustKind::BlackWhite { weights } => e.weights = Some(weights.map(i64::from)),
+            AdjustKind::PhotoFilter { color, density, preserve } => (e.color, e.density, e.preserve) = (Some(hex(color)), n(density.into()), preserve),
+            AdjustKind::Posterize { levels } => e.levels = n(levels.into()),
+            AdjustKind::Threshold { level } => e.level = n(level.into()),
+            AdjustKind::GradientMap { from, to, reverse } => (e.from, e.to, e.reverse) = (Some(hex(from)), Some(hex(to)), reverse),
         }
         e
     }
@@ -820,6 +936,23 @@ impl AdjustEntry {
             "flatten_shading" => AdjustKind::FlattenShading,
             "reduce_colors" => AdjustKind::ReduceColors { colors: u8_(self.colors, 8) },
             "subject" => AdjustKind::Subject { fine: self.fine },
+            "curves" => {
+                let mut points = [[0u8; 2]; 8];
+                let used: Vec<[u8; 2]> = self.points.iter().take(8).map(|p| [p[0].clamp(0, 255) as u8, p[1].clamp(0, 255) as u8]).collect();
+                points[..used.len()].copy_from_slice(&used);
+                AdjustKind::Curves { points, count: used.len() as u8 }
+            }
+            "exposure" => AdjustKind::Exposure { exposure: i16_(self.exposure, 0), offset: i16_(self.offset, 0), gamma: self.gamma.map_or(100, |v| v.clamp(1, 999) as u16) },
+            "vibrance" => AdjustKind::Vibrance { vibrance: i16_(self.vibrance, 0), saturation: i16_(self.saturation, 0) },
+            "color_balance" => {
+                let r = |v: Option<[i64; 3]>| v.unwrap_or([0; 3]).map(|x| x.clamp(-100, 100) as i8);
+                AdjustKind::ColorBalance { shadows: r(self.shadows), midtones: r(self.midtones), highlights: r(self.highlights), preserve: self.preserve }
+            }
+            "black_white" => AdjustKind::BlackWhite { weights: self.weights.map_or(BLACK_WHITE_DEFAULT, |w| w.map(|x| x.clamp(-200, 300) as i16)) },
+            "photo_filter" => AdjustKind::PhotoFilter { color: self.color.as_deref().and_then(from_hex).unwrap_or([236, 138, 0]), density: u8_(self.density, 25), preserve: self.preserve },
+            "posterize" => AdjustKind::Posterize { levels: u8_(self.levels, 4) },
+            "threshold" => AdjustKind::Threshold { level: u8_(self.level, 128) },
+            "gradient_map" => AdjustKind::GradientMap { from: self.from.as_deref().and_then(from_hex).unwrap_or([0, 0, 0]), to: self.to.as_deref().and_then(from_hex).unwrap_or([255, 255, 255]), reverse: self.reverse },
             _ => return None,
         };
         Some(Adjustment { kind: kind.clamped(), on: !self.off })
@@ -892,6 +1025,10 @@ fn from_hex(text: &str) -> Option<[u8; 3]> {
     }
     let byte = |i: usize| u8::from_str_radix(digits.get(i..i + 2)?, 16).ok();
     Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+fn is_zero_u8(value: &u8) -> bool {
+    *value == 0
 }
 
 fn is_false(value: &bool) -> bool {
@@ -1011,7 +1148,7 @@ impl Project {
                             (None, None, None, Some(FigureEntry { kind: kind.to_owned(), fill: spec.fill.map(hex), stroke: spec.stroke.map(hex), stroke_width: tidy(spec.stroke_width), radius: tidy(spec.radius) }))
                         }
                     };
-                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: placed.layer.in_group, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
+                    DecalEntry { asset, builtin, panel, nth, at: tidy2(placed.decal.at), size: tidy2(placed.decal.size), angle: tidy(placed.decal.angle), back: placed.back, name: placed.layer.name.clone(), hidden: placed.layer.hidden, locked: placed.layer.locked, lock_pixels: placed.layer.lock_pixels, lock_position: placed.layer.lock_position, opacity: (placed.layer.opacity < 100).then_some(placed.layer.opacity), blend: (placed.layer.blend != Blend::Normal).then(|| placed.layer.blend.key().to_owned()), kind, closed, in_group: false, depth: placed.layer.depth, clipped: placed.layer.clipped, text, shape, mask: placed.layer.mask.as_ref().map(|m| MaskEntry { file: m.file(), width: m.w, height: m.h, invert: m.invert, disabled: !m.enabled }), adjust: placed.layer.adjust.iter().map(AdjustEntry::from).collect() }
                 })
                 .collect(),
         }
@@ -1326,46 +1463,58 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             None => None,
         };
         let mask = if matches!(source, Source::Group { .. } | Source::Adjustment) { None } else { mask };
-        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, in_group: entry.in_group, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, blend } });
+        decals.push(Placement { decal, back: entry.back, source, layer: Layer { adjust, mask, depth: if entry.depth > 0 { entry.depth } else { entry.in_group as u8 }, clipped: entry.clipped, name: entry.name.clone().filter(|n| !n.trim().is_empty()), hidden: entry.hidden, locked: entry.locked, lock_pixels: entry.lock_pixels, lock_position: entry.lock_position, opacity, blend } });
     }
     tidy_groups(&mut decals);
 
     Ok(Opened { project: Project { shape, assets, decals, base, back_base }, problems })
 }
 
-/// グループの並びを整える。グループの中身（`in_group`）は、同じ面のグループの見出しのすぐ前に続けて置く決まり。
-/// 見出しのない中身は、グループから出す。グループの中のグループは作らない（見出しの `in_group` は外す）。
+/// グループの入れ子とクリッピングマスクの決まりに合うように、印を直す（読むとき、並べ替えたあと）。
 pub fn tidy_groups(decals: &mut [Placement]) {
     let groups: Vec<bool> = decals.iter().map(|p| matches!(p.source, Source::Group { .. })).collect();
     let backs: Vec<bool> = decals.iter().map(|p| p.back).collect();
-    let mut flags: Vec<bool> = decals.iter().map(|p| p.layer.in_group).collect();
-    group_rule(&groups, &backs, &mut flags);
-    for (p, f) in decals.iter_mut().zip(flags) {
-        p.layer.in_group = f;
+    let mut depth: Vec<u8> = decals.iter().map(|p| p.layer.depth).collect();
+    let mut clipped: Vec<bool> = decals.iter().map(|p| p.layer.clipped).collect();
+    nest_rule(&groups, &backs, &mut depth, &mut clipped);
+    for ((p, d), c) in decals.iter_mut().zip(depth).zip(clipped) {
+        (p.layer.depth, p.layer.clipped) = (d, c);
     }
 }
 
-/// グループの決まりを、印の並びに当てはめる（アプリの側の並びにも使う）。`groups[i]` は見出しか、`backs[i]` は紙の裏か。
-/// 中身の続きは、同じ面の次の項目が見出しでなければならない。そうでない中身は、グループから出す。
-pub fn group_rule(groups: &[bool], backs: &[bool], in_group: &mut [bool]) {
-    let n = in_group.len();
-    for i in 0..n {
-        if groups[i] {
-            in_group[i] = false;
-        }
-    }
-    // 上から見ていき、いま開いているグループ（見出しを見つけた面）を覚える。
-    let mut open = [false; 2];
-    for i in (0..n).rev() {
-        let side = backs[i] as usize;
-        if groups[i] {
-            open[side] = true;
-        } else if in_group[i] {
-            if !open[side] {
-                in_group[i] = false;
+/// グループの入れ子の深さの上限。
+pub const MAX_DEPTH: u8 = 8;
+
+/// 入れ子とクリップの決まりを、印の並びに当てはめる（アプリの側の並びにも使う）。`groups[i]` は見出しか、`backs[i]` は紙の裏か。
+///
+/// - 並びは下から。面ごとに、上から見ていく。見出しを見つけたら、そのすぐ下に続く、見出しより深いものが中身。
+/// - 深さは、いま開いているグループの数より深くできない（深すぎるものは浅くする）。
+/// - クリップできるのは、同じ深さのすぐ下にレイヤーがある、見出しでないもの。
+pub fn nest_rule(groups: &[bool], backs: &[bool], depth: &mut [u8], clipped: &mut [bool]) {
+    let n = depth.len();
+    for side in [false, true] {
+        let items: Vec<usize> = (0..n).filter(|&i| backs[i] == side).collect();
+        // 上から: 開いている見出しの深さ。
+        let mut open: Vec<u8> = Vec::new();
+        for &i in items.iter().rev() {
+            while open.last().is_some_and(|&d| d >= depth[i]) {
+                open.pop();
             }
-        } else {
-            open[side] = false;
+            depth[i] = depth[i].min(open.len() as u8);
+            if groups[i] {
+                if depth[i] >= MAX_DEPTH {
+                    depth[i] = MAX_DEPTH - 1;
+                }
+                open.push(depth[i]);
+            }
+        }
+        // 下から: クリップの土台があるか。
+        for (k, &i) in items.iter().enumerate() {
+            if !clipped[i] {
+                continue;
+            }
+            let base = k.checked_sub(1).map(|b| items[b]);
+            clipped[i] = !groups[i] && base.is_some_and(|b| depth[b] == depth[i]);
         }
     }
 }
@@ -1480,7 +1629,8 @@ mod tests {
                         _ => vec![Adjustment::new(AdjustKind::Invert), Adjustment::new(AdjustKind::FlattenShading), Adjustment::new(AdjustKind::HueSaturation { hue: -45, saturation: 20, lightness: -5 })],
                     },
                     mask: (panel % 3 == 1).then(|| Mask { w: 3 + panel as u32, h: 2, data: Arc::new((0..(3 + panel) * 2).map(|i| (i * 37) as u8).collect()), invert: panel % 2 == 0, enabled: panel % 5 != 1 }),
-                    in_group: false,
+                    depth: 0,
+                    clipped: panel % 2 == 1,
                 } }
             })
             .collect::<Vec<_>>();
@@ -1488,11 +1638,24 @@ mod tests {
         let mut decals = decals;
         let nowhere = Decal { panel: 0, at: [0.5, 0.5], size: [1.0, 1.0], angle: 0.0 };
         let shape_spec = ShapeSpec { kind: ShapeKind::Rect, fill: Some([1, 2, 3]), stroke: None, stroke_width: 1.0, radius: 0.0 };
-        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { adjust: vec![Adjustment::new(AdjustKind::HueSaturation { hue: 30, saturation: -100, lightness: 0 })], opacity: 50, blend: Blend::Multiply, ..Layer::default() } });
-        decals.push(Placement { decal: Decal { panel: 1, at: [0.5, 0.5], size: [20.0, 10.0], angle: 0.0 }, back: false, source: Source::Shape(shape_spec), layer: Layer { in_group: true, ..Layer::default() } });
-        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { in_group: true, adjust: vec![Adjustment::new(AdjustKind::Invert)], ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { adjust: vec![
+            Adjustment::new(AdjustKind::HueSaturation { hue: 30, saturation: -100, lightness: 0 }),
+            Adjustment::new(AdjustKind::Curves { points: [[0, 10], [64, 50], [190, 220], [255, 250], [0, 0], [0, 0], [0, 0], [0, 0]], count: 4 }),
+            Adjustment::new(AdjustKind::Exposure { exposure: 150, offset: -20, gamma: 90 }),
+            Adjustment { kind: AdjustKind::Vibrance { vibrance: 40, saturation: -10 }, on: false },
+            Adjustment::new(AdjustKind::ColorBalance { shadows: [10, -5, 0], midtones: [0, 20, -30], highlights: [-100, 0, 100], preserve: true }),
+            Adjustment::new(AdjustKind::BlackWhite { weights: [10, 20, -30, 40, 250, -200] }),
+            Adjustment::new(AdjustKind::PhotoFilter { color: [12, 34, 56], density: 60, preserve: false }),
+            Adjustment::new(AdjustKind::Posterize { levels: 5 }),
+            Adjustment::new(AdjustKind::Threshold { level: 77 }),
+            Adjustment::new(AdjustKind::GradientMap { from: [1, 2, 3], to: [250, 200, 100], reverse: true }),
+        ], opacity: 50, blend: Blend::Multiply, ..Layer::default() } });
+        decals.push(Placement { decal: Decal { panel: 1, at: [0.5, 0.5], size: [20.0, 10.0], angle: 0.0 }, back: false, source: Source::Shape(shape_spec), layer: Layer { depth: 2, ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Group { open: true }, layer: Layer { depth: 1, blend: Blend::Screen, ..Layer::default() } });
+        decals.push(Placement { decal: nowhere, back: false, source: Source::Adjustment, layer: Layer { depth: 1, clipped: true, adjust: vec![Adjustment::new(AdjustKind::Invert)], ..Layer::default() } });
         decals.push(Placement { decal: nowhere, back: false, source: Source::Group { open: false }, layer: Layer { name: Some("グループ".to_owned()), blend: Blend::PassThrough, opacity: 80, ..Layer::default() } });
         decals.push(Placement { decal: nowhere, back: true, source: Source::Group { open: true }, layer: Layer::default() });
+        tidy_groups(&mut decals);
         // 展開図まるごとの絵は、型によって、あるものとないもの。素材と同じ中身のこともある。
         let base = match kind {
             Kind::TuckBox => Some(Asset::new("型紙に描いた絵.psd", fake_file(4, 5000), [0.0, 0.0], "2026-11-22T09:00:00Z")),
@@ -1544,19 +1707,22 @@ mod tests {
     }
 
     #[test]
-    fn グループの中身は_見出しのすぐ前に続くものだけ() {
-        // 下から: 中身, 中身(裏), 柄, 中身, 見出し, 中身(見出しなし)
-        let groups = [false, false, false, false, true, false];
-        let backs = [false, true, false, false, false, false];
-        let mut flags = [true, true, false, true, true, true];
-        group_rule(&groups, &backs, &mut flags);
-        assert_eq!(flags, [false, false, false, true, false, false]);
-        // 間に別の面の柄が挟まっていても、同じ面で続いていればよい。
-        let groups = [false, false, true];
-        let backs = [false, true, false];
-        let mut flags = [true, false, false];
-        group_rule(&groups, &backs, &mut flags);
-        assert_eq!(flags, [true, false, false]);
+    fn 入れ子の深さとクリップは_決まりに合うように直す() {
+        // 下から: 柄(深さ2), 見出し(1), 柄(1), 見出し(0), 柄(1。開いているグループがない), 柄(クリップ)
+        let groups = [false, true, false, true, false, false];
+        let backs = [false; 6];
+        let mut depth = [2, 1, 1, 0, 1, 0];
+        let mut clipped = [false, false, true, false, false, true];
+        nest_rule(&groups, &backs, &mut depth, &mut clipped);
+        assert_eq!(depth, [2, 1, 1, 0, 0, 0]);
+        // 柄(1) は、下の見出し(1) と同じ深さなのでクリップできる。いちばん上の柄は、下の柄(0) でクリップできる。
+        assert_eq!(clipped, [false, false, true, false, false, true]);
+        // いちばん下や、グループの中のいちばん下はクリップできない。見出しはクリップできない。
+        let groups = [false, true, false];
+        let mut depth = [1, 0, 0];
+        let mut clipped = [true, true, false];
+        nest_rule(&groups, &[false; 3], &mut depth, &mut clipped);
+        assert_eq!(clipped, [false, false, false]);
     }
 
     #[test]

@@ -318,6 +318,8 @@ X（フォルダ）をやめる理由: 利点は「素材を外のアプリで�
 - 知らない種類のレイヤーと、知らない調整は、外して知らせる。大きさの合わないマスクも外して知らせる。調整レイヤーに画素ごとでない調整があれば、外して知らせる。
 - 足すだけなので、形式の版は 1 のまま。
 - 同じ日に、`[[decal]]` に `lock_pixels`（画像をロック）と `lock_position`（位置をロック）を足した。偽のときは書かない。
+- 同じ日に、グループの入れ子のために `in_group` を `depth`（入れ子の深さ。0 のときは書かない）に替え、クリッピングマスクの `clipped` を足した。`in_group = true` だけのファイルは、深さ 1 として読む。決まりに合わない深さやクリップは、読むときに直す。
+- 同じ日に、調整の種類 `curves`（`points` に入力と出力の組）、`exposure`（`exposure` 100 倍、`offset` 1000 倍、`gamma` 100 倍）、`vibrance`（`vibrance`、`saturation`）、`color_balance`（`shadows`、`midtones`、`highlights` に 3 つずつ、`preserve`）、`black_white`（`weights` に 6 つ）、`photo_filter`（`color`、`density`、`preserve`）、`posterize`（`levels`）、`threshold`（`level`）、`gradient_map`（`from`、`to`、`reverse`）を足した。
 
 ### 設定のテキストの例
 

@@ -52,20 +52,28 @@ pub(in crate::app) enum MaskFrom {
     Subject,
 }
 
-/// 柄だけに効く調整の種類（はじめの値）。
-pub(in crate::app) const ARTWORK_ADJUST: [AdjustKind; 8] = [
-    AdjustKind::BrightnessContrast { brightness: 0, contrast: 0 },
-    AdjustKind::HueSaturation { hue: 0, saturation: 0, lightness: 0 },
-    AdjustKind::Levels { black: 0, white: 255, gamma: 100 },
-    AdjustKind::Invert,
-    AdjustKind::Subject { fine: false },
-    AdjustKind::ClearBackground { tolerance: 40 },
-    AdjustKind::FlattenShading,
-    AdjustKind::ReduceColors { colors: 6 },
+/// 画素ごとに決まる調整（調整レイヤーにもできるもの）。並びは Photoshop の「新規調整レイヤー」と同じ。`None` は区切り線。
+pub(in crate::app) const PIXEL_ADJUST: [Option<AdjustKind>; 16] = [
+    Some(AdjustKind::BrightnessContrast { brightness: 0, contrast: 0 }),
+    Some(AdjustKind::Levels { black: 0, white: 255, gamma: 100 }),
+    Some(AdjustKind::Curves { points: pakenoba_core::project::CURVE_STRAIGHT, count: 2 }),
+    Some(AdjustKind::Exposure { exposure: 0, offset: 0, gamma: 100 }),
+    None,
+    Some(AdjustKind::Vibrance { vibrance: 0, saturation: 0 }),
+    Some(AdjustKind::HueSaturation { hue: 0, saturation: 0, lightness: 0 }),
+    Some(AdjustKind::ColorBalance { shadows: [0; 3], midtones: [0; 3], highlights: [0; 3], preserve: true }),
+    Some(AdjustKind::BlackWhite { weights: pakenoba_core::project::BLACK_WHITE_DEFAULT }),
+    Some(AdjustKind::PhotoFilter { color: [236, 138, 0], density: 25, preserve: true }),
+    None,
+    Some(AdjustKind::Invert),
+    Some(AdjustKind::Posterize { levels: 4 }),
+    Some(AdjustKind::Threshold { level: 128 }),
+    Some(AdjustKind::GradientMap { from: [0, 0, 0], to: [255, 255, 255], reverse: false }),
+    None,
 ];
 
-/// 調整レイヤー（下のすべてに効く）にできる種類。
-pub(in crate::app) const LAYER_ADJUST: [AdjustKind; 4] = [ARTWORK_ADJUST[0], ARTWORK_ADJUST[1], ARTWORK_ADJUST[2], ARTWORK_ADJUST[3]];
+/// 柄だけに効く、画像全体を見て決める調整。
+pub(in crate::app) const IMAGE_ADJUST: [AdjustKind; 4] = [AdjustKind::Subject { fine: false }, AdjustKind::ClearBackground { tolerance: 40 }, AdjustKind::FlattenShading, AdjustKind::ReduceColors { colors: 6 }];
 
 pub(in crate::app) fn adjust_label(kind: AdjustKind) -> &'static str {
     match kind {
@@ -77,7 +85,34 @@ pub(in crate::app) fn adjust_label(kind: AdjustKind) -> &'static str {
         AdjustKind::FlattenShading => t!("Even out shading"),
         AdjustKind::ReduceColors { .. } => t!("Reduce colors"),
         AdjustKind::Subject { .. } => t!("Select subject"),
+        AdjustKind::Curves { .. } => t!("Curves"),
+        AdjustKind::Exposure { .. } => t!("Exposure"),
+        AdjustKind::Vibrance { .. } => t!("Vibrance"),
+        AdjustKind::ColorBalance { .. } => t!("Color Balance"),
+        AdjustKind::BlackWhite { .. } => t!("Black & White"),
+        AdjustKind::PhotoFilter { .. } => t!("Photo Filter"),
+        AdjustKind::Posterize { .. } => t!("Posterize"),
+        AdjustKind::Threshold { .. } => t!("Threshold"),
+        AdjustKind::GradientMap { .. } => t!("Gradient Map"),
     }
+}
+
+/// 調整を選ぶ一覧（画素ごとの調整を区切りつきで）。押したものを返す。
+fn pixel_adjust_menu(ui: &mut egui::Ui) -> Option<AdjustKind> {
+    let mut picked = None;
+    for entry in PIXEL_ADJUST {
+        match entry {
+            Some(kind) => {
+                if ui.button(adjust_label(kind)).clicked() {
+                    picked = Some(kind);
+                }
+            }
+            None => {
+                ui.separator();
+            }
+        }
+    }
+    picked
 }
 
 /// グループの見出しと調整レイヤーの、置き場所（使わない）。
@@ -200,14 +235,15 @@ impl App {
         }
     }
 
-    /// グループの決まり（中身は、見出しのすぐ前に続ける）に合わない印を直す。
+    /// グループの入れ子とクリップの決まりに合わない印を直す。
     pub(super) fn tidy_groups(&mut self) {
         let groups: Vec<bool> = self.decals.iter().map(|d| matches!(d.picture, Picture::Group { .. })).collect();
         let backs: Vec<bool> = self.decals.iter().map(|d| d.back).collect();
-        let mut flags: Vec<bool> = self.decals.iter().map(|d| d.layer.in_group).collect();
-        pakenoba_core::project::group_rule(&groups, &backs, &mut flags);
-        for (d, f) in self.decals.iter_mut().zip(flags) {
-            d.layer.in_group = f;
+        let mut depth: Vec<u8> = self.decals.iter().map(|d| d.layer.depth).collect();
+        let mut clipped: Vec<bool> = self.decals.iter().map(|d| d.layer.clipped).collect();
+        pakenoba_core::project::nest_rule(&groups, &backs, &mut depth, &mut clipped);
+        for ((d, depth), clipped) in self.decals.iter_mut().zip(depth).zip(clipped) {
+            (d.layer.depth, d.layer.clipped) = (depth, clipped);
         }
     }
 
@@ -231,9 +267,7 @@ impl App {
                 }
                 for index in rows {
                     // 閉じたグループの中身は出さない。
-                    if let Some(g) = group_of(&self.decals, index)
-                        && matches!(self.decals[g].picture, Picture::Group { open: false })
-                    {
+                    if crate::paint::ancestors(&self.decals, index).iter().any(|&g| matches!(self.decals[g].picture, Picture::Group { open: false })) {
                         continue;
                     }
                     if let Some(rect) = self.layer_row(ui, index) {
@@ -262,8 +296,14 @@ impl App {
                 self.decals[index].layer.hidden = !layer.hidden;
                 (self.art_dirty, self.back_dirty) = (true, true);
             }
-            if layer.in_group {
-                ui.add_space(16.0);
+            if layer.depth > 0 {
+                ui.add_space(16.0 * layer.depth as f32);
+            }
+            if layer.clipped {
+                // クリップしているものは、少し字下げして、下向きの曲がった矢印（Photoshop と同じ）。
+                ui.add_space(4.0);
+                let base = crate::paint::clip_base(&self.decals, index).map(|b| self.layer_label(b)).unwrap_or_default();
+                ui.weak("↳").on_hover_text(t!("Clipped to \"{base}\" (shows only where it is visible)"));
             }
             if let Picture::Group { open } = self.decals[index].picture {
                 let arrow = if open { "▾" } else { "▸" };
@@ -373,6 +413,13 @@ impl App {
                 self.renaming = Some((index, self.decals[index].layer.name.clone().unwrap_or_default()));
                 ui.close();
             }
+            if !matches!(self.decals[index].picture, Picture::Group { .. }) {
+                let label = if self.decals[index].layer.clipped { t!("Release clipping mask") } else { t!("Create clipping mask") };
+                if ui.button(label).on_hover_text(t!("Show this layer only where the layer below it is visible (Ctrl+Alt+G)")).clicked() {
+                    self.toggle_clip(index);
+                    ui.close();
+                }
+            }
             match self.decals[index].picture {
                 Picture::Group { .. } => {
                     if ui.button(t!("Ungroup")).clicked() {
@@ -393,7 +440,7 @@ impl App {
                     }
                 }
                 _ => {
-                    if self.decals[index].layer.in_group && ui.button(t!("Take out of the group")).clicked() {
+                    if self.decals[index].layer.depth > 0 && ui.button(t!("Take out of the group")).clicked() {
                         self.take_out_of_group(index);
                         ui.close();
                     }
@@ -410,7 +457,7 @@ impl App {
         if !is_artwork(&self.decals[index].picture) || self.decals[index].layer.adjust.is_empty() {
             return;
         }
-        let indent = if self.decals[index].layer.in_group { 34.0 } else { 20.0 };
+        let indent = 20.0 + 16.0 * self.decals[index].layer.depth as f32;
         for k in (0..self.decals[index].layer.adjust.len()).rev() {
             let a = self.decals[index].layer.adjust[k].clone();
             ui.horizontal(|ui| {
@@ -451,23 +498,26 @@ impl App {
                 let adjust = icons::small_icon_button(ui, size, false, true, t!("Add an adjustment. You can change it, switch it off or remove it later"), icons::draw_adjust);
                 egui::Popup::menu(&adjust).show(|ui| {
                     ui.set_min_width(240.0);
+                    ui.weak(t!("Adjustment layer (everything below)"));
+                    if let Some(kind) = pixel_adjust_menu(ui) {
+                        self.add_adjustment_layer(kind);
+                        ui.close();
+                    }
                     ui.add_enabled_ui(artwork.is_some(), |ui| {
-                        ui.weak(t!("This artwork only"));
-                        for kind in ARTWORK_ADJUST {
-                            if ui.button(adjust_label(kind)).clicked() {
+                        ui.menu_button(t!("This artwork only"), |ui| {
+                            ui.set_min_width(220.0);
+                            if let Some(kind) = pixel_adjust_menu(ui) {
                                 self.add_adjustment(kind);
                                 ui.close();
                             }
-                        }
+                            for kind in IMAGE_ADJUST {
+                                if ui.button(adjust_label(kind)).clicked() {
+                                    self.add_adjustment(kind);
+                                    ui.close();
+                                }
+                            }
+                        });
                     });
-                    ui.separator();
-                    ui.weak(t!("Adjustment layer (everything below)"));
-                    for kind in LAYER_ADJUST {
-                        if ui.button(adjust_label(kind)).clicked() {
-                            self.add_adjustment_layer(kind);
-                            ui.close();
-                        }
-                    }
                 });
                 let can_mask = artwork.is_some_and(|i| self.decals[i].layer.mask.is_none());
                 let mask = icons::small_icon_button(ui, size, false, can_mask, t!("Add a layer mask to the selected artwork"), icons::draw_mask);
@@ -595,6 +645,7 @@ impl App {
     }
 
     /// レイヤーの行のドラッグ。運んでいる間は、落とす場所に線を出し、放したら、同じ面の中で重なり順を変える。
+    /// 線の字下げが、入る深さ（グループの見出しのすぐ下に落とすと、そのグループのいちばん上の中身になる）。
     fn drag_layer(&mut self, ui: &mut egui::Ui, rows: &[(usize, egui::Rect)]) {
         let Some(dragged) = self.layer_drag.filter(|&i| i < self.decals.len()) else {
             self.layer_drag = None;
@@ -610,9 +661,8 @@ impl App {
         let Some((over, rect, above)) = target else { return };
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         let y = if above { rect.top() } else { rect.bottom() };
-        // グループの中へ入る場所なら、線を字下げする。
-        let into = !matches!(self.decals[dragged].picture, Picture::Group { .. }) && (self.decals[over].layer.in_group || (!above && matches!(self.decals[over].picture, Picture::Group { .. })));
-        let x = if into { rect.left() + 18.0 } else { rect.left() };
+        let (_, depth) = self.drop_place(over, above);
+        let x = rect.left() + 20.0 + 16.0 * depth as f32;
         ui.painter().hline(x..=rect.right(), y, egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
         if ui.input(|i| i.pointer.any_released()) {
             self.layer_drag = None;
@@ -620,7 +670,7 @@ impl App {
         }
     }
 
-    /// 柄やグラフの塊（グループなら、中身と見出し）。並びの中の番号（下から）。
+    /// レイヤーの塊（グループなら、中身すべてと見出し）。並びの中の番号（下から）。
     fn block(&self, index: usize) -> Vec<usize> {
         match self.decals[index].picture {
             Picture::Group { .. } => {
@@ -632,47 +682,54 @@ impl App {
         }
     }
 
-    /// 柄 `dragged` を、行 `over` のすぐ上（`above`）か、すぐ下へ動かす。グループの中身の間に落とせば、そのグループに入る。
-    pub(super) fn move_layer(&mut self, dragged: usize, over: usize, above: bool) {
-        if dragged >= self.decals.len() || over >= self.decals.len() || dragged == over {
-            return;
-        }
-        let block = self.block(dragged);
-        if block.contains(&over) {
-            return;
-        }
-        let is_group = matches!(self.decals[dragged].picture, Picture::Group { .. });
-        let over_group = matches!(self.decals[over].picture, Picture::Group { .. });
-        let over_member = self.decals[over].layer.in_group;
-        // 入る先と、グループに入るか。
-        let (anchor, after, into) = if is_group {
-            // グループは、ほかのグループの中には入れない。中身の上に落としたら、そのグループの外へ。
-            match (over_member, group_of(&self.decals, over)) {
-                (true, Some(g)) if above => (g, true, false),
-                (true, Some(g)) => (members_of(&self.decals, g)[0], false, false),
-                _ if over_group && !above => (members_of(&self.decals, over).first().copied().unwrap_or(over), false, false),
-                _ => (over, above, false),
+    /// 行 `over` のすぐ上（`above`）か、すぐ下へ落としたときの、入る場所（並びの番号。いまの並びで、その前に入る）と深さ。
+    fn drop_place(&self, over: usize, above: bool) -> (usize, u8) {
+        let d = self.decals[over].layer.depth;
+        if matches!(self.decals[over].picture, Picture::Group { .. }) {
+            if above {
+                (over + 1, d)
+            } else {
+                // 見出しのすぐ下: そのグループのいちばん上の中身。
+                (over, d + 1)
             }
-        } else if over_group && !above {
-            // 見出しのすぐ下: グループのいちばん上の中身になる。
-            (over, false, true)
+        } else if above {
+            (over + 1, d)
         } else {
-            (over, above, over_member)
-        };
+            (over, d)
+        }
+    }
+
+    /// レイヤー `dragged`（グループなら中身ごと）を、並びの番号 `at` の前へ、深さ `depth` で入れる。
+    fn restack(&mut self, dragged: usize, at: usize, depth: u8) {
+        let block = self.block(dragged);
+        if (block[0]..=dragged).contains(&at) && block[0] != at && at != dragged + 1 {
+            return;
+        }
+        let head = self.decals[dragged].layer.depth;
+        let deepest = block.iter().map(|&i| self.decals[i].layer.depth).max().unwrap_or(head);
+        if depth as i32 + (deepest as i32 - head as i32) >= pakenoba_core::project::MAX_DEPTH as i32 {
+            self.say(t!("Groups can be nested up to {} levels.", pakenoba_core::project::MAX_DEPTH));
+            return;
+        }
         self.checkpoint();
-        let moving: Vec<Placed> = block.iter().map(|&i| self.decals[i].clone()).collect();
-        let anchor_after_removal = anchor - block.iter().filter(|&&i| i < anchor).count();
-        let mut sorted = block.clone();
-        sorted.sort_unstable();
-        for &i in sorted.iter().rev() {
+        let mut moving: Vec<Placed> = block.iter().map(|&i| self.decals[i].clone()).collect();
+        for item in &mut moving {
+            item.layer.depth = (item.layer.depth as i32 - head as i32 + depth as i32) as u8;
+        }
+        let at = at - block.iter().filter(|&&i| i < at).count();
+        for &i in block.iter().rev() {
             self.decals.remove(i);
         }
-        let at = if after { anchor_after_removal + 1 } else { anchor_after_removal };
         let count = moving.len();
-        for (k, mut item) in moving.into_iter().enumerate() {
-            if !is_group {
-                item.layer.in_group = into;
-            }
+        // クリップしているものの間に入れたら、いっしょにクリップする。外に出したら、クリップを外す。
+        let back = moving[0].back;
+        let between = (at..self.decals.len()).find(|&i| self.decals[i].back == back).is_some_and(|i| self.decals[i].layer.clipped && self.decals[i].layer.depth == depth);
+        if let Some(top) = moving.last_mut()
+            && !matches!(top.picture, Picture::Group { .. })
+        {
+            top.layer.clipped = between;
+        }
+        for (k, item) in moving.into_iter().enumerate() {
             self.decals.insert(at + k, item);
         }
         self.tidy_groups();
@@ -681,99 +738,137 @@ impl App {
         (self.art_dirty, self.back_dirty) = (true, true);
     }
 
-    /// 選んでいる柄を、同じ面の中で、重なりの上（+1）か下（-1）へ 1 つ動かす。グループの端では、グループを出入りする。
+    /// レイヤー `dragged` を、行 `over` のすぐ上（`above`）か、すぐ下へ動かす。
+    pub(super) fn move_layer(&mut self, dragged: usize, over: usize, above: bool) {
+        if dragged >= self.decals.len() || over >= self.decals.len() || dragged == over || self.block(dragged).contains(&over) {
+            return;
+        }
+        let (at, depth) = self.drop_place(over, above);
+        self.restack(dragged, at, depth);
+    }
+
+    /// 選んでいるレイヤーを、同じ面の中で、重なりの上（+1）か下（-1）へ 1 つ動かす。グループの端では、グループを出入りする（Photoshop と同じ）。
     pub(super) fn reorder_selected(&mut self, step: isize) {
         let Some(index) = self.selected.filter(|&i| i < self.decals.len()) else { return };
-        let Some(other) = self.neighbor(index, step) else { return };
-        let header = |i: usize, s: &Self| matches!(s.decals[i].picture, Picture::Group { .. });
-        if header(index, self) {
-            // グループごと、となりの塊（柄 1 つか、グループ 1 つ）の向こうへ。
-            let target = if step > 0 { other } else { group_of(&self.decals, other).unwrap_or(other) };
-            let target = if step > 0 && self.decals[target].layer.in_group { group_of(&self.decals, target).unwrap_or(target) } else { target };
-            let over = if step < 0 { self.block(target)[0] } else { target };
-            self.move_layer(index, over, step > 0);
+        let back = self.decals[index].back;
+        let d = self.decals[index].layer.depth;
+        let is_header = |s: &Self, i: usize| matches!(s.decals[i].picture, Picture::Group { .. });
+        if step > 0 {
+            let Some(x) = (index + 1..self.decals.len()).find(|&i| self.decals[i].back == back) else { return };
+            let xd = self.decals[x].layer.depth;
+            if xd < d {
+                // グループのいちばん上から出る: 見出しの上へ。
+                self.restack(index, x + 1, xd);
+            } else if xd > d {
+                // 上のグループに、いちばん下の中身として入る。
+                self.restack(index, index + 1, d + 1);
+            } else {
+                // となりの柄か、となりのグループの見出しの上へ。
+                self.restack(index, x + 1, d);
+            }
+        } else {
+            let start = self.block(index)[0];
+            if d > 0 && group_of(&self.decals, index).is_some_and(|g| members_of(&self.decals, g)[0] == start) {
+                // グループのいちばん下から出る: その場で、グループの下になる。
+                self.restack(index, start, d - 1);
+                return;
+            }
+            let Some(y) = (0..start).rev().find(|&i| self.decals[i].back == back) else { return };
+            let yd = self.decals[y].layer.depth;
+            if yd < d {
+                // グループのいちばん下から出る: その場で、グループの下になる。
+                self.restack(index, start, d - 1);
+            } else if is_header(self, y) && yd == d {
+                // 下のグループに、いちばん上の中身として入る。
+                self.restack(index, y, d + 1);
+            } else {
+                let below = self.block(y)[0];
+                let below = if yd > d { members_of(&self.decals, group_of(&self.decals, y).unwrap_or(y)).first().copied().unwrap_or(below) } else { below };
+                self.restack(index, below, d);
+            }
+        }
+    }
+
+    /// クリッピングマスクを作る・外す（すぐ下のレイヤーでクリップする）。
+    pub(super) fn toggle_clip(&mut self, index: usize) {
+        if index >= self.decals.len() || matches!(self.decals[index].picture, Picture::Group { .. }) {
             return;
         }
         self.checkpoint();
-        let member = self.decals[index].layer.in_group;
-        let to = if step > 0 && member && header(other, self) {
-            // グループのいちばん上から出る: 見出しの上へ。
-            self.decals[index].layer.in_group = false;
-            self.decals.swap(index, other);
-            other
-        } else if step < 0 && member && !self.decals[other].layer.in_group {
-            // グループのいちばん下から出る: その場で、グループの下になる。
-            self.decals[index].layer.in_group = false;
-            index
-        } else if step > 0 && !member && (self.decals[other].layer.in_group || header(other, self)) {
-            // 上のグループに、いちばん下の中身として入る。
-            self.decals[index].layer.in_group = true;
-            index
-        } else if step < 0 && !member && header(other, self) {
-            // 下のグループに、いちばん上の中身として入る。
-            self.decals[index].layer.in_group = true;
-            self.decals.swap(index, other);
-            other
-        } else {
-            self.decals.swap(index, other);
-            other
-        };
+        let layer = &mut self.decals[index].layer;
+        layer.clipped = !layer.clipped;
+        let wanted = layer.clipped;
         self.tidy_groups();
-        self.select_only(Some(to));
-        self.grab = None;
+        if wanted && !self.decals[index].layer.clipped {
+            self.say(t!("There is no layer just below it in the same group to clip to."));
+        }
         (self.art_dirty, self.back_dirty) = (true, true);
     }
 
-    /// グループを作り、選んでいるレイヤーを入れる。何も選んでいなければ、空のグループを表のいちばん上に作る。
+    /// グループを作り、選んでいるレイヤーを入れる（グループを選んでいれば、グループごと入れ子にする）。
+    /// 何も選んでいなければ、空のグループを、表のいちばん上に作る。
     pub(super) fn group_selected(&mut self) {
         let back = self.selected.and_then(|i| self.decals.get(i)).is_some_and(|d| d.back);
-        let mut chosen: Vec<usize> = self.selection().into_iter().filter(|&i| self.decals[i].back == back && !matches!(self.decals[i].picture, Picture::Group { .. })).collect();
-        chosen.sort_unstable();
-        self.checkpoint();
+        let chosen: Vec<usize> = self.selection().into_iter().filter(|&i| self.decals[i].back == back).collect();
+        // 選んだものの塊。選んだグループの中のものは、グループごと動くので除く。
+        let mut heads: Vec<usize> = chosen.iter().copied().filter(|&i| !crate::paint::ancestors(&self.decals, i).iter().any(|g| chosen.contains(g))).collect();
+        heads.sort_unstable();
         let number = self.decals.iter().filter(|d| matches!(d.picture, Picture::Group { .. })).count() + 1;
-        let header = Placed { decal: NOWHERE, picture: Picture::Group { open: true }, back, layer: Layer { name: Some(t!("Group {number}")), blend: Blend::PassThrough, ..Layer::default() } };
-        if chosen.is_empty() {
-            self.decals.push(header);
+        let header = |depth: u8| Placed { decal: NOWHERE, picture: Picture::Group { open: true }, back, layer: Layer { name: Some(t!("Group {number}")), blend: Blend::PassThrough, depth, ..Layer::default() } };
+        if heads.is_empty() {
+            self.checkpoint();
+            self.decals.push(header(0));
             self.select_only(Some(self.decals.len() - 1));
             (self.art_dirty, self.back_dirty) = (true, true);
             return;
         }
-        let top = *chosen.last().unwrap();
-        let mut moving: Vec<Placed> = chosen.iter().map(|&i| self.decals[i].clone()).collect();
-        for &i in chosen.iter().rev() {
+        let top = *heads.last().unwrap();
+        let depth = self.decals[top].layer.depth;
+        let blocks: Vec<Vec<usize>> = heads.iter().map(|&h| self.block(h)).collect();
+        let deepest = blocks.iter().flatten().map(|&i| self.decals[i].layer.depth as i32 - self.decals[*blocks.iter().find(|b| b.contains(&i)).unwrap().last().unwrap()].layer.depth as i32).max().unwrap_or(0);
+        if depth as i32 + 1 + deepest >= pakenoba_core::project::MAX_DEPTH as i32 {
+            self.say(t!("Groups can be nested up to {} levels.", pakenoba_core::project::MAX_DEPTH));
+            return;
+        }
+        self.checkpoint();
+        let mut all: Vec<usize> = blocks.iter().flatten().copied().collect();
+        all.sort_unstable();
+        let mut moving: Vec<Placed> = Vec::new();
+        for block in &blocks {
+            let head = self.decals[*block.last().unwrap()].layer.depth;
+            for &i in block {
+                let mut item = self.decals[i].clone();
+                item.layer.depth = (item.layer.depth as i32 - head as i32 + depth as i32 + 1) as u8;
+                moving.push(item);
+            }
+        }
+        let at = top + 1 - all.iter().filter(|&&i| i <= top).count();
+        for &i in all.iter().rev() {
             self.decals.remove(i);
         }
-        let mut at = top + 1 - chosen.len();
-        // 入れる場所がほかのグループの中なら、そのグループの上へ。
-        if let Some(below) = (0..at).rev().find(|&i| self.decals[i].back == back)
-            && self.decals[below].layer.in_group
-            && let Some(g) = group_of(&self.decals, below)
-        {
-            at = g + 1;
-        }
         let count = moving.len();
-        for item in &mut moving {
-            item.layer.in_group = true;
+        if let Some(first) = moving.first_mut() {
+            first.layer.clipped = false;
         }
         for (k, item) in moving.into_iter().enumerate() {
             self.decals.insert(at + k, item);
         }
-        self.decals.insert(at + count, header);
+        self.decals.insert(at + count, header(depth));
         self.tidy_groups();
         self.select_only(Some(at + count));
         self.extra = (at..at + count).collect();
         (self.art_dirty, self.back_dirty) = (true, true);
-        self.say(t!("Grouped {count} layer(s). Press Ctrl+Z to undo."));
+        self.say(t!("Grouped {count} layer(s). Press Ctrl+Z to undo.", count = heads.len()));
     }
 
-    /// グループを解く（中身は、そのまま残す）。
+    /// グループを解く（中身は、そのまま 1 段浅くして残す）。
     pub(super) fn ungroup(&mut self, header: usize) {
         if !matches!(self.decals.get(header).map(|d| &d.picture), Some(Picture::Group { .. })) {
             return;
         }
         self.checkpoint();
         for i in members_of(&self.decals, header) {
-            self.decals[i].layer.in_group = false;
+            self.decals[i].layer.depth = self.decals[i].layer.depth.saturating_sub(1);
         }
         self.decals.remove(header);
         self.select_only(None);
@@ -781,17 +876,11 @@ impl App {
         (self.art_dirty, self.back_dirty) = (true, true);
     }
 
-    /// 柄を、グループの外（グループのすぐ上）へ出す。
+    /// レイヤーを、入っているグループの外（グループのすぐ上）へ出す。
     fn take_out_of_group(&mut self, index: usize) {
         let Some(g) = group_of(&self.decals, index) else { return };
-        self.checkpoint();
-        let mut item = self.decals.remove(index);
-        item.layer.in_group = false;
-        // 見出しは 1 つ下にずれている。
-        self.decals.insert(g, item);
-        self.tidy_groups();
-        self.select_only(Some(g));
-        (self.art_dirty, self.back_dirty) = (true, true);
+        let depth = self.decals[g].layer.depth;
+        self.restack(index, g + 1, depth);
     }
 
     /// 選んでいる柄に、柄だけに効く調整を足す。
@@ -820,10 +909,10 @@ impl App {
         let index = self.selected.filter(|&i| i < self.decals.len());
         let back = index.is_some_and(|i| self.decals[i].back);
         // 選んでいるのがグループの中身なら、同じグループの中に。グループの見出しなら、グループの上に。
-        let in_group = index.is_some_and(|i| self.decals[i].layer.in_group);
+        let depth = index.map_or(0, |i| self.decals[i].layer.depth);
         let at = index.map_or(self.decals.len(), |i| i + 1);
         self.checkpoint();
-        let layer = Layer { adjust: vec![Adjustment::new(kind)], in_group, ..Layer::default() };
+        let layer = Layer { adjust: vec![Adjustment::new(kind)], depth, ..Layer::default() };
         self.decals.insert(at, Placed { decal: NOWHERE, picture: Picture::Adjustment, back, layer });
         self.tidy_groups();
         self.select_only(Some(at));
@@ -944,13 +1033,11 @@ impl App {
                 self.adjust_properties(ui, index, locked);
                 ui.add_enabled_ui(!locked, |ui| {
                     ui.menu_button(t!("Add to this adjustment layer"), |ui| {
-                        for kind in LAYER_ADJUST {
-                            if ui.button(adjust_label(kind)).clicked() {
-                                self.checkpoint();
-                                self.decals[index].layer.adjust.push(Adjustment::new(kind));
-                                (self.art_dirty, self.back_dirty) = (true, true);
-                                ui.close();
-                            }
+                        if let Some(kind) = pixel_adjust_menu(ui) {
+                            self.checkpoint();
+                            self.decals[index].layer.adjust.push(Adjustment::new(kind));
+                            (self.art_dirty, self.back_dirty) = (true, true);
+                            ui.close();
                         }
                     });
                 });
@@ -1204,7 +1291,140 @@ fn adjust_numbers(ui: &mut egui::Ui, kind: &mut AdjustKind) {
                 ui.weak(t!("The high-quality model is not on this PC yet. Until it is, nothing is cut out."));
             }
         }
+        AdjustKind::Curves { points, count } => {
+            curve_editor(ui, points, count);
+        }
+        AdjustKind::Exposure { exposure, offset, gamma } => {
+            let mut e = *exposure as f32 / 100.0;
+            ui.add(egui::Slider::new(&mut e, -20.0..=20.0).max_decimals(2).text(t!("Exposure")));
+            *exposure = (e * 100.0).round() as i16;
+            let mut o = *offset as f32 / 1000.0;
+            ui.add(egui::Slider::new(&mut o, -0.5..=0.5).max_decimals(3).text(t!("Offset")));
+            *offset = (o * 1000.0).round() as i16;
+            let mut g = *gamma as f32 / 100.0;
+            ui.add(egui::Slider::new(&mut g, 0.01..=9.99).logarithmic(true).max_decimals(2).text(t!("Gamma correction")));
+            *gamma = (g * 100.0).round().clamp(1.0, 999.0) as u16;
+        }
+        AdjustKind::Vibrance { vibrance, saturation } => {
+            slider(ui, vibrance, -100..=100, t!("Vibrance"));
+            slider(ui, saturation, -100..=100, t!("Saturation"));
+        }
+        AdjustKind::ColorBalance { shadows, midtones, highlights, preserve } => {
+            for (label, values) in [(t!("Shadows"), shadows), (t!("Midtones"), midtones), (t!("Highlights"), highlights)] {
+                ui.label(label);
+                for (k, (lo, hi)) in [(t!("Cyan"), t!("Red")), (t!("Magenta"), t!("Green")), (t!("Yellow"), t!("Blue"))].into_iter().enumerate() {
+                    let mut v = values[k] as i32;
+                    ui.horizontal(|ui| {
+                        ui.small(lo);
+                        ui.add(egui::Slider::new(&mut v, -100..=100));
+                        ui.small(hi);
+                    });
+                    values[k] = v as i8;
+                }
+            }
+            ui.checkbox(preserve, t!("Preserve luminosity"));
+        }
+        AdjustKind::BlackWhite { weights } => {
+            for (k, label) in [t!("Reds"), t!("Yellows"), t!("Greens"), t!("Cyans"), t!("Blues"), t!("Magentas")].into_iter().enumerate() {
+                let mut v = weights[k] as i32;
+                ui.add(egui::Slider::new(&mut v, -200..=300).suffix(" %").text(label));
+                weights[k] = v as i16;
+            }
+        }
+        AdjustKind::PhotoFilter { color, density, preserve } => {
+            ui.horizontal(|ui| {
+                ui.label(t!("Color"));
+                ui.color_edit_button_srgb(color);
+            });
+            let mut d = *density as i32;
+            ui.add(egui::Slider::new(&mut d, 0..=100).suffix(" %").text(t!("Density")));
+            *density = d as u8;
+            ui.checkbox(preserve, t!("Preserve luminosity"));
+        }
+        AdjustKind::Posterize { levels } => {
+            let mut v = *levels as i32;
+            ui.add(egui::Slider::new(&mut v, 2..=255).text(t!("Levels")));
+            *levels = v as u8;
+        }
+        AdjustKind::Threshold { level } => {
+            let mut v = *level as i32;
+            ui.add(egui::Slider::new(&mut v, 1..=255).text(t!("Threshold level")));
+            *level = v as u8;
+        }
+        AdjustKind::GradientMap { from, to, reverse } => {
+            ui.horizontal(|ui| {
+                ui.label(t!("Dark"));
+                ui.color_edit_button_srgb(from);
+                ui.label(t!("Light"));
+                ui.color_edit_button_srgb(to);
+            });
+            ui.checkbox(reverse, t!("Reverse"));
+        }
         AdjustKind::Invert | AdjustKind::FlattenShading => {}
+    }
+}
+
+/// トーンカーブの欄。点をドラッグで動かし、線の上を押すと点を足す（8 つまで）。点をダブルクリックか右クリックで消す（両端は消せない）。
+fn curve_editor(ui: &mut egui::Ui, points: &mut [[u8; 2]; 8], count: &mut u8) {
+    let side = 160.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 2.0, visuals.extreme_bg_color);
+    for k in 1..4 {
+        let t = k as f32 / 4.0;
+        let stroke = egui::Stroke::new(1.0, visuals.weak_text_color().gamma_multiply(0.3));
+        painter.line_segment([egui::pos2(rect.left() + side * t, rect.top()), egui::pos2(rect.left() + side * t, rect.bottom())], stroke);
+        painter.line_segment([egui::pos2(rect.left(), rect.top() + side * t), egui::pos2(rect.right(), rect.top() + side * t)], stroke);
+    }
+    let to_screen = |p: [u8; 2]| egui::pos2(rect.left() + p[0] as f32 / 255.0 * side, rect.bottom() - p[1] as f32 / 255.0 * side);
+    let from_screen = |p: egui::Pos2| [(((p.x - rect.left()) / side) * 255.0).round().clamp(0.0, 255.0) as u8, (((rect.bottom() - p.y) / side) * 255.0).round().clamp(0.0, 255.0) as u8];
+    let n = *count as usize;
+    let drag_id = response.id.with("point");
+    let mut dragging: Option<usize> = ui.data(|d| d.get_temp(drag_id));
+    let near = |p: egui::Pos2, pts: &[[u8; 2]]| pts.iter().enumerate().map(|(i, q)| (i, to_screen(*q).distance(p))).filter(|(_, d)| *d < 8.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
+    if response.drag_started() && let Some(p) = response.interact_pointer_pos() {
+        dragging = near(p, &points[..n]);
+        if dragging.is_none() && n < 8 {
+            points[n] = from_screen(p);
+            *count += 1;
+            dragging = Some(n);
+        }
+    }
+    if response.clicked() && let Some(p) = response.interact_pointer_pos() && near(p, &points[..n]).is_none() && n < 8 {
+        points[n] = from_screen(p);
+        *count += 1;
+    }
+    if (response.double_clicked() || response.secondary_clicked()) && let Some(p) = response.interact_pointer_pos() && let Some(i) = near(p, &points[..n]) {
+        let mut sorted: Vec<[u8; 2]> = points[..n].to_vec();
+        let target = sorted[i];
+        sorted.sort_by_key(|q| q[0]);
+        let pos = sorted.iter().position(|q| *q == target).unwrap_or(0);
+        if n > 2 && pos != 0 && pos != n - 1 {
+            sorted.remove(pos);
+            points[..sorted.len()].copy_from_slice(&sorted);
+            *count -= 1;
+        }
+        dragging = None;
+    }
+    if response.dragged() && let (Some(i), Some(p)) = (dragging, response.interact_pointer_pos()) && i < *count as usize {
+        points[i] = from_screen(p);
+    }
+    if response.drag_stopped() {
+        dragging = None;
+    }
+    ui.data_mut(|d| d.insert_temp(drag_id, dragging));
+    let n = *count as usize;
+    let lut = crate::effects::curve_lut(&points[..n]);
+    let line: Vec<egui::Pos2> = (0..=64).map(|k| { let x = k * 255 / 64; egui::pos2(rect.left() + x as f32 / 255.0 * side, rect.bottom() - lut[x] * side) }).collect();
+    painter.add(egui::Shape::line(line, egui::Stroke::new(1.6, visuals.text_color())));
+    for p in &points[..n] {
+        painter.circle(to_screen(*p), 3.5, visuals.extreme_bg_color, egui::Stroke::new(1.4, visuals.strong_text_color()));
+    }
+    response.on_hover_text(t!("Drag a point to bend the curve. Click on the curve to add a point (up to 8). Double-click or right-click a point to remove it"));
+    if ui.small_button(t!("Reset")).clicked() {
+        *points = pakenoba_core::project::CURVE_STRAIGHT;
+        *count = 2;
     }
 }
 
@@ -1250,19 +1470,19 @@ mod tests {
         // 下から: 赤、青（中身）、見出し、緑。
         assert!(matches!(app.decals[2].picture, Picture::Group { .. }));
         assert_eq!(members_of(&app.decals, 2), vec![0, 1]);
-        assert!(!app.decals[3].layer.in_group);
+        assert!(app.decals[3].layer.depth == 0);
         // いちばん上の中身を上へ動かすと、グループから出て、見出しの上へ。
         app.select_only(Some(1));
         app.reorder_selected(1);
         assert_eq!(members_of(&app.decals, 1), vec![0]);
-        assert!(!app.decals[2].layer.in_group && matches!(app.decals[2].picture, Picture::Shape(_)));
+        assert!(app.decals[2].layer.depth == 0 && matches!(app.decals[2].picture, Picture::Shape(_)));
         // もう一度下へ動かすと、いちばん上の中身として戻る。
         app.reorder_selected(-1);
         assert_eq!(members_of(&app.decals, 2), vec![0, 1]);
         // グループを解くと、中身は残る。
         app.ungroup(2);
         assert_eq!(app.decals.len(), 3);
-        assert!(app.decals.iter().all(|d| !d.layer.in_group && is_artwork(&d.picture)));
+        assert!(app.decals.iter().all(|d| d.layer.depth == 0 && is_artwork(&d.picture)));
         // 元に戻せる。
         app.undo();
         assert_eq!(members_of(&app.decals, 2), vec![0, 1]);
@@ -1400,5 +1620,89 @@ mod tests {
         let thumb = picture_thumb(&app.decals[0]);
         let mid = (THUMB_PX / 2 * THUMB_PX + THUMB_PX / 2) * 4;
         assert!(thumb[mid] > 200 && thumb[mid + 1] < 60, "{:?}", &thumb[mid..mid + 4]);
+    }
+
+    #[test]
+    fn グループの中にグループを作れて_クリップは土台の見える所にだけ出る() {
+        // 下から: 赤（土台）、青（クリップ）、緑。
+        let mut app = app_with(&[[255, 0, 0], [0, 0, 255], [0, 255, 0]]);
+        // 緑を隠して、青を赤でクリップ。赤を小さくすると、はみ出た青は見えない。
+        app.decals[2].layer.hidden = true;
+        app.toggle_clip(1);
+        assert!(app.decals[1].layer.clipped);
+        assert!(near(center(&app), [0, 0, 255]));
+        app.decals[0].layer.hidden = true;
+        let paper = center(&app);
+        assert!(paper[2] < 250 || paper[0] > 200, "土台が隠れると、クリップしたものも見えない {paper:?}");
+        assert!(!near(paper, [0, 0, 255]));
+        app.decals[0].layer.hidden = false;
+        // いちばん下はクリップできない。
+        app.toggle_clip(0);
+        assert!(!app.decals[0].layer.clipped);
+        // 赤と青をグループにし、そのグループと緑を、さらにグループに（入れ子）。
+        app.select_only(Some(0));
+        app.extra = vec![1];
+        app.group_selected();
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![1, 1, 0, 0]);
+        assert!(app.decals[1].layer.clipped, "グループの中でも、クリップは続く");
+        app.select_only(Some(2));
+        app.extra = vec![3];
+        app.group_selected();
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![2, 2, 1, 1, 0]);
+        assert_eq!(crate::paint::ancestors(&app.decals, 0), vec![2, 4]);
+        // 外のグループを隠すと、中のものも見えない。
+        app.decals[4].layer.hidden = true;
+        assert!(!crate::paint::shown_in_group(&app.decals, 0));
+        app.decals[4].layer.hidden = false;
+        // 外のグループを解くと、1 段浅くなる。
+        app.ungroup(4);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![1, 1, 0, 0]);
+        // PSD では、クリップと入れ子のグループが入る。
+        app.select_only(Some(2));
+        app.extra = vec![3];
+        app.group_selected();
+        // 画面を確かめるための見本（PAKENOBA_SAMPLE2 に保存先を書いたときだけ）。トーンカーブの調整レイヤーも足す。
+        if let Some(path) = std::env::var_os("PAKENOBA_SAMPLE2") {
+            let mut sample = app.project().unwrap();
+            let mut layer = sample.decals[0].clone();
+            layer.source = pakenoba_core::project::Source::Adjustment;
+            layer.layer = Layer { depth: 0, adjust: vec![Adjustment::new(AdjustKind::Curves { points: [[0, 0], [90, 150], [255, 255], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], count: 3 })], ..Layer::default() };
+            sample.decals.push(layer);
+            sample.save(std::path::Path::new(&path)).unwrap();
+        }
+        let layers = app.decal_layers(false);
+        let starts = layers.iter().filter(|l| matches!(l.group, Some(PsdGroup::Start { .. }))).count();
+        let ends = layers.iter().filter(|l| matches!(l.group, Some(PsdGroup::End))).count();
+        assert_eq!((starts, ends), (2, 2));
+        assert!(layers.iter().any(|l| l.clipped));
+        let psd = crate::art::save_psd(&app.sheet, None, &layers, Some(&app.painted(false))).unwrap();
+        assert!(craft_psd::PsdFile::from_bytes(&psd).is_ok());
+    }
+
+    #[test]
+    fn 並べ替えで_グループを出入りする() {
+        let mut app = app_with(&[[255, 0, 0], [0, 0, 255], [0, 255, 0]]);
+        app.select_only(Some(1));
+        app.group_selected();
+        // 下から: 赤、青(1)、見出し、緑。
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![0, 1, 0, 0]);
+        // 赤を上へ: グループのいちばん下の中身になる。
+        app.select_only(Some(0));
+        app.reorder_selected(1);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![1, 1, 0, 0]);
+        // もう一度下へ: グループから出る。
+        app.reorder_selected(-1);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![0, 1, 0, 0]);
+        // 緑を下へ: グループのいちばん上の中身になる。
+        app.select_only(Some(3));
+        app.reorder_selected(-1);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![0, 1, 1, 0]);
+        assert!(matches!(app.decals[3].picture, Picture::Group { .. }));
+        // ドラッグで見出しのすぐ下に落とすと、いちばん上の中身。上に落とすと、グループの外。
+        app.move_layer(0, 3, false);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![1, 1, 1, 0]);
+        app.move_layer(2, 3, true);
+        assert_eq!(app.decals.iter().map(|d| d.layer.depth).collect::<Vec<_>>(), vec![1, 1, 0, 0]);
+        assert!(!matches!(app.decals[3].picture, Picture::Group { .. }));
     }
 }

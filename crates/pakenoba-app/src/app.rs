@@ -947,20 +947,42 @@ impl App {
             Some(name) => t!("{} ({name})", index + 1),
             None => t!("{} ({})", index + 1, self.decals[index].picture.label()),
         };
+        let start_of = |header: usize| {
+            let g = &self.decals[header];
+            let Picture::Group { open } = g.picture else { unreachable!() };
+            DecalLayer { name: name_of(header), image: Vec::new(), visible: !g.layer.hidden, opacity: g.layer.opacity, blend: g.layer.blend, mask: None, group: Some(PsdGroup::Start { open }), clipped: false }
+        };
         let mut out = Vec::new();
-        for (k, &index) in items.iter().enumerate() {
+        // いま開いているグループ（外側から）。
+        let mut open: Vec<usize> = Vec::new();
+        for &index in &items {
             let decal = &self.decals[index];
-            let first_in_group = decal.layer.in_group && (k == 0 || !self.decals[items[k - 1]].layer.in_group);
-            if first_in_group && let Some(header) = crate::paint::group_of(&self.decals, index) {
-                let g = &self.decals[header];
-                let Picture::Group { open } = g.picture else { unreachable!() };
-                out.push(DecalLayer { name: name_of(header), image: Vec::new(), visible: !g.layer.hidden, opacity: g.layer.opacity, blend: g.layer.blend, mask: None, group: Some(PsdGroup::Start { open }) });
+            // このレイヤーの入っているグループのうち、まだ始めていないものを、外側から始める。
+            let mut chain = crate::paint::ancestors(&self.decals, index);
+            chain.reverse();
+            let is_header = matches!(decal.picture, Picture::Group { .. });
+            while open.last().is_some_and(|g| !chain.contains(g) && !(is_header && *g == index)) {
+                open.pop();
+            }
+            for g in chain {
+                if !open.contains(&g) {
+                    out.push(start_of(g));
+                    open.push(g);
+                }
             }
             let layer = match decal.picture {
-                Picture::Group { .. } => DecalLayer { group: Some(PsdGroup::End), ..DecalLayer::shown(String::new(), Vec::new()) },
+                Picture::Group { .. } => {
+                    if open.last() != Some(&index) {
+                        // 中身のないグループ。
+                        out.push(start_of(index));
+                    } else {
+                        open.pop();
+                    }
+                    DecalLayer { group: Some(PsdGroup::End), ..DecalLayer::shown(String::new(), Vec::new()) }
+                }
                 Picture::Adjustment => {
-                    // 下の絵。グループ（通過でない）の中なら、そのグループの中で下にあるものだけ。
-                    let header = crate::paint::group_of(&self.decals, index).filter(|&g| self.decals[g].layer.blend != project::Blend::PassThrough);
+                    // 下の絵。通過でないグループの中なら、いちばん内側のそのグループの中で、下にあるものだけ。
+                    let header = crate::paint::ancestors(&self.decals, index).into_iter().find(|&g| self.decals[g].layer.blend != project::Blend::PassThrough);
                     let below: Vec<Placed> = match header {
                         Some(g) => crate::paint::members_of(&self.decals, g).into_iter().filter(|&i| i < index).map(|i| self.decals[i].clone()).collect(),
                         None => self.decals[..index].to_vec(),
@@ -977,20 +999,23 @@ impl App {
                     };
                     let mut plain = decal.clone();
                     (plain.layer.opacity, plain.layer.blend) = (100, project::Blend::Normal);
-                    crate::paint::adjust_below(&plain, &mut image, 1.0);
-                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask: None, group: None }
+                    crate::paint::adjust_below(&plain, &mut image, 1.0, None);
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask: None, group: None, clipped: decal.layer.clipped }
                 }
                 _ => {
                     let mut image = vec![0u8; w * h * 4];
                     let mut shown = decal.clone();
-                    // レイヤーの絵は、不透明度、描画モード、マスクを効かせずに描き、PSD のレイヤーの設定として入れる。
-                    (shown.layer.hidden, shown.layer.opacity, shown.layer.blend, shown.layer.in_group, shown.layer.mask) = (false, 100, Default::default(), false, None);
+                    // レイヤーの絵は、不透明度、描画モード、マスク、クリップを効かせずに描き、PSD のレイヤーの設定として入れる。
+                    (shown.layer.hidden, shown.layer.opacity, shown.layer.blend, shown.layer.depth, shown.layer.clipped, shown.layer.mask) = (false, 100, Default::default(), 0, false, None);
                     paint(&self.surface, &self.template, std::slice::from_ref(&shown), Marks::default(), back, Canvas::output(w, h, &mut image));
                     let mask = decal.layer.mask.as_ref().filter(|m| m.enabled).and_then(|_| crate::paint::paint_mask(&self.surface, &self.template, decal, back, w, h));
-                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None }
+                    DecalLayer { name: name_of(index), image, visible: !decal.layer.hidden, opacity: decal.layer.opacity, blend: decal.layer.blend, mask, group: None, clipped: decal.layer.clipped }
                 }
             };
             out.push(layer);
+        }
+        for _ in open {
+            out.push(DecalLayer { group: Some(PsdGroup::End), ..DecalLayer::shown(String::new(), Vec::new()) });
         }
         out
     }
@@ -1169,7 +1194,12 @@ impl App {
         // Ctrl+G でグループにし、Ctrl+Shift+G でグループを解く（Photoshop と同じ）。
         let (g, b) = ctx.input(|i| (i.key_pressed(egui::Key::G), i.key_pressed(egui::Key::B)));
         if command && g && self.workspace == Workspace::Design {
-            if shift {
+            if alt {
+                // Ctrl+Alt+G で、クリッピングマスクを作る・外す（Photoshop と同じ）。
+                if let Some(index) = self.selected {
+                    self.toggle_clip(index);
+                }
+            } else if shift {
                 let header = self.selected.and_then(|i| if matches!(self.decals.get(i).map(|d| &d.picture), Some(Picture::Group { .. })) { Some(i) } else { crate::paint::group_of(&self.decals, i) });
                 if let Some(header) = header {
                     self.ungroup(header);

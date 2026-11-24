@@ -40,8 +40,170 @@ pub fn pixel(kind: AdjustKind, c: [f32; 3]) -> [f32; 3] {
             c.map(|v| ((v - b) / (w - b)).clamp(0.0, 1.0).powf(1.0 / g))
         }
         AdjustKind::Invert => c.map(|v| 1.0 - v),
+        AdjustKind::Curves { points, count } => {
+            let lut = curve_lut(&points[..count as usize]);
+            c.map(|v| lookup(&lut, v))
+        }
+        AdjustKind::Exposure { exposure, offset, gamma } => {
+            // 光の量で計算する（Photoshop と同じく、sRGB をいったん直線にもどす）。
+            let gain = 2f32.powf(exposure as f32 / 100.0);
+            let g = (gamma as f32 / 100.0).max(0.01);
+            c.map(|v| to_srgb((to_linear(v) * gain + offset as f32 / 1000.0).max(0.0).powf(1.0 / g).min(1.0)))
+        }
+        AdjustKind::Vibrance { vibrance, saturation } => {
+            let (mx, mn) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
+            let avg = (c[0] + c[1] + c[2]) / 3.0;
+            // 自然な彩度: 色の薄い所ほど強く効かせる（肌のような、もともと濃い色はあまり変えない）。
+            let amount = vibrance as f32 / 100.0 * if vibrance > 0 { 1.0 - (mx - mn) } else { 1.0 };
+            let v = c.map(|x| x + (x - avg) * amount);
+            let l = lum3(v);
+            let k = 1.0 + saturation as f32 / 100.0;
+            v.map(|x| (l + (x - l) * k).clamp(0.0, 1.0))
+        }
+        AdjustKind::ColorBalance { shadows, midtones, highlights, preserve } => {
+            let l = lum3(c);
+            let ws = (1.0 - l * 2.0).clamp(0.0, 1.0);
+            let wh = (l * 2.0 - 1.0).clamp(0.0, 1.0);
+            let wm = 1.0 - (l * 2.0 - 1.0).abs();
+            let shift = |k: usize| (shadows[k] as f32 * ws + midtones[k] as f32 * wm + highlights[k] as f32 * wh) / 100.0 * 0.35;
+            let v = [c[0] + shift(0), c[1] + shift(1), c[2] + shift(2)].map(|x| x.clamp(0.0, 1.0));
+            if preserve { keep_lum(v, l) } else { v }
+        }
+        AdjustKind::BlackWhite { weights } => {
+            // いちばん強い色と、次に強い色の組み合わせ（R、Y、G、C、B、M）で、明るさの重みを決める。
+            let w = weights.map(|x| x as f32 / 100.0);
+            let mut order = [0usize, 1, 2];
+            order.sort_by(|&a, &b| c[b].total_cmp(&c[a]));
+            let (hi, mid, lo) = (c[order[0]], c[order[1]], c[order[2]]);
+            let primary = [0, 2, 4][order[0]];
+            let secondary = match (order[0].min(order[1]), order[0].max(order[1])) {
+                (0, 1) => 1,
+                (1, 2) => 3,
+                _ => 5,
+            };
+            let gray = (lo + (hi - mid) * w[primary] + (mid - lo) * w[secondary]).clamp(0.0, 1.0);
+            [gray; 3]
+        }
+        AdjustKind::PhotoFilter { color, density, preserve } => {
+            let col = color.map(|x| x as f32 / 255.0);
+            let norm = lum3(col).max(0.05);
+            let d = density as f32 / 100.0;
+            let v = [0, 1, 2].map(|i| (c[i] * (1.0 - d + d * col[i] / norm)).clamp(0.0, 1.0));
+            if preserve { keep_lum(v, lum3(c)) } else { v }
+        }
+        AdjustKind::Posterize { levels } => {
+            let n = levels.max(2) as f32 - 1.0;
+            c.map(|v| (v * n).round() / n)
+        }
+        AdjustKind::Threshold { level } => [if lum3(c) * 255.0 >= level as f32 { 1.0 } else { 0.0 }; 3],
+        AdjustKind::GradientMap { from, to, reverse } => {
+            let t = if reverse { 1.0 - lum3(c) } else { lum3(c) };
+            [0, 1, 2].map(|i| (from[i] as f32 + (to[i] as f32 - from[i] as f32) * t) / 255.0)
+        }
         _ => c,
     }
+}
+
+fn lum3(c: [f32; 3]) -> f32 {
+    0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+}
+
+/// 明るさを `l` に保つ。
+fn keep_lum(v: [f32; 3], l: f32) -> [f32; 3] {
+    let d = l - lum3(v);
+    v.map(|x| (x + d).clamp(0.0, 1.0))
+}
+
+fn to_linear(v: f32) -> f32 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
+fn to_srgb(v: f32) -> f32 {
+    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// トーンカーブの点（0〜255）から、なめらかで行き過ぎない曲線（単調な 3 次）の表を作る。値は 0〜1。
+pub fn curve_lut(points: &[[u8; 2]]) -> [f32; 256] {
+    let mut pts: Vec<(f32, f32)> = points.iter().map(|p| (p[0] as f32, p[1] as f32)).collect();
+    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pts.dedup_by(|a, b| a.0 == b.0);
+    let mut lut = [0f32; 256];
+    if pts.len() < 2 {
+        for (i, v) in lut.iter_mut().enumerate() {
+            *v = i as f32 / 255.0;
+        }
+        return lut;
+    }
+    let n = pts.len();
+    let slopes: Vec<f32> = (0..n - 1).map(|i| (pts[i + 1].1 - pts[i].1) / (pts[i + 1].0 - pts[i].0)).collect();
+    let mut tangents = vec![0f32; n];
+    tangents[0] = slopes[0];
+    tangents[n - 1] = slopes[n - 2];
+    for i in 1..n - 1 {
+        tangents[i] = if slopes[i - 1] * slopes[i] <= 0.0 { 0.0 } else { (slopes[i - 1] + slopes[i]) * 0.5 };
+    }
+    // 行き過ぎないように、接線を抑える（Fritsch-Carlson）。
+    for i in 0..n - 1 {
+        if slopes[i] == 0.0 {
+            tangents[i] = 0.0;
+            tangents[i + 1] = 0.0;
+            continue;
+        }
+        let (a, b) = (tangents[i] / slopes[i], tangents[i + 1] / slopes[i]);
+        let r = a * a + b * b;
+        if r > 9.0 {
+            let t = 3.0 / r.sqrt();
+            tangents[i] = t * a * slopes[i];
+            tangents[i + 1] = t * b * slopes[i];
+        }
+    }
+    for (x, v) in lut.iter_mut().enumerate() {
+        let x = x as f32;
+        let y = if x <= pts[0].0 {
+            pts[0].1
+        } else if x >= pts[n - 1].0 {
+            pts[n - 1].1
+        } else {
+            let i = (0..n - 1).find(|&i| x <= pts[i + 1].0).unwrap_or(n - 2);
+            let h = pts[i + 1].0 - pts[i].0;
+            let t = (x - pts[i].0) / h;
+            let (t2, t3) = (t * t, t * t * t);
+            (2.0 * t3 - 3.0 * t2 + 1.0) * pts[i].1 + (t3 - 2.0 * t2 + t) * h * tangents[i] + (-2.0 * t3 + 3.0 * t2) * pts[i + 1].1 + (t3 - t2) * h * tangents[i + 1]
+        };
+        *v = (y / 255.0).clamp(0.0, 1.0);
+    }
+    lut
+}
+
+fn lookup(lut: &[f32; 256], v: f32) -> f32 {
+    let f = (v.clamp(0.0, 1.0) * 255.0).min(254.999);
+    let i = f as usize;
+    lut[i] + (lut[i + 1] - lut[i]) * (f - i as f32)
+}
+
+/// 画素ごとの調整を、描く前に 1 回だけ用意したもの（トーンカーブは表にしておく）。
+pub enum Prepared {
+    Kind(AdjustKind),
+    Lut(Box<[f32; 256]>),
+}
+
+pub fn prepare(stack: &[AdjustKind]) -> Vec<Prepared> {
+    stack.iter().map(|&k| match k {
+        AdjustKind::Curves { points, count } => Prepared::Lut(Box::new(curve_lut(&points[..count as usize]))),
+        k => Prepared::Kind(k),
+    }).collect()
+}
+
+/// 用意した調整を、色（0〜255）に効かせる。
+pub fn run(ops: &[Prepared], c: [f32; 3]) -> [f32; 3] {
+    let mut v = c.map(|x| x / 255.0);
+    for op in ops {
+        v = match op {
+            Prepared::Kind(k) => pixel(*k, v),
+            Prepared::Lut(lut) => v.map(|x| lookup(lut, x)),
+        };
+    }
+    v.map(|x| x * 255.0)
 }
 
 fn to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
@@ -83,15 +245,6 @@ fn from_hsl([h, s, l]: [f32; 3]) -> [f32; 3] {
     [f(h + 1.0 / 3.0), f(h), f(h - 1.0 / 3.0)]
 }
 
-/// 画素ごとの調整の並びを、色（0〜255）に効かせる。
-pub fn pixels(stack: &[AdjustKind], c: [f32; 3]) -> [f32; 3] {
-    let mut v = c.map(|x| x / 255.0);
-    for &kind in stack {
-        v = pixel(kind, v);
-    }
-    v.map(|x| x * 255.0)
-}
-
 /// 調整の並びを、RGBA の絵（アルファは乗算なし）に効かせる。失敗した調整（被写体が見つからないなど）は、飛ばして知らせを返す。
 pub fn apply(stack: &[AdjustKind], w: usize, h: usize, rgba: &[u8]) -> (Vec<u8>, Vec<String>) {
     let mut out = rgba.to_vec();
@@ -101,8 +254,9 @@ pub fn apply(stack: &[AdjustKind], w: usize, h: usize, rgba: &[u8]) -> (Vec<u8>,
         if run.is_empty() {
             return;
         }
+        let ops = prepare(run);
         for px in out.chunks_exact_mut(4) {
-            let c = pixels(run, [px[0] as f32, px[1] as f32, px[2] as f32]);
+            let c = self::run(&ops, [px[0] as f32, px[1] as f32, px[2] as f32]);
             for i in 0..3 {
                 px[i] = c[i].round().clamp(0.0, 255.0) as u8;
             }
@@ -457,5 +611,32 @@ mod tests {
         }
         let mask = subject_mask(w, h, &rgba, true).expect("動く");
         assert!(mask[32 * w + 32] > 200 && mask[w + 1] < 60, "{} {}", mask[32 * w + 32], mask[w + 1]);
+    }
+
+    #[test]
+    fn 新しい調整の計算() {
+        // トーンカーブ: まっすぐなら変えない。真ん中を持ち上げると明るくなり、両端は動かない。
+        let straight = curve_lut(&[[0, 0], [255, 255]]);
+        assert!((straight[128] - 128.0 / 255.0).abs() < 1e-4);
+        let lifted = curve_lut(&[[0, 0], [128, 180], [255, 255]]);
+        assert!(lifted[128] > 0.69 && lifted[0] == 0.0 && (lifted[255] - 1.0).abs() < 1e-5);
+        assert!(lifted.windows(2).all(|w| w[1] >= w[0] - 1e-6), "行き過ぎない（単調）");
+        // 露光量 +1 で、直線の光の量が 2 倍。
+        let e = pixel(AdjustKind::Exposure { exposure: 100, offset: 0, gamma: 100 }, [0.2; 3]);
+        assert!((to_linear(e[0]) - to_linear(0.2) * 2.0).abs() < 1e-3);
+        // 白黒: 灰色は灰色のまま。赤は、赤の重みで決まる。
+        let w = AdjustKind::BlackWhite { weights: pakenoba_core::project::BLACK_WHITE_DEFAULT };
+        assert!((pixel(w, [0.5; 3])[0] - 0.5).abs() < 1e-5);
+        assert!((pixel(w, [1.0, 0.0, 0.0])[0] - 0.4).abs() < 1e-5);
+        // 2 階調化、ポスタリゼーション、グラデーションマップ。
+        assert_eq!(pixel(AdjustKind::Threshold { level: 128 }, [0.6; 3]), [1.0; 3]);
+        assert_eq!(pixel(AdjustKind::Threshold { level: 128 }, [0.4; 3]), [0.0; 3]);
+        assert_eq!(pixel(AdjustKind::Posterize { levels: 2 }, [0.3, 0.7, 0.5]), [0.0, 1.0, 1.0]);
+        let g = pixel(AdjustKind::GradientMap { from: [255, 0, 0], to: [0, 0, 255], reverse: false }, [1.0; 3]);
+        assert!(g[2] > 0.99 && g[0] < 0.01);
+        // 自然な彩度は、灰色を変えない。カラーバランスで明るさを保つと、明るさは変わらない。
+        assert_eq!(pixel(AdjustKind::Vibrance { vibrance: 80, saturation: 0 }, [0.5; 3]), [0.5; 3]);
+        let cb = pixel(AdjustKind::ColorBalance { shadows: [0; 3], midtones: [100, 0, -100], highlights: [0; 3], preserve: true }, [0.5; 3]);
+        assert!((lum3(cb) - 0.5).abs() < 0.01 && cb[0] > cb[2]);
     }
 }

@@ -210,34 +210,66 @@ pub fn is_artwork(picture: &Picture) -> bool {
     !matches!(picture, Picture::Group { .. } | Picture::Adjustment)
 }
 
-/// 柄 `index` が、グループごと隠れていないか（グループの見出しが隠れていれば、中身も見えない）。
-pub fn shown_in_group(decals: &[Placed], index: usize) -> bool {
-    let Some(placed) = decals.get(index) else { return false };
-    if placed.layer.hidden {
-        return false;
-    }
-    if !placed.layer.in_group {
-        return true;
-    }
-    group_of(decals, index).is_none_or(|g| !decals[g].layer.hidden)
+/// レイヤーの、グループの入れ子の深さ。
+pub fn depth(placed: &Placed) -> u8 {
+    placed.layer.depth
 }
 
-/// 柄 `index` が入っているグループの見出しの番号（同じ面の、中身の続きのすぐ後ろ）。
+/// 柄 `index` が、グループごと隠れていないか（入っているグループのどれかが隠れていれば、中身も見えない）。
+pub fn shown_in_group(decals: &[Placed], index: usize) -> bool {
+    let Some(placed) = decals.get(index) else { return false };
+    !placed.layer.hidden && ancestors(decals, index).iter().all(|&g| !decals[g].layer.hidden)
+}
+
+/// 柄 `index` が入っているグループの見出しの番号（いちばん内側）。同じ面で、上にある、より浅い最初のもの。
 pub fn group_of(decals: &[Placed], index: usize) -> Option<usize> {
     let placed = decals.get(index)?;
-    if !placed.layer.in_group {
+    let d = depth(placed);
+    if d == 0 {
         return None;
     }
     let back = placed.back;
-    (index + 1..decals.len()).filter(|&i| decals[i].back == back).find(|&i| !decals[i].layer.in_group).filter(|&i| matches!(decals[i].picture, Picture::Group { .. }))
+    (index + 1..decals.len()).filter(|&i| decals[i].back == back).find(|&i| depth(&decals[i]) < d).filter(|&i| matches!(decals[i].picture, Picture::Group { .. }))
 }
 
-/// グループ `header` の中身の番号（下から）。
+/// 柄 `index` が入っているグループの見出しすべて（内側から外側へ）。
+pub fn ancestors(decals: &[Placed], index: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut at = index;
+    while let Some(g) = group_of(decals, at) {
+        out.push(g);
+        at = g;
+    }
+    out
+}
+
+/// グループ `header` の中身すべて（入れ子の中身も。下から）。
 pub fn members_of(decals: &[Placed], header: usize) -> Vec<usize> {
     let back = decals[header].back;
-    let mut out: Vec<usize> = (0..header).rev().filter(|&i| decals[i].back == back).take_while(|&i| decals[i].layer.in_group).collect();
+    let d = depth(&decals[header]);
+    let mut out: Vec<usize> = (0..header).rev().filter(|&i| decals[i].back == back).take_while(|&i| depth(&decals[i]) > d).collect();
     out.reverse();
     out
+}
+
+/// 柄 `index` がクリップしている土台（同じ面、同じ深さで、すぐ下のもの。クリップしているものが続けば、その下の土台）。
+pub fn clip_base(decals: &[Placed], index: usize) -> Option<usize> {
+    let placed = decals.get(index)?;
+    if !placed.layer.clipped {
+        return None;
+    }
+    let (back, d) = (placed.back, depth(placed));
+    let mut at = index;
+    loop {
+        let below = (0..at).rev().filter(|&i| decals[i].back == back).find(|&i| depth(&decals[i]) <= d)?;
+        if depth(&decals[below]) != d {
+            return None;
+        }
+        if !decals[below].layer.clipped {
+            return Some(below);
+        }
+        at = below;
+    }
 }
 
 /// 描くときに使う、決まった値。
@@ -288,45 +320,71 @@ impl Painter<'_> {
         }
     }
 
-    /// 並び `items`（下から）を、`target` に重ねる。`scale` は、外のグループ（通過）の不透明度。
-    fn stack(&self, items: &[usize], target: &mut [u8], scale: f32) {
+    /// 並び `items`（下から。深さ `level` のものと、その下に入れ子になったもの）を、`target` に重ねる。
+    /// `scale` は、外のグループ（通過）の不透明度。クリップしているものは、土台の見えている所にだけ重ねる。
+    fn stack(&self, items: &[usize], target: &mut [u8], scale: f32, level: u8) {
         let mut k = 0;
         while k < items.len() {
-            let i = items[k];
-            if self.decals[i].layer.in_group {
-                let start = k;
-                while k < items.len() && self.decals[items[k]].layer.in_group {
-                    k += 1;
-                }
-                let run = &items[start..k];
-                match items.get(k).copied().filter(|&j| matches!(self.decals[j].picture, Picture::Group { .. })) {
-                    Some(header) => {
-                        self.group(run, header, target, scale);
-                        k += 1;
-                    }
-                    None => run.iter().for_each(|&j| self.item(j, target, scale)),
-                }
+            // 塊: 柄 1 つか、グループ（中身と見出し）。
+            let start = k;
+            while k < items.len() && depth(&self.decals[items[k]]) > level {
+                k += 1;
+            }
+            let run = &items[start..k];
+            let header = items.get(k).copied().filter(|&j| matches!(self.decals[j].picture, Picture::Group { .. }));
+            let unit: (&[usize], Option<usize>) = if run.is_empty() {
+                k += 1;
+                (&[], Some(items[k - 1]))
+            } else if let Some(h) = header {
+                k += 1;
+                (run, Some(h))
+            } else {
+                (run, None)
+            };
+            // 塊の上に続く、クリップしているもの。
+            let clip_start = k;
+            while k < items.len() && depth(&self.decals[items[k]]) == level && self.decals[items[k]].layer.clipped && !matches!(self.decals[items[k]].picture, Picture::Group { .. }) {
+                k += 1;
+            }
+            let clipped = &items[clip_start..k];
+            if clipped.is_empty() {
+                self.unit(unit, target, scale, level);
                 continue;
             }
-            self.item(i, target, scale);
-            k += 1;
+            // 土台だけを描いて、見えている所（透明度）を覚えておく。
+            let mut alone = vec![0u8; target.len()];
+            self.unit(unit, &mut alone, 1.0, level);
+            let clip: Vec<u8> = alone.chunks_exact(4).map(|p| p[3]).collect();
+            self.unit(unit, target, scale, level);
+            for &j in clipped {
+                self.item(j, target, scale, Some(&clip));
+            }
         }
     }
 
-    fn group(&self, run: &[usize], header: usize, target: &mut [u8], scale: f32) {
+    /// 塊を 1 つ描く: 中身と見出しならグループ、中身だけ（見出しが見つからない）なら 1 つずつ、見出しだけなら空のグループ。
+    fn unit(&self, (run, header): (&[usize], Option<usize>), target: &mut [u8], scale: f32, level: u8) {
+        match header {
+            Some(h) if matches!(self.decals[h].picture, Picture::Group { .. }) => self.group(run, h, target, scale, level),
+            Some(h) => self.item(h, target, scale, None),
+            None => self.stack(run, target, scale, level + 1),
+        }
+    }
+
+    fn group(&self, run: &[usize], header: usize, target: &mut [u8], scale: f32, level: u8) {
         let layer = &self.decals[header].layer;
-        if layer.hidden {
+        if layer.hidden || run.is_empty() {
             return;
         }
         let opacity = layer.opacity.min(100) as f32 / 100.0 * scale;
         if layer.blend == Blend::PassThrough {
             // 通過: 中身を、そのまま外へ重ねる（グループの不透明度は、中身それぞれに掛ける）。
-            run.iter().for_each(|&j| self.item(j, target, opacity));
+            self.stack(run, target, opacity, level + 1);
             return;
         }
         // 中身を透明な絵に重ねてから、グループの描画モードと不透明度で、外へ重ねる。
         let mut buffer = vec![0u8; target.len()];
-        run.iter().for_each(|&j| self.item(j, &mut buffer, 1.0));
+        self.stack(run, &mut buffer, 1.0, level + 1);
         for (dst, src) in target.chunks_exact_mut(4).zip(buffer.chunks_exact(4)) {
             if src[3] > 0 {
                 crate::blend::over(dst, [src[0] as f32, src[1] as f32, src[2] as f32], src[3] as f32 / 255.0 * opacity, layer.blend);
@@ -334,19 +392,20 @@ impl Painter<'_> {
         }
     }
 
-    fn item(&self, index: usize, target: &mut [u8], scale: f32) {
+    /// レイヤー 1 つ。`clip` があれば、その透明度（展開図の画素ごと）の所にだけ重ねる。
+    fn item(&self, index: usize, target: &mut [u8], scale: f32, clip: Option<&[u8]>) {
         let placed = &self.decals[index];
         if placed.layer.hidden {
             return;
         }
         match placed.picture {
             Picture::Group { .. } => {}
-            Picture::Adjustment => adjust_below(placed, target, scale),
-            _ => self.artwork(placed, target, scale),
+            Picture::Adjustment => adjust_below(placed, target, scale, clip),
+            _ => self.artwork(placed, target, scale, clip),
         }
     }
 
-    fn artwork(&self, decal: &Placed, target: &mut [u8], scale: f32) {
+    fn artwork(&self, decal: &Placed, target: &mut [u8], scale: f32, clip: Option<&[u8]>) {
         let opacity = decal.layer.opacity.min(100) as f32 / 100.0 * scale;
         let picture = crate::effects::shown(decal, self.wait);
         let mask = decal.layer.mask.as_ref().filter(|m| m.enabled);
@@ -356,6 +415,9 @@ impl Painter<'_> {
             let mut a = color[3] * opacity;
             if let Some(mask) = mask {
                 a *= mask_at(mask, q, size);
+            }
+            if let Some(clip) = clip {
+                a *= clip[o / 4] as f32 / 255.0;
             }
             crate::blend::over(&mut target[o..o + 4], [color[0], color[1], color[2]], a, decal.layer.blend);
         });
@@ -392,19 +454,21 @@ pub fn mask_at(mask: &pakenoba_core::project::Mask, q: P2, size: P2) -> f32 {
 }
 
 /// 調整レイヤーを、下の絵（`target`）に効かせる。透明な所はそのまま。透明度は変えない。
-pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32) {
+pub fn adjust_below(placed: &Placed, target: &mut [u8], scale: f32, clip: Option<&[u8]>) {
     let stack: Vec<_> = crate::effects::enabled(&placed.layer.adjust).into_iter().filter(|k| k.per_pixel()).collect();
     let opacity = placed.layer.opacity.min(100) as f32 / 100.0 * scale;
     if stack.is_empty() || opacity <= 0.0 {
         return;
     }
     let mode = placed.layer.blend;
-    for px in target.chunks_exact_mut(4) {
-        if px[3] == 0 {
+    let ops = crate::effects::prepare(&stack);
+    for (n, px) in target.chunks_exact_mut(4).enumerate() {
+        let opacity = opacity * clip.map_or(1.0, |c| c[n] as f32 / 255.0);
+        if px[3] == 0 || opacity <= 0.0 {
             continue;
         }
         let below = [px[0] as f32, px[1] as f32, px[2] as f32];
-        let adjusted = crate::effects::pixels(&stack, below).map(|v| v / 255.0);
+        let adjusted = crate::effects::run(&ops, below).map(|v| v / 255.0);
         let b = below.map(|v| v / 255.0);
         let mixed = if mode == Blend::Normal { adjusted } else { crate::blend::mix(mode, b, adjusted) };
         for i in 0..3 {
@@ -419,7 +483,7 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
     let Canvas { w, h, rgba, wait } = canvas;
     let painter = Painter { surface, tpl, decals, back, w, h, wait };
     let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
-    painter.stack(&items, rgba, 1.0);
+    painter.stack(&items, rgba, 1.0, 0);
     for &index in &items {
         let picked = marks.selected.contains(&index);
         let hovered = marks.hover == Some(index) && !picked;

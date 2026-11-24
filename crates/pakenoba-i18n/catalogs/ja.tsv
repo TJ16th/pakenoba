@@ -816,3 +816,42 @@ blend	Color	カラー
 	Lock:	ロック:
 	Position is locked. Unlock it in the Layers panel to move it.	位置をロックしています。動かすには、レイヤーの欄でロックを外してください。
 	Position locked	位置をロック
+# 調整の種類（トーンカーブなど）とクリッピングマスク
+	Black & White	白黒
+	Blue	ブルー
+	Blues	ブルー系
+	Clipped to "{base}" (shows only where it is visible)	「{base}」でクリップしています（その見えている所にだけ出ます）
+	Color Balance	カラーバランス
+	Create clipping mask	クリッピングマスクを作成
+	Curves	トーンカーブ
+	Cyan	シアン
+	Cyans	シアン系
+	Dark	暗い所
+	Density	適用量
+	Drag a point to bend the curve. Click on the curve to add a point (up to 8). Double-click or right-click a point to remove it	点をドラッグすると曲線が曲がります。押すと点を足せます（8 つまで）。点をダブルクリックか右クリックで消します
+	Exposure	露光量
+	Gamma correction	ガンマ
+	Gradient Map	グラデーションマップ
+	Green	グリーン
+	Greens	グリーン系
+	Groups can be nested up to {} levels.	グループの入れ子は {} 段までです。
+	Highlights	ハイライト
+	Light	明るい所
+	Magenta	マゼンタ
+	Magentas	マゼンタ系
+	Offset	オフセット
+	Photo Filter	レンズフィルター
+	Posterize	ポスタリゼーション
+	Preserve luminosity	輝度を保持
+	Red	レッド
+	Reds	レッド系
+	Release clipping mask	クリッピングマスクを解除
+	Reverse	逆方向
+	Shadows	シャドウ
+	Show this layer only where the layer below it is visible (Ctrl+Alt+G)	すぐ下のレイヤーの見えている所にだけ出します（Ctrl+Alt+G）
+	There is no layer just below it in the same group to clip to.	同じグループの中に、クリップする先（すぐ下のレイヤー）がありません。
+	Threshold level	しきい値
+	Threshold	2 階調化
+	Vibrance	自然な彩度
+	Yellow	イエロー
+	Yellows	イエロー系
