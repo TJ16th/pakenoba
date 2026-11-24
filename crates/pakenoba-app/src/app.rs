@@ -970,10 +970,40 @@ impl App {
     }
 
     /// 柄を 1 つ足して、選ぶ。正面（なければ最初のパネル）の中央に置く。
+    /// 立体の表示で、いちばんこちらを向いている、柄を置ける面（正面とほぼ同じなら正面）。
+    fn facing_panel(&self) -> usize {
+        let front = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
+        let (toward, _) = views::orbit(self.yaw, self.pitch);
+        let places = self.template.transforms_at(self.fold, [1.0 - self.open[0], 1.0 - self.open[1]]);
+        let world = self.template.world_at(self.fold);
+        let mut best = (front, f32::NEG_INFINITY);
+        for (index, panel) in self.template.panels.iter().enumerate() {
+            if !panel.takes_art() || panel.role != pakenoba_core::template::Role::Face {
+                continue;
+            }
+            let n = panel.outline.len() as f32;
+            let c = panel.outline.iter().fold([0.0f32; 2], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
+            if !pakenoba_core::template::inside(&panel.outline, c) {
+                continue;
+            }
+            // 紙の表（外側）の向き。
+            let normal = world.vector(places[index].at(c).vector([0.0, 0.0, -1.0]));
+            let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt().max(1e-6);
+            let facing = (normal[0] * toward[0] + normal[1] * toward[1] + normal[2] * toward[2]) / len + if index == front { 0.05 } else { 0.0 };
+            if facing > best.1 {
+                best = (index, facing);
+            }
+        }
+        best.0
+    }
+
     fn add_decal(&mut self, picture: Picture, size: P2) {
         self.checkpoint();
-        let panel = self.template.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
-        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle: 0.0 }, back: false, layer: Default::default() });
+        // いま見ている面（立体の表示で、いちばんこちらを向いている面）の中央に置く。
+        // ファイルを落とした場所は、OS によっては正しく届かないので、使わない。
+        let panel = self.facing_panel();
+        let angle = self.surface.up(panel, false);
+        self.decals.push(Placed { picture, decal: Decal { panel, at: [0.5, 0.5], size, angle }, back: false, layer: Default::default() });
         self.select_only(Some(self.decals.len() - 1));
         self.log_added(self.decals.len() - 1);
     }
