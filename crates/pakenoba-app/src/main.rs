@@ -18,6 +18,10 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `pakenoba mcp …`: 画面を出さずに、MCP のサーバーとして動く。
+    if args.first().map(String::as_str) == Some("mcp") {
+        return app::mcp::serve(&args[1..]);
+    }
     // 案件のファイルも、確かめるための引数もなく起動したら、はじめの画面（ホーム）を出す。
     let mut initial = app::Initial { home: args.iter().all(|a| a == "--no-splash" || a == "--debug"), ..Default::default() };
     let mut i = 0;

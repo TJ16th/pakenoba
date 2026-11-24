@@ -188,7 +188,7 @@ fn draw_line(buf: &mut [u8], w: usize, h: usize, a: [f32; 2], b: [f32; 2], width
 }
 
 /// `over` を `base` の上に重ねる（どちらも RGBA、同じ大きさ）。
-fn alpha_over(base: &mut [u8], over: &[u8]) {
+pub fn alpha_over(base: &mut [u8], over: &[u8]) {
     for (b, o) in base.chunks_exact_mut(4).zip(over.chunks_exact(4)) {
         let a = o[3] as f32 / 255.0;
         if a <= 0.0 {

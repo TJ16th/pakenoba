@@ -49,18 +49,22 @@ impl App {
 
     /// 型紙の PSD を書く（ダイアログのあと）。
     pub(super) fn write_psds(&mut self, path: &Path) {
-        let front = save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false), Some(&self.painted(false))).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
-        if let Err(e) = front {
-            return self.say(t!("Could not save: {e}"));
+        match self.psd_files(path) {
+            Ok(files) if files.len() > 1 => self.say(t!("Saved both the front and the back: {}, {}", path.display(), files[1].file_name().unwrap_or_default().to_string_lossy())),
+            Ok(_) => self.say(t!("Saved: {}", path.display())),
+            Err(e) => self.say(e),
         }
+    }
+
+    /// 型紙の PSD を書き、書いたファイルを返す（表と、裏に柄があれば裏）。
+    pub(super) fn psd_files(&self, path: &Path) -> Result<Vec<PathBuf>, String> {
+        save_psd(&self.sheet, self.custom[0].as_deref(), &self.decal_layers(false), Some(&self.painted(false))).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string())).map_err(|e| t!("Could not save: {e}"))?;
         if !self.has_back_decals() {
-            return self.say(t!("Saved: {}", path.display()));
+            return Ok(vec![path.to_owned()]);
         }
         let back = back_path(path);
-        match save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true), Some(&self.painted(true))).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())) {
-            Ok(()) => self.say(t!("Saved both the front and the back: {}, {}", path.display(), back.file_name().unwrap_or_default().to_string_lossy())),
-            Err(e) => self.say(t!("Saved the front, but could not save the back: {e}")),
-        }
+        save_back_psd(&self.sheet, self.custom[1].as_deref(), &self.decal_layers(true), Some(&self.painted(true))).and_then(|bytes| std::fs::write(&back, bytes).map_err(|e| e.to_string())).map_err(|e| t!("Saved the front, but could not save the back: {e}"))?;
+        Ok(vec![path.to_owned(), back])
     }
 }
 

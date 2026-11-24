@@ -31,6 +31,8 @@ mod views;
 mod layers;
 mod theme;
 mod commands;
+mod commands_doc;
+pub(crate) mod mcp;
 mod oplog;
 
 use pakenoba_i18n::t;
@@ -535,6 +537,10 @@ struct App {
     log: Vec<pakenoba_core::project::LogEntry>,
     /// まとめて呼んだコマンドの最中（`Some`）。中の値は、もう元に戻す記録を取ったか。
     undo_batch: Option<bool>,
+    /// いま実行しているコマンドを呼んだのは誰か（`person`、`agent:<名前>`、`mcp:<名前>`）。
+    actor: String,
+    /// 人以外がファイルを扱ってよいフォルダ（起動のときに渡したもの。設定の `agent_folders` と合わせて使う）。
+    allowed: Vec<PathBuf>,
     /// 操作の記録の窓を開いている。
     log_open: bool,
     /// 「素材」の画面。
@@ -687,6 +693,8 @@ impl App {
             },
             log: Vec::new(),
             undo_batch: None,
+            actor: "person".to_owned(),
+            allowed: Vec::new(),
             log_open: false,
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
             renaming: None,

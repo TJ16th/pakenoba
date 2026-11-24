@@ -66,6 +66,20 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "mask.invert", summary: "Invert a layer mask.", args: schema!("id": r#"{"type":"integer"}"#; required: ["id"]), read_only: false },
     CommandInfo { name: "mask.enable", summary: "Turn a layer mask on or off.", args: schema!("id": r#"{"type":"integer"}"#, "enabled": r#"{"type":"boolean"}"#; required: ["id", "enabled"]), read_only: false },
     CommandInfo { name: "mask.delete", summary: "Delete a layer mask.", args: schema!("id": r#"{"type":"integer"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "project.info", summary: "The project's name, file, whether it has unsaved changes, the box type, counts, and the folders AI may read and write.", args: schema!(; required: []), read_only: true },
+    CommandInfo { name: "project.new", summary: "Start a new project (in a new tab when the current one has content).", args: schema!(; required: []), read_only: false },
+    CommandInfo { name: "project.open", summary: "Open a project file (.pknb). AI can only open files inside the allowed folders.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "project.save_as", summary: "Save the project to a new file (.pknb). AI can only write inside the allowed folders and never overwrites an existing file.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "shape.set", summary: "Change the box type: tuck_box, gable, pillow, or prism (with sides 3, 5, 6 or 8). Placed artwork comes off the box (undo brings it back). Returns the new panel names.", args: schema!("kind": r#"{"type":"string","enum":["tuck_box","gable","pillow","prism"]}"#, "sides": r#"{"type":"integer"}"#; required: ["kind"]), read_only: false },
+    CommandInfo { name: "shape.dimensions", summary: "Set inside dimensions in mm (width, depth, height, thickness of the paper; bulge in degrees for pillow; roof for gable; glue_flap, dust_flap, tuck_flap for the tuck-end box, a number or \"auto\"). Values are kept in range. Not undoable.", args: schema!("width": r#"{"type":"number"}"#, "depth": r#"{"type":"number"}"#, "height": r#"{"type":"number"}"#, "thickness": r#"{"type":"number"}"#, "bulge": r#"{"type":"number"}"#, "roof": r#"{"type":"number"}"#, "glue_flap": "{}", "dust_flap": "{}", "tuck_flap": "{}"; required: []), read_only: false },
+    CommandInfo { name: "asset.list", summary: "List the assets that can be placed (built-in samples and this project's assets) with their index.", args: schema!(; required: []), read_only: true },
+    CommandInfo { name: "asset.import", summary: "Import an image (PNG, JPEG, PSD, SVG) into this project's assets. AI can only read files inside the allowed folders. Returns the asset index.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "decal.add", summary: "Place artwork. Give exactly one of: asset (index from asset.list), builtin (logo or band), text ({text, font, size mm, color #rrggbb, align, spacing, leading}), shape ({kind rect|ellipse, fill, stroke, stroke_width, radius}). Optional: panel (name), at (0..1 in the panel), size (mm), angle (degrees), back. Returns the new layer.", args: schema!("asset": r#"{"type":"integer"}"#, "builtin": r#"{"type":"string","enum":["logo","band"]}"#, "text": r#"{"type":"object"}"#, "shape": r#"{"type":"object"}"#, "panel": r#"{"type":"string"}"#, "at": r#"{"type":"array","items":{"type":"number"}}"#, "size": r#"{"type":"array","items":{"type":"number"}}"#, "angle": r#"{"type":"number"}"#, "back": r#"{"type":"boolean"}"#; required: []), read_only: false },
+    CommandInfo { name: "text.set", summary: "Change the text or its style (text, font, size mm, color #rrggbb, align left|center|right, spacing, leading). Omitted values stay.", args: schema!("id": r#"{"type":"integer"}"#, "text": r#"{"type":"string"}"#, "font": r#"{"type":"string"}"#, "size": r#"{"type":"number"}"#, "color": r#"{"type":"string"}"#, "align": r#"{"type":"string"}"#, "spacing": r#"{"type":"number"}"#, "leading": r#"{"type":"number"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "shape_art.set", summary: "Change a shape (kind rect|ellipse, fill and stroke as #rrggbb or null for none, stroke_width mm, radius mm). Omitted values stay.", args: schema!("id": r#"{"type":"integer"}"#, "kind": r#"{"type":"string"}"#, "fill": "{}", "stroke": "{}", "stroke_width": r#"{"type":"number"}"#, "radius": r#"{"type":"number"}"#; required: ["id"]), read_only: false },
+    CommandInfo { name: "export.psd", summary: "Save the dieline as a layered PSD (and the back as <name>_back.psd when there is artwork on the back). AI can only write inside the allowed folders and never overwrites.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "export.pdf", summary: "Save the full-size dieline as a PDF tiled on A4 or A3 sheets. AI can only write inside the allowed folders and never overwrites.", args: schema!("path": r#"{"type":"string"}"#; required: ["path"]), read_only: false },
+    CommandInfo { name: "render.preview", summary: "Look at the flat dieline with the artwork as a PNG (front or back side, longest edge up to max pixels). Use it to check how the design looks.", args: schema!("side": r#"{"type":"string","enum":["front","back"]}"#, "max": r#"{"type":"integer"}"#; required: []), read_only: true },
     CommandInfo { name: "edit.undo", summary: "Undo the last change.", args: schema!(; required: []), read_only: false },
     CommandInfo { name: "edit.redo", summary: "Redo the change that was undone.", args: schema!(; required: []), read_only: false },
 ];
@@ -78,7 +92,7 @@ pub(crate) fn info(name: &str) -> Option<&'static CommandInfo> {
 }
 
 /// 引数の読み取り。
-fn int(args: &Value, key: &str) -> Result<i64, String> {
+pub(super) fn int(args: &Value, key: &str) -> Result<i64, String> {
     args.get(key).and_then(Value::as_i64).ok_or_else(|| t!("\"{key}\" (a number) is missing"))
 }
 
@@ -90,7 +104,7 @@ fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args.get(key).and_then(Value::as_str).ok_or_else(|| t!("\"{key}\" (text) is missing"))
 }
 
-fn pair(value: &Value) -> Option<[f32; 2]> {
+pub(super) fn pair(value: &Value) -> Option<[f32; 2]> {
     let list = value.as_array()?;
     match list.as_slice() {
         [a, b] => Some([a.as_f64()? as f32, b.as_f64()? as f32]),
@@ -126,7 +140,7 @@ impl App {
         }
     }
 
-    fn index_of(&self, id: i64) -> Result<usize, String> {
+    pub(super) fn index_of(&self, id: i64) -> Result<usize, String> {
         self.decals.iter().position(|d| i64::from(d.layer.id) == id).ok_or_else(|| t!("There is no layer with id {id}"))
     }
 
@@ -173,6 +187,11 @@ impl App {
         if !layer.adjust.is_empty() {
             out["adjustments"] = Value::Array(layer.adjust.iter().map(adjustment_to_json).collect());
         }
+        match &placed.picture {
+            Picture::Text(art) => out["text"] = super::commands_doc::text_json(&art.spec),
+            Picture::Shape(spec) => out["shape"] = super::commands_doc::shape_json(spec),
+            _ => {}
+        }
         if let Some(mask) = &layer.mask {
             out["mask"] = json!({ "enabled": mask.enabled, "inverted": mask.invert });
         }
@@ -205,9 +224,13 @@ impl App {
     pub(crate) fn run_command(&mut self, actor: &str, name: &str, args: Value) -> Result<Value, String> {
         let info = info(name).ok_or_else(|| t!("Unknown command \"{name}\""))?;
         self.ensure_ids();
-        let result = self.dispatch(name, &args)?;
+        self.actor = actor.to_owned();
+        let result = self.dispatch(name, &args);
+        self.actor = "person".to_owned();
+        let result = result?;
         self.ensure_ids();
-        if !info.read_only {
+        // 案件を開く、作る、保存するは、案件の中身を変えないので記録しない。
+        if !info.read_only && !name.starts_with("project.") {
             (self.art_dirty, self.back_dirty) = (true, true);
             self.log_op(actor, name, args);
         }
@@ -534,7 +557,7 @@ impl App {
                 self.redo();
                 Ok(Value::Null)
             }
-            _ => Err(t!("Unknown command \"{name}\"")),
+            _ => self.dispatch_doc(name, args),
         }
     }
 

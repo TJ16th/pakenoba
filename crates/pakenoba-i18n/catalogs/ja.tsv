@@ -948,3 +948,43 @@ blend	Color	カラー
 	{} item(s)	{} 件
 	Box type	箱の型
 	Preview	プレビュー
+	"align" is left, center or right	「align」は left、center、right のどれかです
+	"builtin" is logo or band	「builtin」は logo か band です
+	"font" is a font name	「font」はフォントの名前です
+	"kind" is missing	「kind」がありません
+	"kind" is rect or ellipse	「kind」は rect か ellipse です
+	"path" (a file path) is missing	「path」（ファイルの場所）がありません
+	"side" is front or back, not "{other}"	「side」は front か back です（「{other}」ではありません）
+	"text" is text	「text」は文字です
+	"{key}" is a number	「{key}」は数です
+	"{key}" is a number or "auto"	「{key}」は数か「auto」です
+	AI (the agent and MCP) can read and write files only in these folders, and never overwrites a file.	AI（エージェントと MCP）がファイルを読み書きできるのは、ここにあるフォルダの中だけです。ファイルの上書きはしません。
+	Allow a folder…	フォルダを許す…
+	Cannot find {}: {e}	{} が見つかりません: {e}
+	Changed a shape	図形を変えた
+	Changed text	文字を変えた
+	Changed the box type	箱の型を変えた
+	Changed the dimensions	寸法を変えた
+	Choose a folder AI may use	AI が使えるフォルダを選ぶ
+	Colors are written like "#1a2b3c"	色は「#1a2b3c」のように書きます
+	Could not import {}	{} を取り込めませんでした
+	Could not open a new tab	新しいタブを開けませんでした
+	Exported the dieline (PSD)	型紙（PSD）を書き出した
+	Exported the full-size dieline (PDF)	実寸の型紙（PDF）を書き出した
+	Folders AI may use	AI が使えるフォルダ
+	Give exactly one of "asset", "builtin", "text" and "shape"	「asset」「builtin」「text」「shape」のどれか 1 つを書いてください
+	Give the full path of the file	ファイルの場所を、はじめから書いてください
+	Imported an asset	素材を取り込んだ
+	Layer {} is not a shape	レイヤー {} は図形ではありません
+	Layer {} is not text	レイヤー {} は文字ではありません
+	No folders are allowed for AI yet. The user can allow folders in Edit > Preferences > Folders AI may use (or with --allow when starting the MCP server).	AI が使えるフォルダが、まだありません。「編集」→「環境設定」→「AI が使えるフォルダ」で許せます（MCP のサーバーなら、起動のときの --allow でも）。
+	Opened a project	案件を開いた
+	Prisms have 3, 5, 6 or 8 sides	角柱の角は 3、5、6、8 のどれかです
+	Saved as	名前を付けて保存した
+	Stop allowing this folder	このフォルダを許すのをやめる
+	The text is empty	文字が空です
+	There is no asset with that index (see asset.list)	その番号の素材はありません（asset.list で確かめてください）
+	There is no panel named "{p}"	「{p}」という面はありません
+	Unknown box type "{other}" (tuck_box, gable, pillow, prism)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、prism）
+	{} already exists. AI does not overwrite files; choose another name.	{} はすでにあります。AI はファイルを上書きしません。別の名前にしてください。
+	{} is outside the folders allowed for AI	{} は、AI が使えるフォルダの外です

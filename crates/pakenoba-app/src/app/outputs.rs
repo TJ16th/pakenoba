@@ -269,20 +269,23 @@ impl App {
     /// 実寸の型紙の PDF を書き出す。
     pub(super) fn export_print(&mut self) {
         let Some(path) = self.ask_output(t!("Save the full-size dieline"), "PDF", "pdf", t!("full-size dieline")) else { return };
+        match self.print_file(&path) {
+            Ok(pages) => self.say(t!("Saved {} ({} {pages} sheet(s)). Print at \"Actual size\" (100%).", path.display(), self.output.print.paper.name())),
+            Err(e) => self.say(t!("Could not save the full-size dieline: {e}")),
+        }
+    }
+
+    /// 実寸の型紙の PDF を書き、紙の枚数を返す。
+    pub(super) fn print_file(&self, path: &std::path::Path) -> Result<usize, String> {
         let (w, h) = (self.sheet.w, self.sheet.h);
         // 柄と紙の色だけの絵（ガイドの線は、PDF に線で描く）。
         let art = compose(&self.sheet, self.custom[0].as_deref(), false, |rgba| paint(&self.surface, &self.template, &self.decals, Marks::default(), false, Canvas::output(w, h, rgba)));
         let (cuts, folds) = sheet_lines(&self.template);
         let title = self.project_name();
         let sheet = SheetPrint { min: self.template.min, max: self.template.max, w, h, rgba: &art, cuts: &cuts, folds: &folds, title: &title };
-        match print_pdf(&sheet, &self.output.print).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
-            Ok(()) => {
-                let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
-                let pages = self.used_tiles(size, &tile(size, &self.output.print)).len();
-                self.say(t!("Saved {} ({} {pages} sheet(s)). Print at \"Actual size\" (100%).", path.display(), self.output.print.paper.name()));
-            }
-            Err(e) => self.say(t!("Could not save the full-size dieline: {e}")),
-        }
+        print_pdf(&sheet, &self.output.print).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
+        let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
+        Ok(self.used_tiles(size, &tile(size, &self.output.print)).len())
     }
 
     /// 右（出力）: 選んだ出力の設定。

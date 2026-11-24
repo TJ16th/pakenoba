@@ -1,7 +1,7 @@
 # 新パケノバ コマンド、MCP、エージェントの欄、履歴の検討
 
 - 作成日: 2026-11-24
-- 状態: 5 章の 1（コマンドの入口と操作の記録）を作った（2026-11-24）
+- 状態: 5 章の 1（コマンドの入口と操作の記録）と、2 の画面なしの MCP を作った（2026-11-24）
 - 関連: [画面設計の検討](ui-design.md)、[案件の保存の検討](project-file.md)、[レイヤーの検討](layers.md)
 
 本人からの要望（2026-11-24）は 3 つ。
@@ -146,12 +146,43 @@ Git を中に入れることは勧めない。
 
 ### コマンドの入口（`app/commands.rs`）
 
-- コマンドの一覧（名前、AI に渡す説明、引数の形の JSON Schema、読むだけか）を 1 か所に持つ。いまは 27 個: `doc.inspect`、`layer.list`、`layer.select`、`layer.rename`、`layer.visible`、`layer.lock`、`layer.blend.set`、`layer.opacity.set`、`layer.fill.set`、`layer.reorder`、`layer.clip`、`group.create`、`group.ungroup`、`decal.delete`、`decal.transform`、`adjust.add`、`adjust.set`、`adjust.toggle`、`adjust.move`、`adjust.remove`、`adjustment_layer.add`、`mask.add`、`mask.invert`、`mask.enable`、`mask.delete`、`edit.undo`、`edit.redo`。
+- コマンドの一覧（名前、AI に渡す説明、引数の形の JSON Schema、読むだけか）を 1 か所に持つ。はじめは 27 個: `doc.inspect`、`layer.list`、`layer.select`、`layer.rename`、`layer.visible`、`layer.lock`、`layer.blend.set`、`layer.opacity.set`、`layer.fill.set`、`layer.reorder`、`layer.clip`、`group.create`、`group.ungroup`、`decal.delete`、`decal.transform`、`adjust.add`、`adjust.set`、`adjust.toggle`、`adjust.move`、`adjust.remove`、`adjustment_layer.add`、`mask.add`、`mask.invert`、`mask.enable`、`mask.delete`、`edit.undo`、`edit.redo`。
 - レイヤーには決まった印（`id`）を付けた。並べ替えても変わらない。案件のファイルにも入る。
 - `run_command(誰が, 名前, 引数)` で 1 つ、`run_batch` でまとめて実行する。1 回のコマンドが元に戻す 1 回ぶん、まとめたものは全体で 1 回ぶん。途中で失敗したら、そこで止めて理由を返す（そこまでの変更は残り、元に戻せる）。
 - 調整は、案件のファイルと同じ書き方の JSON で渡す（`{"kind": "levels", "black": 10, ...}`）。
 - ロックしているもの、ないもの、知らない名前は、変えずに理由を返す。
-- まだコマンドにしていないもの: 柄を置く（素材、文字、図形）、文字と図形の中身、型と寸法、書き出し、表示。これは 2 段目（MCP）の前に足す。
+- 同じ日に 15 個を足して 42 個にした（`app/commands_doc.rs`）: `project.info`、`project.new`、`project.open`、`project.save_as`、`shape.set`（型）、`shape.dimensions`（寸法とフラップ。元に戻す対象外）、`asset.list`、`asset.import`、`decal.add`（素材、付属の見本、文字、図形のどれか）、`text.set`、`shape_art.set`、`export.psd`、`export.pdf`、`render.preview`（展開図の絵を PNG で）。`doc.inspect` の柄には、文字と図形の中身も出す。
+- 案件を開く、作る、保存するは、案件の中身を変えないので、操作の記録には残さない。
+- まだコマンドにしていないもの: 表示（向き、組み立て、開け閉め）、16:9 の画像と箱開け動画の書き出し（GPU で描くので、画面なしでは描けない）、立体の見た目の PNG、マスクを筆で描く、素材の差し替え。
+
+### AI が使えるフォルダ
+
+- 人以外（エージェントと MCP）がファイルを読み書きできるのは、「編集」→「環境設定」→「AI が使えるフォルダ」で許したフォルダと、MCP のサーバーを起動するときに `--allow` で渡したフォルダの中だけ（設定のファイルの `agent_folders`）。
+- ファイルの場所は、はじめから書いた形（絶対パス）だけ受け付ける。リンクをたどった先も確かめる。
+- すでにあるファイルには書かない（案件の保存も、書き出しも）。別の名前にしてもらう。
+- 許したフォルダがなければ、どこにも書かず、許し方を返す。
+
+### MCP のサーバー（`pakenoba mcp`、`app/mcp.rs`）
+
+- 同じ `pakenoba` の実行ファイルに `mcp` を付けて起動すると、画面を出さずに MCP のサーバーとして動く。`pakenoba mcp [--allow <フォルダ>]... [案件.pknb]`。
+- 標準入出力で、1 行 1 通の JSON-RPC 2.0（MCP の stdio の決まり）。ネットワークの口は開けない。MCP の版は 2025-06-18（2025-03-26、2024-11-05 にも答える）。部品（rmcp）は使わず、決まりのとおりに自分で書いた（非同期の部品を足さずに済む）。
+- 道具は 5 つ: `command_list`、`command_run`、`command_batch`（まとめて 1 回ぶん元に戻す）、`doc_inspect`、`render_preview`（画像で返す）。読み物は `pakenoba://document` と `pakenoba://commands`。
+- 呼んだ相手は、MCP の `clientInfo` の名前で記録に残る（例: `mcp:claude-desktop`）。
+- 起動のときに渡した案件は、使う人が選んだものなので、許したフォルダの外でも開く。保存は `project.save_as` で、許したフォルダの中に新しい名前で。
+- Claude Desktop の設定の例（`claude_desktop_config.json`）:
+
+```json
+{
+  "mcpServers": {
+    "pakenoba": {
+      "command": "C:\\Program Files\\PAKENOBA\\pakenoba.exe",
+      "args": ["mcp", "--allow", "D:\\Packages\\AI"]
+    }
+  }
+}
+```
+
+- まだないもの: 開いている画面につなぐ形（画面で「AI からの操作を許す」を入れている間だけ、PC の中だけの通信口を開く）。いまは画面なしだけ。
 
 ### 画面の操作もコマンドを通す
 

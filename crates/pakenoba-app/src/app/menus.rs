@@ -97,8 +97,44 @@ impl App {
             ui.menu_button(t!("Preferences"), |ui| {
                 ui.set_min_width(200.0);
                 self.language_menu(ui);
+                self.ai_folders_menu(ui);
             });
         });
+    }
+
+    /// AI（エージェントと MCP）がファイルを読み書きしてよいフォルダ。決めた外は読まず、書かない。すでにあるファイルには書かない。
+    fn ai_folders_menu(&mut self, ui: &mut egui::Ui) {
+        let mut remove = None;
+        let mut add = false;
+        ui.menu_button(t!("Folders AI may use"), |ui| {
+            ui.set_min_width(300.0);
+            ui.weak(t!("AI (the agent and MCP) can read and write files only in these folders, and never overwrites a file."));
+            if self.settings.agent_folders.is_empty() {
+                ui.label(t!("None yet"));
+            }
+            for (i, folder) in self.settings.agent_folders.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.small_button("×").on_hover_text(t!("Stop allowing this folder")).clicked() {
+                        remove = Some(i);
+                    }
+                    ui.label(folder.display().to_string());
+                });
+            }
+            ui.separator();
+            if ui.button(t!("Allow a folder…")).clicked() {
+                add = true;
+                ui.close();
+            }
+        });
+        if let Some(i) = remove {
+            self.settings.agent_folders.remove(i);
+        }
+        if add && let Some(folder) = rfd::FileDialog::new().set_title(t!("Choose a folder AI may use")).pick_folder() && !self.settings.agent_folders.contains(&folder) {
+            self.settings.agent_folders.push(folder);
+        }
+        if (remove.is_some() || add) && let Err(e) = self.settings.save() {
+            self.say(e);
+        }
     }
 
     /// 言語の選択。読めない言語にしてしまっても見つけられるように、英語の名前も添える。
