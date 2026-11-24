@@ -34,6 +34,7 @@ mod commands;
 mod commands_doc;
 pub(crate) mod mcp;
 mod agent;
+mod dialog;
 mod oplog;
 
 use pakenoba_i18n::t;

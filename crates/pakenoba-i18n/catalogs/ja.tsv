@@ -1017,3 +1017,8 @@ blend	Color	カラー
 	Undo this request	この依頼を元に戻す
 	Working…	作業しています…
 	{} API key	{} の API キー
+	API key	API キー
+	Create a key in the {} developer console and paste it here.	{} の開発者向けの画面でキーを作り、ここに貼り付けてください。
+	Hide the key	キーを伏せる
+	Show the key	キーを見せる
+	{} keys usually start with "{}". Check that this is the right key.	{} のキーは、ふつう「{}」で始まります。正しいキーか確かめてください。

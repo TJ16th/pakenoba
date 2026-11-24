@@ -211,6 +211,7 @@ Git を中に入れることは勧めない。
 - 会話の続きは覚えておき、次の依頼でも前の流れを使う。つなぎ先を変えたとき、「新しい会話」を押したときに捨てる。
 - 書き出しと保存は、AI が使えるフォルダの中だけで、上書きはしない（MCP と同じ決まり）。
 - キーは「API キーを入れる…」で入れ、OS の鍵の保管庫（Windows の資格情報マネージャー、macOS のキーチェーン）に、サービス名 `PAKENOBA`、名前 `anthropic` か `openai` でしまう。設定のファイルには書かない。「消す」で保管庫から消す。保管庫にないときは、環境変数 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY` も見る。
+- キーを入れる窓は、PhotoCraft のパスワードの窓（craft-libs の `PasswordDialog`）と同じ形にした: 題の帯と閉じる ×、説明、「API キー」の欄（伏せ字。目のボタンで見せる・伏せる。開いたら欄に入力が向く）、右にそろえた「保存」（青）と「キャンセル」（Windows は保存が先）。Enter で保存、Esc で閉じる。キーのはじめの文字が違う（Anthropic は `sk-ant-`、OpenAI は `sk-`）ときは、注意を出す（止めはしない）。打った文字は、窓を閉じたらメモリーから消す（zeroize、MIT か Apache-2.0）。
 - keyring は 3.6.3（MIT か Apache-2.0）。Windows では windows-sys、macOS では security-framework、Linux では linux-keyutils を使う（どれも MIT か Apache-2.0。byteorder は Unlicense か MIT）。Linux の linux-keyutils は、ログアウトすると消える（ずっと残す Secret Service は、D-Bus の部品が要るので入れていない）。
 - 試験では、API の口を決まった答えを返すものに差し替えて、道具の呼び出し、絵の渡し方、1 回で元に戻ることを確かめた。本物の API にはつないでいない（キーがないため）。Windows での組み立て（鍵の保管庫の部分）も、まだ確かめていない。
 

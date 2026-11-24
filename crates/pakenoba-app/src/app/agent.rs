@@ -44,6 +44,14 @@ impl Provider {
         }
     }
 
+    /// キーのはじめの文字（入れたキーが合っていそうかを見るため。違っても止めない）。
+    fn key_prefix(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "sk-ant-",
+            Provider::OpenAi => "sk-",
+        }
+    }
+
     fn env(self) -> &'static str {
         match self {
             Provider::Anthropic => "ANTHROPIC_API_KEY",
@@ -267,6 +275,23 @@ pub(super) struct Turn {
     pub history_after: Option<usize>,
 }
 
+/// キーを入れる窓の状態。
+pub(super) struct KeyDialog {
+    provider: Provider,
+    /// 打っている文字（閉じたら消す）。
+    text: String,
+    /// 伏せ字をやめて見せている。
+    reveal: bool,
+    /// 開いたばかり（欄に入力を向ける）。
+    first: bool,
+}
+
+impl KeyDialog {
+    fn new(provider: Provider) -> Self {
+        KeyDialog { provider, text: String::new(), reveal: false, first: true }
+    }
+}
+
 /// エージェントの欄の状態（タブをまたいで 1 つ。依頼は、送ったときのタブの案件に効く）。
 pub(super) struct Agent {
     pub open: bool,
@@ -277,8 +302,8 @@ pub(super) struct Agent {
     /// 会話の続き（API に送る形）。つなぎ先を変えたら捨てる。
     messages: Vec<Value>,
     job: Option<Job>,
-    /// キーを入れる窓（つなぎ先と、打っている文字）。
-    key_dialog: Option<(Provider, String)>,
+    /// キーを入れる窓。
+    key_dialog: Option<KeyDialog>,
     /// 試験で差し替える口。
     transport: Option<Box<dyn Fn() -> Box<dyn Transport> + Send>>,
 }
@@ -323,7 +348,7 @@ impl App {
         }
         let provider = self.agent.provider;
         let Some(key) = load_key(provider) else {
-            self.agent.key_dialog = Some((provider, String::new()));
+            self.agent.key_dialog = Some(KeyDialog::new(provider));
             return;
         };
         self.agent.input.clear();
@@ -462,7 +487,7 @@ impl App {
             if has_key {
                 ui.label(egui::RichText::new(t!("API key: saved")).color(super::theme::MUTED));
                 if ui.small_button(t!("Change…")).clicked() {
-                    self.agent.key_dialog = Some((provider, String::new()));
+                    self.agent.key_dialog = Some(KeyDialog::new(provider));
                 }
                 if ui.small_button(t!("Forget")).on_hover_text(t!("Remove the key from the OS keychain")).clicked() {
                     match forget_key(provider) {
@@ -471,7 +496,7 @@ impl App {
                     }
                 }
             } else if ui.button(t!("Enter the API key…")).clicked() {
-                self.agent.key_dialog = Some((provider, String::new()));
+                self.agent.key_dialog = Some(KeyDialog::new(provider));
             }
         });
         ui.small(egui::RichText::new(t!("Sent to {}: your request, the project's state as text, and preview pictures of the dieline when the model asks for them. Asset files are not sent.", provider.name())).color(super::theme::FAINT));
@@ -560,34 +585,47 @@ impl App {
         });
     }
 
-    /// API のキーを入れる窓。入れたキーは、OS の鍵の保管庫にしまう。
+    /// API のキーを入れる窓（PhotoCraft のパスワードの窓と同じ形: 題の帯、伏せ字の欄と見る切り替え、右にそろえたボタン）。
+    /// 入れたキーは、OS の鍵の保管庫にしまう。打った文字は、窓を閉じたら消す（メモリーにも残さない）。
     fn key_window(&mut self, ctx: &egui::Context) {
-        let Some((provider, mut text)) = self.agent.key_dialog.take() else { return };
-        let mut keep = true;
-        let mut save = false;
-        egui::Modal::new(egui::Id::unique("agent-key")).show(ctx, |ui| {
-            ui.set_width(400.0);
-            ui.strong(t!("{} API key", provider.name()));
+        let Some(mut dialog) = self.agent.key_dialog.take() else { return };
+        let provider = dialog.provider;
+        let typed = !dialog.text.trim().is_empty();
+        let looks_right = dialog.text.trim().starts_with(provider.key_prefix());
+        let title = t!("{} API key", provider.name());
+        let buttons = [super::dialog::Button::accept(t!("Save"), typed), super::dialog::Button::cancel(t!("Cancel"))];
+        let picked = super::dialog::show(ctx, "agent-key", &title, 420.0, &buttons, |ui| {
             ui.label(t!("The key is kept in the OS keychain (Windows Credential Manager, macOS Keychain), not in a settings file."));
-            ui.add(egui::TextEdit::singleline(&mut text).password(true).desired_width(f32::INFINITY));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(t!("API key")).color(super::theme::MUTED));
             ui.horizontal(|ui| {
-                if ui.add_enabled(!text.trim().is_empty(), egui::Button::new(t!("Save"))).clicked() {
-                    save = true;
+                let field = ui.add(egui::TextEdit::singleline(&mut dialog.text).password(!dialog.reveal).desired_width(ui.available_width() - 34.0).hint_text(provider.key_prefix()));
+                if dialog.first {
+                    field.request_focus();
+                    dialog.first = false;
                 }
-                if ui.button(t!("Cancel")).clicked() {
-                    keep = false;
+                let tip = if dialog.reveal { t!("Hide the key") } else { t!("Show the key") };
+                if super::icons::eye_button(ui, dialog.reveal).on_hover_text(tip).clicked() {
+                    dialog.reveal = !dialog.reveal;
+                    field.request_focus();
                 }
             });
-        });
-        if save {
-            match store_key(provider, &text) {
-                Ok(()) => self.say(t!("Saved the {} API key in the OS keychain.", provider.name())),
-                Err(e) => self.say(t!("Could not save the key in the OS keychain: {e}")),
+            if typed && !looks_right {
+                ui.colored_label(egui::Color32::from_rgb(230, 170, 90), t!("{} keys usually start with \"{}\". Check that this is the right key.", provider.name(), provider.key_prefix()));
+            } else {
+                ui.small(egui::RichText::new(t!("Create a key in the {} developer console and paste it here.", provider.name())).color(super::theme::FAINT));
             }
-            keep = false;
-        }
-        if keep {
-            self.agent.key_dialog = Some((provider, text));
+        });
+        match picked.map(|i| buttons[i].role) {
+            Some(super::dialog::Role::Accept) => {
+                match store_key(provider, &dialog.text) {
+                    Ok(()) => self.say(t!("Saved the {} API key in the OS keychain.", provider.name())),
+                    Err(e) => self.say(t!("Could not save the key in the OS keychain: {e}")),
+                }
+                zeroize::Zeroize::zeroize(&mut dialog.text);
+            }
+            Some(super::dialog::Role::Cancel) => zeroize::Zeroize::zeroize(&mut dialog.text),
+            None => self.agent.key_dialog = Some(dialog),
         }
     }
 }

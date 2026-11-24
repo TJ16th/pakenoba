@@ -2895,6 +2895,7 @@ dependencies = [
  "ureq",
  "vectorcraft-trace",
  "vello_cpu",
+ "zeroize",
  "zune-jpeg",
 ]
 
