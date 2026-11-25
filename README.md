@@ -1,74 +1,78 @@
-# パケノバ（PAKENOBA）
+# PAKENOBA
 
-パッケージデザイン専用の制作ソフトです。箱の型を決め、立体の上で柄を置き、見せるための画像や、印刷所に渡す PDF を書き出すところまでを 1 本で行います。無料で、ソースコードも公開しています。
+**English** | [日本語](README.ja.md)
 
-*PAKENOBA is a free, open-source app for designing packages: choose a box style, place artwork on the 3D box, and export images and print-ready PDFs. The interface is in Japanese and English.*
+PAKENOBA is an app made for package design. Choose a box style, place artwork on the 3D box, and export presentation images and print-ready PDFs, all in one app. It is free, and the source code is open.
 
-![デザインの工程](docs/images/app-design.jpg)
+<!-- Promo video (English, with translated lyrics): edit this file on GitHub and drag pakenoba_promo_en_lyrics_readme.mp4 below this line -->
 
-## ダウンロード
+![The Design step](docs/images/app-design.jpg)
 
-[Releases](https://github.com/TJ16th/pakenoba/releases) から `pakenoba-<版>-windows-x64-portable.zip` を取ってきて、好きな場所に解凍し、`pakenoba.exe` を開きます。インストールは要りません。
+## Download
 
-- いまは Windows（64 ビット）用だけです。
-- 起動すると「Windows によって PC が保護されました」と出ることがあります。まだコード署名をしていないためです。「詳細情報」→「実行」で開けます。署名は、オープンソース向けの無料の署名（SignPath Foundation）に申し込む予定です。
-- 新しい版が出ると、起動したときに知らせます（「ヘルプ」→「アップデートを確かめる」でも）。いまはダウンロードの場所を出します。署名したあとは、その場で入れ替えられるようになります。
+Get `pakenoba-<version>-windows-x64-portable.zip` from [Releases](https://github.com/TJ16th/pakenoba/releases), unzip it anywhere, and open `pakenoba.exe`. No installation is needed.
 
-## できること
+- For now, only Windows (64-bit) is supported.
+- Windows may show "Windows protected your PC" when you start it, because the app is not code-signed yet. Click "More info" → "Run anyway". We plan to apply for free code signing for open-source projects (SignPath Foundation).
+- When a new version is out, PAKENOBA tells you at start (or via Help → Check for updates…). For now it shows where to download it; once the app is signed, it will be able to update itself in place.
 
-- **箱の型**: 差し込み箱、ゲーブル型、ピロー型（持ち手つきと、持ち手なし）、三角柱〜八角柱。紙器の型の番号 **ECMA**（A 類の 130 型。A20.20.03.01 など）から作ることも、**DXF** の型を読み込むこともできます。寸法を変えると、型紙と立体がその場で変わります。よく使う寸法は「自分の型」に残せます。
-- **柄を置く**: 画像（PNG、JPEG、PSD、SVG）、文字、図形を、立体の上でも展開図の上でも置けます。面をまたぐ柄は、折り目や合わせ目を越えて続きます。紙の裏（箱の内側）にも置けます。
-- **レイヤー**: 描画モード、不透明度、マスク、グループ、調整（レベル補正、色相・彩度など）、被写体を選択、背景を透明に、ベクター化（VectorCraft の画像トレース）。
-- **紙と加工**: 紙とコート（ニス、PP）の見え方と、箔押し、エンボス・デボス、部分 UV、白版を、立体で確かめられます。
-- **書き出し**:
-  - 型紙の PSD（レイヤーつき、塗り足しつき）
-  - 印刷所に渡す **入稿用 PDF**（実寸。切り線、折り線、加工の版を特色で入れる。絵を **CMYK** にもできる）
-  - 実寸の型紙を A4 や A3 に分けた PDF
-  - 16:9 の画像、箱が開く動画（GIF）、3D モデル（GLB、OBJ）、生成 AI に渡す画像
-- **AI と一緒に使う**: パケノバの中のエージェント（Anthropic か OpenAI の API キー）か、**MCP** で VS Code や Claude Desktop から動かせます。「編集」→「環境設定」→「MCP からこの画面を動かす」を入れると、開いている画面がその場で動きます。設定の見本は、配布物の `mcp` フォルダにあります。
-- **素材の整理**: 素材のフォルダを登録して、大きな絵で見たり、名前やタグで探したりできます。手元の AI（Ollama）で、名前とタグを付けられます。
+The interface is in Japanese and English.
 
-このソフトが出力する型紙は、デザインを確かめるためのものです。製造、抜き型、裁断、印刷位置の保証に使える正式なデータではありません。
+## What it can do
 
-## 利用状況の送信
+- **Box styles**: tuck-end box, gable box, pillow box (with and without a handle), and 3- to 8-sided prisms. You can also make a folding carton from its **ECMA** number (130 styles of the A group, such as A20.20.03.01) and compare the styles by their pictures, or import a dieline from **DXF**. When you change the dimensions, the dieline and the 3D box update right away. Dimensions you use often can be saved in "Your box types".
+- **Placing artwork**: images (PNG, JPEG, PSD, SVG), text and shapes, on the 3D box or on the dieline. Artwork that spans panels continues across folds and seams. You can also place artwork on the back of the board (the inside of the box).
+- **Layers**: blend modes, opacity, masks, groups, adjustments (levels, hue/saturation and more), select subject, make the background transparent, flip, and vectorize (VectorCraft Image Trace).
+- **Board and finishes**: preview the board and coating (varnish, PP lamination), foil stamping, embossing and debossing, spot UV and white ink in 3D.
+- **Export**:
+  - A layered PSD of the dieline, with bleed
+  - A **print-ready PDF** for the printer (actual size; cut lines, creases and finish plates as spot colors; the artwork can be converted to **CMYK**)
+  - An actual-size dieline split into A4 or A3 pages
+  - 16:9 images, an animation of the box opening (GIF), 3D models (GLB, OBJ), and images to hand to generative AI
+- **Working with AI**: drive PAKENOBA with its built-in agent (an Anthropic or OpenAI API key), or over **MCP** from VS Code or Claude Desktop. Turn on Edit → Preferences → "Let MCP drive this window" and the open window changes as the AI works. Sample settings are in the `mcp` folder of the download.
+- **Organizing assets**: register folders of assets, browse them as large pictures, and search by name or tag. A local AI (Ollama) can name and tag them for you.
 
-はじめて起動したときに、匿名の利用状況を送ってよいかを聞きます。送るのは、起動したこと、選んだ箱の型、書き出したファイルの種類、使った AI の機能だけです。案件の中身、ファイルの名前、絵、文字は送りません。「編集」→「環境設定」→「利用状況」で、いつでも切れ、送ったものをそのまま見られます。詳しくは [docs/usage-data.md](docs/usage-data.md) を見てください。
+The dielines PAKENOBA makes are for checking designs. They are not official data that can be relied on for manufacturing, cutting dies, die-cutting or print registration.
 
-自分でビルドしたものは、何も送りません。
+## Usage data
 
-## ソースからビルドする
+The first time you start PAKENOBA, it asks whether it may send anonymous usage data. It only sends that the app started, the box styles you chose, the kinds of files you exported, and which AI features you used. It never sends the contents of your projects, file names, pictures or text. You can turn it off at any time, and see exactly what was sent, in Edit → Preferences → Usage data. See [docs/usage-data.md](docs/usage-data.md) for details.
 
-Rust（1.95 以降）が要ります。
+Only the official builds published on Releases send anything. If you build the app yourself from the source code, it has no key to send with, so it sends nothing and never asks.
+
+## Building from source
+
+You need Rust (1.95 or later).
 
 ```
 cargo run --release -p pakenoba-app
 ```
 
-テストは `cargo test --workspace` で動きます。
+Run the tests with `cargo test --workspace`.
 
-| 場所 | 内容 |
+| Path | Contents |
 |---|---|
-| `crates/pakenoba-core` | 中核。型紙、折りの計算、面のつながり、型紙の検査、ECMA と DXF、案件のファイル |
-| `crates/pakenoba-app` | アプリ本体。ウィンドウ、立体の表示、柄の描き込み、書き出し、エージェントと MCP |
-| `crates/pakenoba-i18n` | 画面の文字の訳（`catalogs/` に表を足すと、言語を増やせる） |
-| `docs/` | 設計の文書 |
-| `spikes/` | 設計を確かめたときの試作 |
-| `tools/` | 配布物を作る道具（`make_release.ps1`） |
+| `crates/pakenoba-core` | The core: dielines, folding, how panels connect, dieline checks, ECMA and DXF, project files |
+| `crates/pakenoba-app` | The app: window, 3D view, painting artwork, export, agent and MCP |
+| `crates/pakenoba-i18n` | Interface translations (add a table to `catalogs/` to add a language) |
+| `docs/` | Design documents (in Japanese) |
+| `spikes/` | Prototypes used to check the design |
+| `tools/` | Tools for making the download (`make_release.ps1`) |
 
-配布の手順は [docs/releasing.md](docs/releasing.md) にあります。
+How to publish a release is in [docs/releasing.md](docs/releasing.md).
 
-## ライセンス
+## License
 
-コードは「MIT または Apache-2.0」です。どちらかを選んで使えます（[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)）。
+The code is licensed under MIT or Apache-2.0, at your choice ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
 
-「パケノバ」「PAKENOBA」の名称とロゴは、コードのライセンスの対象外です。改造したものを配るときは、別の名前とロゴにしてください。詳しくは [TRADEMARKS.md](TRADEMARKS.md) を見てください。
+The names "パケノバ" and "PAKENOBA" and the logo are not covered by the code license. If you distribute a modified version, please use a different name and logo. See [TRADEMARKS.md](TRADEMARKS.md) for details.
 
-使っている主な部品とモデル:
+Main components and models used:
 
-- [craft-libs](https://github.com/storytold/craft-libs)（PSD、SVG、色の管理、アップデート）と、[VectorCraft](https://github.com/storytold/vectorcraft) の画像トレース（MIT または Apache-2.0）
-- のぞき込みの顔と目の検出: MediaPipe BlazeFace（Apache-2.0。`crates/pakenoba-app/assets/blazeface-LICENSE.txt`）
-- 被写体を選択: U²-Net（Apache-2.0。軽いモデル u2netp を同梱し、「高画質」を選んだときだけ大きいモデルを 1 回取ってくる）
-- ECMA の型の番号の一覧と、閉じ方の分け方: [pacxio](https://pypi.org/project/pacxio/)（MIT）に合わせた。形はパケノバで描き起こしている
-- 内蔵の CMYK プロファイル: craft-cms が FOGRA39 の測定値に合わせて作ったもの（CC0）
+- [craft-libs](https://github.com/storytold/craft-libs) (PSD, SVG, color management, updates) and [VectorCraft](https://github.com/storytold/vectorcraft) Image Trace (MIT or Apache-2.0)
+- Face and eye detection for the peek view: MediaPipe BlazeFace (Apache-2.0; `crates/pakenoba-app/assets/blazeface-LICENSE.txt`)
+- Select subject: U²-Net (Apache-2.0; the small u2netp model is bundled, and the larger model is downloaded once only when you choose "High quality")
+- The list of ECMA style numbers and how closures are grouped follow [pacxio](https://pypi.org/project/pacxio/) (MIT); the shapes are drawn by PAKENOBA itself
+- The built-in CMYK profile: made by craft-cms to match the FOGRA39 measurements (CC0)
 
-画像の処理は PC の中で動き、絵を外へ送りません。外へ送るのは、エージェントや生成 AI に頼んだときに、頼んだものだけです。
+Image processing runs on your PC and never sends your pictures anywhere. The only things sent out are what you ask the agent or a generative AI to do.
