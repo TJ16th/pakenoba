@@ -4,7 +4,8 @@
 
 .DESCRIPTION
   1. リリース用にビルドする（cargo build --release -p pakenoba-app）。
-  2. dist\pakenoba-v<版>-test<通し番号>-windows-x64\ に、pakenoba.exe、はじめに.txt、ライセンスの条文を集める。
+  2. dist\pakenoba-v<版>-test<通し番号>-windows-x64\ に、pakenoba.exe、はじめに.txt、ライセンスの条文、
+     MCP の設定の見本（mcp\）を集める。
   3. そのフォルダを ZIP にする（dist\pakenoba-v<版>-test<通し番号>-windows-x64.zip）。
   版の名前は「v0.0.0 test42」の形で自動で付ける（0.0.0 は Cargo.toml の version、42 はコミットの数）。
   -SkipBuild のときは、前にビルドした exe の中の版の名前のまま（ZIP の名前だけ新しくなる）。
@@ -71,6 +72,10 @@ foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'TRADEMARKS.md') {
 }
 $u2 = Join-Path $root 'crates\pakenoba-app\assets\u2netp-LICENSE.txt'
 if (Test-Path $u2) { Copy-Item $u2 (Join-Path $out 'licenses\u2netp-LICENSE.txt') }
+
+# AI のアプリ（VS Code、Claude Desktop）から使うときの、MCP の設定の見本と説明。
+$mcp = Join-Path $PSScriptRoot 'release\mcp'
+if (Test-Path $mcp) { Copy-Item $mcp (Join-Path $out 'mcp') -Recurse }
 
 $zip = Join-Path $dist "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }

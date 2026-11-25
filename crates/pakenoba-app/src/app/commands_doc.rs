@@ -271,8 +271,19 @@ impl App {
                         }
                         n
                     }
-                    other => return Err(t!("Unknown box type \"{other}\" (tuck_box, gable, pillow, plain_pillow, prism)")),
+                    "ecma" => super::ECMA,
+                    other => return Err(t!("Unknown box type \"{other}\" (tuck_box, gable, pillow, plain_pillow, prism, ecma)")),
                 };
+                if sides == super::ECMA {
+                    // ECMA の型: 番号（「A20.20.03.01」）で選ぶ。寸法は、ECMA の型どうしなら、そのまま。
+                    let text = args.get("code").and_then(Value::as_str).ok_or_else(|| t!("\"code\" is missing (an ECMA number such as A20.20.03.01)").to_owned())?;
+                    let code = pakenoba_core::ecma::Code::parse(text).ok_or_else(|| t!("\"{text}\" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on)."))?;
+                    let next = if self.dims.sides == super::ECMA { super::Dims { ecma: code.to_u32(), ..self.dims } } else { super::Dims { ecma: code.to_u32(), ..super::Dims::for_shape(super::ECMA, self.dims.t) } };
+                    let removed = if next.same_layout(&self.dims) { 0 } else { self.decals.len() };
+                    self.apply_dims(next, self.material);
+                    self.rebuild_if_needed();
+                    return Ok(json!({ "removed_layers": removed, "code": code.name(), "listed": code.listed(), "panels": self.template.panels.iter().map(|p| p.name).collect::<Vec<_>>() }));
+                }
                 let removed = if sides == self.dims.sides { 0 } else { self.decals.len() };
                 self.set_shape(sides);
                 self.rebuild_if_needed();
@@ -476,6 +487,23 @@ mod tests {
         assert!(preview["width"].as_u64().unwrap() <= 256 && preview["png_base64"].as_str().unwrap().starts_with("iVBOR"));
         // 柄を置く、図形を変える、が記録に残る。
         assert!(app.log.iter().any(|e| e.command == "decal.add") && app.log.iter().any(|e| e.command == "shape_art.set"));
+    }
+
+    #[test]
+    fn ecmaの番号で型を変える() {
+        let mut app = App::new(&Initial::default());
+        app.decals.clear();
+        let out = app.run_command("agent:test", "shape.set", json!({ "kind": "ecma", "code": "A55.20.03.01" })).unwrap();
+        assert_eq!(out["code"], "A55.20.03.01");
+        assert_eq!(app.dims.ecma, 55200301);
+        assert!(app.template.panels.iter().any(|p| p.name == "上の差し込み"));
+        app.run_command("agent:test", "shape.dimensions", json!({ "width": 120 })).unwrap();
+        // ECMA どうしで番号を変えても、寸法はそのまま。
+        app.run_command("agent:test", "shape.set", json!({ "kind": "ecma", "code": "a20200101" })).unwrap();
+        assert_eq!((app.dims.ecma, app.dims.w), (20200101, 120.0));
+        assert!(app.run_command("agent:test", "shape.set", json!({ "kind": "ecma", "code": "A99.20.03.01" })).is_err());
+        assert!(app.run_command("agent:test", "shape.set", json!({ "kind": "ecma" })).is_err());
+        assert_eq!(app.inspect()["shape"]["ecma"], "A20.20.01.01");
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "pakenoba": {
+      "type": "stdio",
+      "command": "C:\\Tools\\pakenoba\\pakenoba.exe",
+      "args": ["mcp", "--allow", "C:\\Users\\YOUR_NAME\\Documents\\pakenoba"]
+    }
+  }
+}

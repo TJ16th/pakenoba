@@ -965,7 +965,7 @@ blend	Color	カラー
 	The text is empty	文字が空です
 	There is no asset with that index (see asset.list)	その番号の素材はありません（asset.list で確かめてください）
 	There is no panel named "{p}"	「{p}」という面はありません
-	Unknown box type "{other}" (tuck_box, gable, pillow, plain_pillow, prism)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、plain_pillow、prism）
+	Unknown box type "{other}" (tuck_box, gable, pillow, plain_pillow, prism, ecma)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、plain_pillow、prism、ecma）
 	{} already exists. AI does not overwrite files; choose another name.	{} はすでにあります。AI はファイルを上書きしません。別の名前にしてください。
 	{} is outside the folders allowed for AI	{} は、AI が使えるフォルダの外です
 	  Agent  	  エージェント  
@@ -1449,3 +1449,5 @@ blend	Color	カラー
 	Hanger on	吊り下げの面
 	Outer flap on	外のフラップ
 	Locking flap on	舌の付く面
+	"code" is missing (an ECMA number such as A20.20.03.01)	「code」がありません（A20.20.03.01 のような ECMA の番号）
+	"{text}" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on).	「{text}」は、パケノバで作れる ECMA の番号ではありません（A 類: A20.20.03.01 など）。

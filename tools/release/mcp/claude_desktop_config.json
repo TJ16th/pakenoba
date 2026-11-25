@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pakenoba": {
+      "command": "C:\\Tools\\pakenoba\\pakenoba.exe",
+      "args": ["mcp", "--allow", "C:\\Users\\YOUR_NAME\\Documents\\pakenoba"]
+    }
+  }
+}
