@@ -309,6 +309,12 @@ impl App {
     }
 
     /// 柄の絵が、この案件のどの素材か（付属の見本や、素材の欄にない絵なら None）。
+    /// 素材の、見て分かる名前（付けた名前か、ファイルの名前を整えたもの）。
+    pub(super) fn asset_title(&self, index: usize) -> String {
+        let asset = &self.assets[index];
+        asset.stored.as_ref().and_then(|s| s.label.clone()).unwrap_or_else(|| tidy_name(&asset.name))
+    }
+
     pub(super) fn asset_of(&self, picture: &Picture) -> Option<usize> {
         self.assets.iter().position(|a| !a.bundled && same_picture(&a.picture, picture))
     }
@@ -704,5 +710,60 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert!(!back[0].visible);
         assert!(back[0].image.iter().skip(3).step_by(4).any(|&a| a > 0), "隠した柄も、レイヤーには描く");
+    }
+}
+
+/// ファイルの名前を、見て分かる名前に整える（拡張子、「_」、末尾の「(1)」「コピー」「copy」を除く）。
+pub(crate) fn tidy_name(file: &str) -> String {
+    let mut name = file.trim().to_owned();
+    // 拡張子（点のあとが 1〜5 文字の英数字）。
+    if let Some(dot) = name.rfind('.')
+        && dot > 0
+        && (1..=5).contains(&(name.len() - dot - 1))
+        && name[dot + 1..].chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        name.truncate(dot);
+    }
+    let mut name: String = name.chars().map(|c| if c == '_' { ' ' } else { c }).collect();
+    // 末尾の複製の印を、なくなるまで除く。
+    loop {
+        let trimmed = name.trim_end().to_owned();
+        let lower = trimmed.to_lowercase();
+        let mut cut = None;
+        for mark in [" copy", "-copy", " - コピー", "のコピー", " コピー", "コピー"] {
+            if lower.ends_with(mark) && trimmed.len() > mark.len() {
+                cut = Some(trimmed.len() - mark.len());
+                break;
+            }
+        }
+        if cut.is_none() && trimmed.ends_with(')')
+            && let Some(open) = trimmed.rfind('(')
+            && open > 0
+            && trimmed[open + 1..trimmed.len() - 1].chars().all(|c| c.is_ascii_digit())
+            && trimmed.len() - open > 2
+        {
+            cut = Some(open);
+        }
+        match cut {
+            Some(at) => name = trimmed[..at].to_owned(),
+            None => break,
+        }
+    }
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() { file.to_owned() } else { name }
+}
+
+#[cfg(test)]
+mod tidy_tests {
+    use super::tidy_name;
+
+    #[test]
+    fn file_names_become_readable() {
+        assert_eq!(tidy_name("IMG_2034_final(1).png"), "IMG 2034 final");
+        assert_eq!(tidy_name("ロゴ 最終版 のコピー.PSD"), "ロゴ 最終版");
+        assert_eq!(tidy_name("dragon-band copy (2).svg"), "dragon-band");
+        assert_eq!(tidy_name("2024.05.01 写真.jpeg"), "2024.05.01 写真");
+        assert_eq!(tidy_name("(1).png"), "(1)");
+        assert_eq!(tidy_name("名前に点がない"), "名前に点がない");
     }
 }

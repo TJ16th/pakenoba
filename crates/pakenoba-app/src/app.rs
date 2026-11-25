@@ -25,6 +25,7 @@ mod typing;
 mod shapes;
 mod my_shapes;
 mod dieline;
+mod local_ai;
 pub(crate) mod adjust;
 mod vectorize;
 mod model3d;
@@ -526,6 +527,8 @@ struct App {
     dieline_import: Option<dieline::DielineImport>,
     /// 読み込んだ型で、角度を直すために選んだ折り線（動くパネルの番号）。
     fold_pick: Option<usize>,
+    /// 手元の AI（Ollama）で、素材に名前とタグを付ける。
+    tagger: local_ai::Tagger,
     /// 自分の型として残すときの名前の欄。
     shape_preset_name: String,
     /// 次に型紙を作り直すとき、柄を外さない（元に戻すで型を戻すとき）。
@@ -752,6 +755,7 @@ impl App {
             pending_dims: None,
             dieline_import: None,
             fold_pick: None,
+            tagger: Default::default(),
             shape_preset_name: String::new(),
             keep_decals: false,
             preview: None,
@@ -1121,7 +1125,19 @@ impl App {
         if checkpoint {
             self.checkpoint();
         }
+        let id = stored.id().to_owned();
+        let mut stored = stored;
+        // 登録したフォルダで、もう名前とタグを付けてあれば、それを持ってくる。
+        self.load_tag_index();
+        if let Some(tagged) = self.file_tags(path) {
+            stored.label = tagged.label;
+            stored.tags = tagged.tags;
+        }
+        let untagged = stored.label.is_none() && stored.tags.is_empty();
         self.assets.push(assets::Asset { name, picture, size, thumb: None, bundled: false, stored: Some(stored) });
+        if untagged && self.settings.local_ai.auto {
+            self.request_many(vec![local_ai::Target::Asset(id)]);
+        }
         Some(self.assets.len() - 1)
     }
 
@@ -1244,6 +1260,10 @@ impl App {
             if !first.trim().is_empty() {
                 return first;
             }
+        }
+        // 画像の柄は、素材の名前（見て分かる名前か、ファイルの名前を整えたもの）。
+        if let Some(asset) = self.asset_of(&decal.picture) {
+            return self.asset_title(asset);
         }
         format!("{} {}", decal.picture.label(), index + 1)
     }
@@ -1578,6 +1598,8 @@ impl eframe::App for App {
         self.status_bar(ui);
         self.confirm_shape(ui.ctx());
         self.dieline_window(ui.ctx());
+        self.poll_tags(ui.ctx());
+        self.local_ai_window(ui.ctx());
         self.file_dialogs(ui.ctx());
         self.recovery_dialog(ui.ctx());
         self.movie_frame(ui.ctx());

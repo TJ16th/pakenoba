@@ -200,7 +200,11 @@ const THUMB_PT: f32 = 26.0;
 
 /// 小さな絵の中で、柄を置く四角（縦横比を保って収める）。左、上、幅、高さ（画素）。
 fn fit(size: [f32; 2]) -> [f32; 4] {
-    let s = THUMB_PX as f32;
+    fit_in(size, THUMB_PX)
+}
+
+fn fit_in(size: [f32; 2], px: usize) -> [f32; 4] {
+    let s = px as f32;
     let aspect = size[0] / size[1].max(1e-3);
     let (w, h) = if aspect >= 1.0 { (s, s / aspect) } else { (s * aspect, s) };
     [(s - w) * 0.5, (s - h) * 0.5, w, h]
@@ -208,16 +212,22 @@ fn fit(size: [f32; 2]) -> [f32; 4] {
 
 /// 柄の小さな絵（透明な所は市松模様。柄だけの調整を効かせた絵）。
 fn picture_thumb(placed: &Placed) -> Vec<u8> {
+    picture_thumb_at(placed, THUMB_PX)
+}
+
+/// 柄の絵を、`px` 画素の四角に収めて描く（小さな絵と、カーソルを乗せたときの大きな絵）。
+fn picture_thumb_at(placed: &Placed, px: usize) -> Vec<u8> {
     let picture = crate::effects::shown(placed, false);
     let size = placed.size;
-    let [x0, y0, w, h] = fit(size);
-    let mut out = vec![0u8; THUMB_PX * THUMB_PX * 4];
-    for y in 0..THUMB_PX {
-        for x in 0..THUMB_PX {
-            let checker = if ((x / 6) + (y / 6)) % 2 == 0 { 255.0 } else { 204.0 };
+    let [x0, y0, w, h] = fit_in(size, px);
+    let cell = (px / 8).max(4);
+    let mut out = vec![0u8; px * px * 4];
+    for y in 0..px {
+        for x in 0..px {
+            let checker = if ((x / cell) + (y / cell)).is_multiple_of(2) { 255.0 } else { 204.0 };
             let (fx, fy) = ((x as f32 + 0.5 - x0) / w, (y as f32 + 0.5 - y0) / h);
             let c = if (0.0..1.0).contains(&fx) && (0.0..1.0).contains(&fy) { picture.sample([(fx - 0.5) * size[0], (0.5 - fy) * size[1]], size) } else { [0.0; 4] };
-            let o = (y * THUMB_PX + x) * 4;
+            let o = (y * px + x) * 4;
             for i in 0..3 {
                 out[o + i] = (c[i] * c[3] + checker * (1.0 - c[3])).round() as u8;
             }
@@ -226,6 +236,9 @@ fn picture_thumb(placed: &Placed) -> Vec<u8> {
     }
     out
 }
+
+/// カーソルを乗せたときの、大きな絵の画素の数。
+const PREVIEW_PX: usize = 200;
 
 /// 加工（箔、エンボス、ニス、白インキ）の小さな絵。もとの柄の形を、加工の色で塗って、暗い市松模様の上に置く。
 /// 箔には斜めの光沢を、ホログラムには虹色を、エンボスには左上からの光の陰影を付けて、平らな色の四角と見分けられるようにする。
@@ -1303,6 +1316,20 @@ impl App {
                 let id = self.thumb_texture(ui.ctx(), (index, 0), pixels);
                 let r = ui.put(rect, egui::Image::new((id, rect.size())).sense(egui::Sense::click()));
                 ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color), egui::StrokeKind::Outside);
+                // カーソルを乗せると、大きな絵と、素材の名前とタグを出す。
+                if r.hovered() {
+                    let big = self.thumb_texture(ui.ctx(), (index, 3), picture_thumb_at(&self.decals[index], PREVIEW_PX));
+                    let about = self.asset_of(&self.decals[index].picture).map(|a| (self.assets[a].name.clone(), self.assets[a].stored.as_ref().map(|s| s.tags.join("、")).unwrap_or_default()));
+                    return r.on_hover_ui(|ui| {
+                        ui.add(egui::Image::new((big, egui::vec2(PREVIEW_PX as f32, PREVIEW_PX as f32))));
+                        if let Some((file, tags)) = about {
+                            ui.small(file);
+                            if !tags.is_empty() {
+                                ui.small(egui::RichText::new(tags).color(super::theme::MUTED));
+                            }
+                        }
+                    });
+                }
                 r
             }
         }
@@ -1324,7 +1351,8 @@ impl App {
 
     /// 小さな絵のテクスチャ。中身が変わったときだけ作り直す。
     fn thumb_texture(&mut self, ctx: &egui::Context, key: (usize, u8), pixels: Vec<u8>) -> egui::TextureId {
-        let image = || egui::ColorImage::from_rgba_unmultiplied([THUMB_PX, THUMB_PX], &pixels);
+        let side = ((pixels.len() / 4) as f32).sqrt().round() as usize;
+        let image = || egui::ColorImage::from_rgba_unmultiplied([side, side], &pixels);
         match self.thumbs.get_mut(&key) {
             Some((old, tex)) => {
                 if *old != pixels {

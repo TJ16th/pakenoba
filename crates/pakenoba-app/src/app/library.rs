@@ -222,6 +222,21 @@ fn make(path: &Path, px: usize, dir: Option<&Path>) -> Result<Made, String> {
     Ok(made)
 }
 
+/// 画像のファイルを読み、長いほう `long` 画素ほどの絵にする（手元の AI に見せるため）。
+pub(super) fn small_rgba(path: &Path, long: usize) -> Option<(usize, usize, Vec<u8>)> {
+    let bytes = std::fs::read(path).ok()?;
+    let picture = if crate::vector::is_svg(&bytes) {
+        let (w, h, rgba) = crate::vector::decode_svg_long(&bytes, long as f32).ok()?;
+        Picture::Image { w, h, rgba: std::sync::Arc::new(rgba), vector: true }
+    } else {
+        decode_image(&bytes).ok()?
+    };
+    match picture {
+        Picture::Image { w, h, rgba, .. } => Some((w, h, rgba.to_vec())),
+        _ => None,
+    }
+}
+
 impl Thumbs {
     fn new() -> Thumbs {
         let (done_send, done) = mpsc::channel();
@@ -339,11 +354,13 @@ pub(super) struct Library {
     thumbs: Thumbs,
     /// テスト用: フォルダを選ぶダイアログの代わりの答え。
     pub answer_folder: Option<PathBuf>,
+    /// 右の欄で直している、見て分かる名前とタグ（相手、名前、タグ）。
+    tag_edit: Option<(super::local_ai::Target, String, String)>,
 }
 
 impl Library {
     pub fn new(open: bool, answer_folder: Option<PathBuf>) -> Library {
-        Library { open, place: Place::Project, search: String::new(), sort: Sort::Name, tile: 140.0, picks: HashMap::new(), scans: HashMap::new(), thumbs: Thumbs::new(), answer_folder }
+        Library { open, place: Place::Project, search: String::new(), sort: Sort::Name, tile: 140.0, picks: HashMap::new(), scans: HashMap::new(), thumbs: Thumbs::new(), answer_folder, tag_edit: None }
     }
 
     fn pick(&self) -> Option<&Pick> {
@@ -468,21 +485,44 @@ impl App {
 
     /// 中央に並べるもの（探す言葉で絞り、並べ替えたもの）。
     fn library_items(&self) -> Vec<Item> {
-        let words = self.library.search.trim().to_lowercase();
-        let hit = |name: &str| words.is_empty() || name.to_lowercase().contains(&words);
+        // 探す言葉は、空白で区切った言葉がすべて、ファイルの名前、見て分かる名前、タグ、フォルダのどれかに入っているもの。
+        let words: Vec<String> = self.library.search.split_whitespace().map(str::to_lowercase).collect();
+        let hit = |texts: &[&str]| {
+            let all: String = texts.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+            words.iter().all(|w| all.contains(w))
+        };
         let mut items: Vec<Item> = match self.library.place {
             Place::Project | Place::Bundled => {
                 let bundled = self.library.place == Place::Bundled;
-                (0..self.assets.len()).filter(|&i| self.assets[i].bundled == bundled && hit(&self.assets[i].name)).map(Item::Asset).collect()
+                (0..self.assets.len())
+                    .filter(|&i| {
+                        let a = &self.assets[i];
+                        let (label, tags) = a.stored.as_ref().map_or((String::new(), String::new()), |s| (s.label.clone().unwrap_or_default(), s.tags.join(" ")));
+                        a.bundled == bundled && hit(&[&a.name, &label, &tags])
+                    })
+                    .map(Item::Asset)
+                    .collect()
             }
-            Place::Collection(c) => self.scan_of(c).map(|scan| (0..scan.entries.len()).filter(|&i| hit(&scan.entries[i].name) || hit(&scan.entries[i].folder)).map(Item::File).collect()).unwrap_or_default(),
+            Place::Collection(c) => self
+                .scan_of(c)
+                .map(|scan| {
+                    (0..scan.entries.len())
+                        .filter(|&i| {
+                            let e = &scan.entries[i];
+                            let tagged = self.file_tags(&e.path).unwrap_or_default();
+                            hit(&[&e.name, &e.folder, tagged.label.as_deref().unwrap_or_default(), &tagged.tags.join(" ")])
+                        })
+                        .map(Item::File)
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
         let entries = match self.library.place {
             Place::Collection(c) => self.scan_of(c).map(|s| &s.entries[..]),
             _ => None,
         };
         let name = |item: &Item| match *item {
-            Item::Asset(i) => self.assets[i].name.to_lowercase(),
+            Item::Asset(i) => self.asset_title(i).to_lowercase(),
             Item::File(i) => entries.map_or_else(String::new, |e| format!("{}/{}", e[i].folder, e[i].name).to_lowercase()),
         };
         match self.library.sort {
@@ -508,6 +548,7 @@ impl App {
     pub(super) fn library_screen(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.library.thumbs.receive(&ctx);
+        self.load_tag_index();
         if !ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.library.open = false;
             return;
@@ -612,7 +653,7 @@ impl App {
     /// 中央: 探す、並べ替える、大きな絵の一覧。
     fn library_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.library.search).hint_text(t!("Search by name")).desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut self.library.search).hint_text(t!("Search by name or tag")).desired_width(220.0));
             if !self.library.search.is_empty() && ui.small_button("×").on_hover_text(t!("Clear the search")).clicked() {
                 self.library.search.clear();
             }
@@ -624,6 +665,8 @@ impl App {
             ui.add_space(8.0);
             ui.label(t!("Thumbnail size"));
             ui.add(egui::Slider::new(&mut self.library.tile, 80.0..=260.0).show_value(false));
+            ui.add_space(8.0);
+            self.tag_controls(ui);
             if let Place::Collection(i) = self.library.place {
                 ui.add_space(8.0);
                 if ui.button(t!("Rescan")).on_hover_text(t!("Lists images added to or changed in the folder again")).clicked() {
@@ -689,11 +732,12 @@ impl App {
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let image_rect = Rect::from_min_size(rect.min, vec2(cell.x, cell.x));
         let (name, pick, file) = match item {
-            Item::Asset(i) => (self.assets[i].name.clone(), Pick::Asset(i), None),
+            Item::Asset(i) => (self.asset_title(i), Pick::Asset(i), None),
             Item::File(i) => {
                 let Place::Collection(c) = self.library.place else { return None };
                 let entry = &self.scan_of(c)?.entries[i];
-                (entry.name.clone(), Pick::File(entry.path.clone()), Some(entry.path.clone()))
+                let title = self.file_tags(&entry.path).and_then(|t| t.label).unwrap_or_else(|| super::assets::tidy_name(&entry.name));
+                (title, Pick::File(entry.path.clone()), Some(entry.path.clone()))
             }
         };
         let selected = self.library.pick() == Some(&pick);
@@ -807,7 +851,8 @@ impl App {
                 let texture = self.thumb(ui.ctx(), index);
                 ui.painter().image(texture, image.shrink(10.0), uv, Color32::WHITE);
                 let asset = &self.assets[index];
-                ui.strong(&asset.name);
+                ui.strong(self.asset_title(index));
+                ui.small(&asset.name).on_hover_text(t!("File name"));
                 if let Picture::Image { w, h, .. } = &asset.picture {
                     ui.label(t!("Resolution: {w} × {h} px"));
                 }
@@ -816,6 +861,9 @@ impl App {
                 }
                 let uses = self.uses(index);
                 ui.label(if uses > 0 { t!("Used in {uses} place(s) on the box") } else { t!("Not placed on the box yet").to_owned() });
+                if let Some(id) = self.assets[index].stored.as_ref().map(|s| s.id().to_owned()) {
+                    self.tag_editor(ui, super::local_ai::Target::Asset(id));
+                }
                 ui.add_space(6.0);
                 if self.assets[index].bundled {
                     ui.weak(t!("A built-in sample. In the Design step, drag it from the assets panel onto the box."));
@@ -843,7 +891,9 @@ impl App {
                     _ => None,
                 };
                 let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                ui.strong(&name);
+                let title = self.file_tags(&path).and_then(|t| t.label).unwrap_or_else(|| super::assets::tidy_name(&name));
+                ui.strong(title);
+                ui.small(&name).on_hover_text(t!("File name"));
                 if let Some(entry) = entry
                     && !entry.folder.is_empty()
                 {
@@ -862,6 +912,9 @@ impl App {
                     ui.colored_label(ui.visuals().warn_fg_color, t!("This image cannot be read: {e}"));
                 }
                 ui.small(path.display().to_string()).on_hover_text(t!("File location"));
+                if broken.is_none() {
+                    self.tag_editor(ui, super::local_ai::Target::File(path.clone()));
+                }
                 ui.add_space(6.0);
                 let ids = self.project_ids();
                 match id.as_ref().and_then(|id| ids.get(id)) {
@@ -945,6 +998,115 @@ impl App {
 }
 
 /// 中身の印の集まり（テスト用）。
+impl App {
+    /// 一覧の上の、名前とタグを付けるボタンと進み具合。
+    fn tag_controls(&mut self, ui: &mut egui::Ui) {
+        use super::local_ai::Target;
+        if !self.tagger.waiting.is_empty() {
+            ui.spinner();
+            let (all, done) = self.tagger.batch;
+            ui.label(if all > 1 { t!("Naming and tagging ({done} / {all})") } else { t!("Naming and tagging…").to_owned() });
+            if ui.small_button(t!("Stop")).clicked() {
+                self.cancel_tags();
+            }
+            return;
+        }
+        if !self.settings.local_ai.ready() {
+            if ui.button(t!("Name and tag…")).on_hover_text(t!("Set up a local AI (Ollama) to give assets a name you can recognize and tags to search by")).clicked() {
+                self.tagger.open = true;
+            }
+            return;
+        }
+        // この一覧で、まだ名前もタグもないもの。
+        let entries = match self.library.place {
+            Place::Collection(c) => self.scan_of(c).map(|s| s.entries.iter().map(|e| e.path.clone()).collect::<Vec<_>>()),
+            _ => None,
+        };
+        let targets: Vec<Target> = self
+            .library_items()
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Asset(i) => {
+                    let a = &self.assets[i];
+                    let stored = a.stored.as_ref().filter(|_| !a.bundled)?;
+                    (stored.label.is_none() && stored.tags.is_empty()).then(|| Target::Asset(stored.id().to_owned()))
+                }
+                Item::File(i) => {
+                    let path = entries.as_ref()?.get(i)?.clone();
+                    self.file_tags(&path).is_none().then_some(Target::File(path))
+                }
+            })
+            .collect();
+        let count = targets.len();
+        let button = ui.add_enabled(count > 0, egui::Button::new(t!("Name and tag ({count})"))).on_hover_text(t!("Asks the local AI ({}) to name and tag the assets in this list that have no name or tags yet. Pictures stay on this computer", self.settings.local_ai.model)).on_disabled_hover_text(t!("Every asset in this list already has a name or tags"));
+        if button.clicked() {
+            self.request_many(targets);
+        }
+        if let Some(e) = &self.tagger.error {
+            ui.colored_label(super::theme::BAD, "!").on_hover_text(e);
+        }
+    }
+
+    /// 右の欄の、見て分かる名前とタグ（直せる）と、付け直すボタン。
+    fn tag_editor(&mut self, ui: &mut egui::Ui, target: super::local_ai::Target) {
+        use super::local_ai::{Tagged, Target};
+        let now: Tagged = match &target {
+            Target::Asset(id) => self.assets.iter().filter_map(|a| a.stored.as_ref()).find(|s| s.id() == id).map(|s| Tagged { label: s.label.clone(), tags: s.tags.clone() }).unwrap_or_default(),
+            Target::File(path) => self.file_tags(path).unwrap_or_default(),
+        };
+        // 直している途中の文字（選んだものが変わったら、いまの値で始め直す）。
+        let fresh = self.library.tag_edit.as_ref().is_none_or(|(t, _, _)| *t != target);
+        if fresh {
+            self.library.tag_edit = Some((target.clone(), now.label.clone().unwrap_or_default(), now.tags.join("、")));
+        }
+        let Some((_, label, tags)) = self.library.tag_edit.as_mut() else { return };
+        ui.add_space(6.0);
+        let mut commit = false;
+        egui::Grid::new("asset-tags").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+            ui.label(egui::RichText::new(t!("Name")).color(super::theme::MUTED));
+            let r = ui.add(egui::TextEdit::singleline(label).hint_text(t!("A name you can recognize")).desired_width(f32::INFINITY));
+            commit |= r.lost_focus();
+            ui.end_row();
+            ui.label(egui::RichText::new(t!("Tags")).color(super::theme::MUTED));
+            let r = ui.add(egui::TextEdit::singleline(tags).hint_text(t!("Separate with commas")).desired_width(f32::INFINITY));
+            commit |= r.lost_focus();
+            ui.end_row();
+        });
+        if commit {
+            let label = label.trim().to_owned();
+            let edited = Tagged {
+                label: (!label.is_empty()).then_some(label),
+                tags: tags.split([',', '、', '，']).map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()).collect(),
+            };
+            if edited != now {
+                match &target {
+                    Target::Asset(id) => {
+                        if let Some(stored) = self.assets.iter_mut().filter_map(|a| a.stored.as_mut()).find(|s| s.id() == id) {
+                            stored.label = edited.label;
+                            stored.tags = edited.tags;
+                        }
+                    }
+                    Target::File(path) => self.set_file_tags(path, edited),
+                }
+            }
+        }
+        let busy = self.tagger.waiting.contains(&target);
+        ui.horizontal(|ui| {
+            if busy {
+                ui.spinner();
+                ui.small(t!("Asking the local AI…"));
+            } else if self.settings.local_ai.ready() {
+                if ui.small_button(t!("Ask the local AI")).on_hover_text(t!("Adds a name (if there is none) and tags")).clicked() {
+                    self.request_many(vec![target.clone()]);
+                    self.library.tag_edit = None;
+                }
+            } else if ui.small_button(t!("Set up a local AI…")).clicked() {
+                self.tagger.open = true;
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 fn ids(app: &App) -> std::collections::HashSet<String> {
     app.project_ids().into_keys().collect()
@@ -1082,3 +1244,4 @@ mod thumb_cache_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+

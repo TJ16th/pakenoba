@@ -125,6 +125,10 @@ pub struct Asset {
     pub imported: String,
     /// 置くときの大きさ（mm）。
     pub size: P2,
+    /// 見て分かる名前（手で付けたか、手元の AI が絵を見て付けたもの）。なければファイルの名前から作る。
+    pub label: Option<String>,
+    /// 探すときの言葉（物、色、画風など）。
+    pub tags: Vec<String>,
     id: String,
     bytes: Arc<Vec<u8>>,
 }
@@ -133,7 +137,7 @@ impl Asset {
     /// 元のファイルの名前と中身から、素材を作る。
     pub fn new(name: impl Into<String>, bytes: Vec<u8>, size: P2, imported: impl Into<String>) -> Asset {
         let id = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
-        Asset { name: name.into(), imported: imported.into(), size, id, bytes: Arc::new(bytes) }
+        Asset { name: name.into(), imported: imported.into(), size, label: None, tags: Vec::new(), id, bytes: Arc::new(bytes) }
     }
 
     /// 中身の印（SHA-256 を 16 進で書いたもの）。中身が同じ素材は、同じ印になる。
@@ -1039,6 +1043,11 @@ struct AssetEntry {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     imported: String,
     size: [f64; 2],
+    /// 見て分かる名前と、探すときの言葉。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1568,7 +1577,7 @@ impl Project {
             material: (self.material != Material::default()).then(|| MaterialEntry { paper: self.material.paper.key().to_owned(), coat: self.material.coat.key().to_owned() }),
             base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             back_base: self.back_base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
-            assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size) }).collect(),
+            assets: self.assets.iter().map(|a| AssetEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone(), size: tidy2(a.size), label: a.label.clone(), tags: a.tags.clone() }).collect(),
             decals: self
                 .decals
                 .iter()
@@ -1913,7 +1922,9 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         match load(zip, &entry.file, size) {
             Ok((id, bytes)) => {
                 kept.push(Some(assets.len()));
-                assets.push(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size, id, bytes });
+                let tags = entry.tags.iter().map(|t| t.trim().chars().take(40).collect::<String>()).filter(|t| !t.is_empty()).take(32).collect();
+                let label = entry.label.as_ref().map(|l| l.trim().chars().take(80).collect::<String>()).filter(|l| !l.is_empty());
+                assets.push(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size, label, tags, id, bytes });
             }
             Err(why) => {
                 kept.push(None);
@@ -1924,7 +1935,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
     // 展開図まるごとの絵。
     let mut base_of = |entry: &Option<BaseEntry>, what: &str| {
         entry.as_ref().and_then(|entry| match load(zip, &entry.file, [0.0, 0.0]) {
-            Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], id, bytes }),
+            Ok((id, bytes)) => Some(Asset { name: entry.name.clone(), imported: entry.imported.clone(), size: [0.0, 0.0], label: None, tags: Vec::new(), id, bytes }),
             Err(why) => {
                 problems.push(t!("{what} \"{}\" could not be read, so it was removed ({why})", entry.name));
                 None
@@ -2226,7 +2237,7 @@ mod tests {
         let shape = shape(kind);
         let tpl = shape.template();
         let assets = vec![
-            Asset::new("ロゴ 最終版.png", fake_file(1, 3000), [46.0, 46.0], "2026-11-22T00:10:00+09:00"),
+            Asset { label: Some("金色のロゴ".into()), tags: vec!["ロゴ".into(), "金".into()], ..Asset::new("ロゴ 最終版.png", fake_file(1, 3000), [46.0, 46.0], "2026-11-22T00:10:00+09:00") },
             Asset::new("pattern.PSD", fake_file(2, 9000), [120.0, 80.5], ""),
             Asset::new("名前に点がない", fake_file(3, 10), [10.0, 0.1], "2026-01-01T00:00:00Z"),
         ];

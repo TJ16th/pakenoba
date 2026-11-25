@@ -221,7 +221,6 @@
 	Design	デザイン
 	Output	出力
 	Back to {back}	{back}に戻る
-	Search by name	名前で探す
 	Clear the search	探す言葉を消す
 	By name	名前順
 	Newest first	新しい順
@@ -1386,3 +1385,39 @@ blend	Color	カラー
 	Vectors (SVG)	ベクター（SVG）
 	Effect (this artwork)	効果（この柄）
 	Fills the panel (or the whole sheet) with copies of the artwork	柄を並べて、面（または展開図ぜんたい）を埋めます
+	File name	ファイルの名前
+	Search by name or tag	名前やタグで探す
+	(not chosen)	（選んでいません）
+	Address	アドレス
+	Asking Ollama…	Ollama に聞いています…
+	Check that Ollama is running. You can get it from ollama.com.	Ollama が動いているか確かめてください。Ollama は ollama.com から入れられます。
+	Connect	つなぐ
+	Could not reach Ollama at {url}: {e}	{url} の Ollama につながりませんでした: {e}
+	Could not reach Ollama at {}: {e}	{} の Ollama につながりませんでした: {e}
+	Gives assets a name you can recognize and tags to search by, using a vision model running in Ollama on this computer. Pictures are sent only to this Ollama, never to an outside service.	この PC の Ollama で動く、画像を見られるモデルを使って、素材に見て分かる名前と、探すためのタグを付けます。絵は、この Ollama にだけ送り、外のサービスには送りません。
+	Lists the installed models that can look at images	入っているモデルのうち、画像を見られるものを並べます
+	Local AI (Ollama)	手元の AI（Ollama）
+	Model	モデル
+	Name and tag new assets when they are imported	素材を取り込んだら、名前とタグを付ける
+	No model that can look at images is installed. Install one, for example: ollama pull gemma3 (or qwen2.5vl, llama3.2-vision)	画像を見られるモデルが入っていません。たとえば ollama pull gemma3（または qwen2.5vl、llama3.2-vision）で入れてください
+	Ollama answered with an error: {why}	Ollama がエラーを返しました: {why}
+	The local AI did not answer in the expected form: {e}	手元の AI の答えが、決めた形ではありませんでした: {e}
+	The local AI gave no name or tags.	手元の AI が、名前もタグも返しませんでした。
+	This picture cannot be sent to the local AI.	この絵は、手元の AI に送れません。
+	To name the assets you already have, use "Name and tag" on the Assets screen.	いまある素材に付けるときは、素材の画面の「名前とタグを付ける」を使います。
+	Local AI (Ollama)…	手元の AI（Ollama）…
+	Name and tag assets with a vision model running on this computer	この PC で動く画像を見られるモデルで、素材に名前とタグを付けます
+	A name you can recognize	見て分かる名前
+	Adds a name (if there is none) and tags	名前（なければ）とタグを付けます
+	Ask the local AI	手元の AI に聞く
+	Asking the local AI…	手元の AI に聞いています…
+	Asks the local AI ({}) to name and tag the assets in this list that have no name or tags yet. Pictures stay on this computer	この一覧で、まだ名前もタグもない素材に、手元の AI（{}）で名前とタグを付けます。絵はこの PC の外に出ません
+	Every asset in this list already has a name or tags	この一覧の素材には、どれも名前かタグがあります
+	Name and tag ({count})	名前とタグを付ける（{count}）
+	Name and tag…	名前とタグを付ける…
+	Naming and tagging ({done} / {all})	名前とタグを付けています（{done} / {all}）
+	Naming and tagging…	名前とタグを付けています…
+	Separate with commas	「、」か「,」で区切る
+	Set up a local AI (Ollama) to give assets a name you can recognize and tags to search by	手元の AI（Ollama）を設定すると、素材に見て分かる名前と、探すためのタグを付けられます
+	Set up a local AI…	手元の AI を設定…
+	Tags	タグ

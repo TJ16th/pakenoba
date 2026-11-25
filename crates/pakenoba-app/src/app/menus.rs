@@ -99,6 +99,10 @@ impl App {
                 ui.set_min_width(200.0);
                 self.language_menu(ui);
                 self.editor_apps_menu(ui);
+                if ui.button(t!("Local AI (Ollama)…")).on_hover_text(t!("Name and tag assets with a vision model running on this computer")).clicked() {
+                    self.tagger.open = true;
+                    ui.close();
+                }
                 self.ai_folders_menu(ui);
             });
         });
