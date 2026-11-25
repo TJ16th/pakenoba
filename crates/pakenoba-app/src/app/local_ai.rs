@@ -423,6 +423,7 @@ impl App {
 
     /// まとめて頼む（まだ名前もタグもないものだけ）。
     pub(super) fn request_many(&mut self, targets: Vec<Target>) {
+        self.track("ai_used", serde_json::json!({ "feature": "local_ai_tags", "count": targets.len() }));
         let before = self.tagger.waiting.len();
         for target in targets {
             self.request_tags(target);

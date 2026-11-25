@@ -45,6 +45,7 @@ mod commands;
 mod commands_doc;
 pub(crate) mod mcp;
 mod bridge;
+mod usage;
 mod agent;
 mod dialog;
 mod versions;
@@ -642,6 +643,10 @@ struct App {
     bridge: Option<bridge::Bridge>,
     /// 設定の「MCP からこの画面を動かす」を、起動のあと 1 度だけ反映したか。
     bridge_started: bool,
+    /// 利用状況を送る係（同意した人だけ）。
+    usage: usage::Usage,
+    /// 起動のイベントを送ったか（同意を聞いたか）。
+    usage_started: bool,
     /// 操作の記録の窓を開いている。
     log_open: bool,
     /// エージェントの欄。
@@ -838,6 +843,8 @@ impl App {
             allowed: Vec::new(),
             bridge: None,
             bridge_started: false,
+            usage: usage::Usage::default(),
+            usage_started: false,
             log_open: false,
             agent: agent::Agent::default(),
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
@@ -1547,6 +1554,7 @@ impl eframe::App for App {
             }
         }
         self.run_bridge_jobs();
+        self.usage_frame(ui.ctx());
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
             let Some(target) = self.open_to[which] else { continue };

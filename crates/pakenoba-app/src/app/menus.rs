@@ -104,6 +104,7 @@ impl App {
                     ui.close();
                 }
                 self.ai_folders_menu(ui);
+                self.usage_menu(ui);
                 // MCP（VS Code、Claude Desktop など）から、この画面を動かす。
                 let mut on = self.settings.mcp_window;
                 if ui.checkbox(&mut on, t!("Let MCP drive this window")).on_hover_text(t!("While on, `pakenoba mcp` started by an AI app (VS Code, Claude Desktop and so on) connects to this window, and you see each change as it happens. Only programs on this computer run by you can connect. Files are read and written only in the folders AI may use")).changed() {

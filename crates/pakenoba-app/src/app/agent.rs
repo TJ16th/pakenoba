@@ -347,6 +347,7 @@ impl App {
             return;
         }
         let provider = self.agent.provider;
+        self.track("ai_used", serde_json::json!({ "feature": "agent", "provider": provider.key() }));
         let Some(key) = load_key(provider) else {
             self.agent.key_dialog = Some(KeyDialog::new(provider));
             return;

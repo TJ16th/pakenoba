@@ -191,6 +191,7 @@ impl App {
         if let Some(answer) = self.answer_export.take() {
             return Some(with_extension(answer, ext));
         }
+        self.track("export", serde_json::json!({ "format": ext }));
         let project = self.file.path.as_deref().and_then(Path::file_stem).map_or_else(|| t!("PAKENOBA").to_owned(), |s| s.to_string_lossy().into_owned());
         let mut dialog = rfd::FileDialog::new().set_title(what).add_filter(filter, &[ext]).set_file_name(format!("{project}_{suffix}.{ext}"));
         if let Some(dir) = self.file.path.as_deref().and_then(Path::parent) {
@@ -517,6 +518,12 @@ impl App {
     /// 入稿用の PDF を保存する（ダイアログで場所を選ぶ）。
     pub(super) fn export_ready(&mut self) {
         let Some(path) = self.ask_output(t!("Save the print-ready PDF"), "PDF", "pdf", t!("print-ready")) else { return };
+        let color = match self.output.color {
+            ReadyColorChoice::Rgb => "rgb",
+            ReadyColorChoice::Fogra39 => "cmyk_builtin",
+            ReadyColorChoice::Icc(_) => "cmyk_icc",
+        };
+        self.track("print_ready_color", serde_json::json!({ "color": color }));
         self.start_export(super::export::ExportKind::Ready, path);
     }
 

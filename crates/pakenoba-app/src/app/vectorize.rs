@@ -124,6 +124,7 @@ fn shrink(w: usize, h: usize, rgba: &[u8], long: usize) -> (usize, usize, Vec<u8
 impl App {
     /// 画像トレースの欄を開く。`index` は、画像の柄か、トレースで作ったベクターの柄（やり直す）。
     pub(super) fn open_trace(&mut self, index: usize) {
+        self.track("ai_used", serde_json::json!({ "feature": "image_trace" }));
         if self.trace_session.is_some() {
             return self.say(t!("Image Trace is already open. Apply or cancel it first."));
         }

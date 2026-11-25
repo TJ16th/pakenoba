@@ -266,6 +266,9 @@ impl super::App {
         for job in jobs {
             let mut actor = actors.lock().map(|a| a.get(&job.connection).cloned()).ok().flatten().unwrap_or_else(|| "mcp:client".to_owned());
             // その依頼のあいだだけ、つないだ側の `--allow` のフォルダも使ってよい。
+            if job.message.get("method").and_then(Value::as_str) == Some("initialize") {
+                self.track("ai_used", json!({ "feature": "mcp_window" }));
+            }
             let kept = std::mem::replace(&mut self.allowed, job.folders.clone());
             let reply = super::mcp::handle(self, &mut actor, &job.message);
             self.allowed = kept;

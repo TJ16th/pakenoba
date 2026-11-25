@@ -1483,3 +1483,29 @@ blend	Color	カラー
 	{} is not a CMYK output profile	{} は CMYK の出力プロファイルではありません
 	{} is not an ICC profile PAKENOBA can read: {e:?}	{} は、パケノバで読める ICC プロファイルではありません: {e:?}
 	Color mode	色
+	Also send my answers about myself	自分についての答えも送る
+	Also send these answers	この答えも送る
+	Brand owner or marketing	ブランド、マーケティング
+	Designer (graphic, package)	デザイナー（グラフィック、パッケージ）
+	Don't send	送らない
+	Forget my answers	答えを消す
+	Help improve PAKENOBA	パケノバをよくするために
+	Hobby	趣味
+	If you like, tell us a little about yourself (sent with the start of the app, only if you tick the box below).	よければ、あなたについて教えてください（下の印を入れたときだけ、起動のときに送ります）。
+	May PAKENOBA send anonymous usage data? It helps decide what to improve.	匿名の利用状況を送ってもよいですか？ 何を良くするかを決めるのに役立てます。
+	Nothing has been sent yet.	まだ何も送っていません。
+	Prefer not to say	答えない
+	Printing or carton making	印刷、紙器の製造
+	See what is sent…	送る内容を見る…
+	Send anonymous usage data	匿名の利用状況を送る
+	Send usage data	送る
+	Student or teacher	学生、教員
+	The latest events this session, exactly as they are sent (newest last). Nothing is sent while sending is off.	この起動で送った最近のイベントを、送ったそのままの形で出します（新しいものが下）。送らない設定の間は、何も送りません。
+	Usage data	利用状況
+	Usage data sent	送った利用状況
+	What is never sent: your projects, file names, pictures or text. No account or device ID is used.	送らないもの: 案件、ファイルの名前、絵、文字。アカウントや端末を見分ける番号も使いません。
+	What is sent: that the app started, which box type you chose, which kind of file you exported, and which AI features you used. The service adds the app version, the OS, the language and the country (worked out from the IP address, which is not kept).	送るもの: 起動したこと、選んだ箱の型、書き出したファイルの種類、使った AI の機能。受け取る側（Aptabase）が、アプリの版、OS、言語、国（IP アドレスから判定し、IP は残しません）を付けます。
+	Work	仕事
+	You can change this at any time in Edit > Preferences.	「編集」→「環境設定」で、いつでも変えられます。
+	Age	年代
+	Other	その他

@@ -210,6 +210,7 @@ impl App {
                 with_psd(path)
             }
         };
+        self.track("export", serde_json::json!({ "format": "psd", "output": "atlas" }));
         self.start_export(ExportKind::Atlas, path);
     }
 
@@ -217,6 +218,7 @@ impl App {
     /// 書き出しは、別のスレッドで動かす（画面を止めない）。
     pub(super) fn export_psd(&mut self) {
         let Some(path) = self.ask_export() else { return };
+        self.track("export", serde_json::json!({ "format": "psd", "output": "dieline" }));
         self.start_export(ExportKind::Psd, path);
     }
 
