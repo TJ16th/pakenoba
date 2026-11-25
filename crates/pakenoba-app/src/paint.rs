@@ -8,7 +8,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use pakenoba_core::surface::{Decal, Surface};
-use pakenoba_core::template::{P2, Template, inside};
+use pakenoba_core::template::{P2, Role, Template, inside};
 
 use crate::art::{BleedZone, Frame, PX_PER_MM};
 use pakenoba_core::project::Blend;
@@ -707,11 +707,61 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
     let painter = Painter { surface, tpl, decals, back, w, frame, wait, zone };
     let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
     painter.stack(&items, rgba, 1.0, 0);
+    fold_into_glue_tabs(tpl, frame, rgba);
     for &index in &items {
         let picked = marks.selected.contains(&index);
         let hovered = marks.hover == Some(index) && !picked;
         if (picked || hovered) && is_artwork(&decals[index].picture) && shown_in_group(decals, index) {
             painter.marks(&decals[index], picked, rgba);
+        }
+    }
+}
+
+/// のりしろの、折り線から先の細い帯の幅（mm）。塗り足しと同じくらい。
+const GLUE_FOLD_BAND: f32 = 2.0;
+
+/// のりしろの、折り線に沿った細い帯に、親の面の柄を折り線で映して描く。
+/// 折ると、折り目の丸みのところで、のりしろの紙が外からわずかに見える。柄がそこで切れると、白い筋になる。
+/// 印刷でも、折り線の先へ少し柄を伸ばしておけば、折りがずれても白が出ない。のりを付けるところの大半には、柄を置かない。
+fn fold_into_glue_tabs(tpl: &Template, frame: Frame, rgba: &mut [u8]) {
+    let w = frame.w;
+    for panel in tpl.panels.iter().filter(|p| p.role == Role::GlueTab) {
+        let Some(hinge) = &panel.hinge else { continue };
+        if !tpl.panels[hinge.parent].takes_art() {
+            continue;
+        }
+        let (a, b) = (hinge.a, hinge.b);
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if len < 1e-3 {
+            continue;
+        }
+        let u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+        let n = [-u[1], u[0]];
+        let lo = panel.outline.iter().fold([f32::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+        let hi = panel.outline.iter().fold([f32::NEG_INFINITY; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
+        // のりしろのある側（折り線のどちら側か）。
+        let centre = panel.outline.iter().fold([0.0, 0.0], |m, p| [m[0] + p[0], m[1] + p[1]]);
+        let centre = [centre[0] / panel.outline.len() as f32, centre[1] / panel.outline.len() as f32];
+        let out = if (centre[0] - a[0]) * n[0] + (centre[1] - a[1]) * n[1] >= 0.0 { 1.0 } else { -1.0 };
+        let (x0, x1, y0, y1) = frame.span(lo, hi);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let p = frame.at(x, y);
+                let r = [p[0] - a[0], p[1] - a[1]];
+                let (side, along) = (r[0] * n[0] + r[1] * n[1], r[0] * u[0] + r[1] * u[1]);
+                if side.abs() > GLUE_FOLD_BAND || !(0.0..=len).contains(&along) || !inside(&panel.outline, p) {
+                    continue;
+                }
+                // 折り線で映した、親の面の点。折り線のすぐそばでも、親の側の画素を取るよう、1 画素ぶん先にする。
+                let back = (2.0 * (side * out).max(0.0) + 1.0 / frame.ppm) * out;
+                let m = frame.to_px([p[0] - back * n[0], p[1] - back * n[1]]);
+                let (mx, my) = (m[0].floor(), m[1].floor());
+                if mx < 0.0 || my < 0.0 || mx as usize >= w || my as usize >= frame.h {
+                    continue;
+                }
+                let (from, to) = (((my as usize) * w + mx as usize) * 4, (y * w + x) * 4);
+                rgba.copy_within(from..from + 4, to);
+            }
         }
     }
 }

@@ -506,6 +506,34 @@ mod tests {
     }
 
     #[test]
+    fn のりしろの折り線の先にも_柄を少し伸ばす() {
+        let mut app = App::new(&Initial::default());
+        app.decals.clear();
+        app.run_command("agent:test", "shape.set", json!({ "kind": "plain_pillow" })).unwrap();
+        let panel = app.template.panels[0].name;
+        app.run_command("agent:test", "decal.add", json!({ "shape": { "kind": "rect", "fill": "#ff0000" }, "panel": panel, "size": [20, 20] })).unwrap();
+        app.decals[0].layer.tile = Some(Default::default());
+        app.rebuild_if_needed();
+        let art = app.painted(false);
+        let tpl = &app.template;
+        let tab = tpl.panels.iter().find(|p| p.role == pakenoba_core::template::Role::GlueTab).unwrap();
+        let hinge = tab.hinge.as_ref().unwrap();
+        let mid = [(hinge.a[0] + hinge.b[0]) * 0.5, (hinge.a[1] + hinge.b[1]) * 0.5];
+        let centre = tab.outline.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0], s[1] + p[1]]);
+        let centre = [centre[0] / tab.outline.len() as f32, centre[1] / tab.outline.len() as f32];
+        // 折り線から、のりしろの中へ向かう向き。
+        let (dx, dy) = (centre[0] - mid[0], centre[1] - mid[1]);
+        let len = dx.hypot(dy);
+        let red_at = |mm: f32| {
+            let p = app.sheet.frame.to_px([mid[0] + dx / len * mm, mid[1] + dy / len * mm]);
+            let i = (p[1] as usize * app.sheet.w + p[0] as usize) * 4;
+            art[i] > 200 && art[i + 1] < 60
+        };
+        assert!(red_at(1.0), "折り線のすぐ先には、柄が続く");
+        assert!(!red_at(len.min(6.0)), "のりを付けるところには、柄を置かない");
+    }
+
+    #[test]
     fn ecmaの番号で型を変える() {
         let mut app = App::new(&Initial::default());
         app.decals.clear();
