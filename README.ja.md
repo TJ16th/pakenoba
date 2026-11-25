@@ -4,7 +4,7 @@
 
 パッケージデザイン専用の制作ソフトです。箱の型を決め、立体の上で柄を置き、見せるための画像や、印刷所に渡す PDF を書き出すところまでを 1 本で行います。無料で、ソースコードも公開しています。
 
-<img width="1600" height="500" alt="banner-ja" src="https://github.com/user-attachments/assets/0704730b-ec8d-4490-a330-4b8067cde77f" />
+<img width="1600" height="500" alt="banner-ja" src="https://github.com/user-attachments/assets/2df45b90-5f12-416b-b688-4108f351cda4" />
 
 <!-- 紹介動画（日本語版）: GitHub の画面でこのファイルを編集し、この行の下に pakenoba_promo_readme.mp4 をドラッグする -->
 https://github.com/user-attachments/assets/62c1c0c7-bf20-4bda-8239-112bc5850a76
