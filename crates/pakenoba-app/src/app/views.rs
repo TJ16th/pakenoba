@@ -94,8 +94,9 @@ impl App {
         let area = Rect::from_min_max(pos2(rect.left() + 8.0, rect.top() + 6.0), pos2(rect.right() - 8.0, rect.top() + 32.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
             cushion(ui, |ui| {
-                for (label, yaw, pitch) in VIEW_PRESETS.iter().rev() {
-                    if cushion_button(ui, pakenoba_i18n::tr(label), false).clicked() {
+                // アイコン（小さな立方体の、その向きから見える面を塗ったもの）。名前はツールチップに出す。
+                for (k, (label, yaw, pitch)) in VIEW_PRESETS.iter().enumerate().rev() {
+                    if cushion_icon(ui, |painter, c, stroke| super::icons::draw_view(painter, c, k, stroke)).on_hover_text(pakenoba_i18n::tr(label)).clicked() {
                         self.look_from(*yaw, *pitch);
                     }
                 }
@@ -118,24 +119,24 @@ impl App {
                 ui.menu_button(format!("{} ▾", t!("Lighting")), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
             });
             cushion(ui, |ui| {
-                if cushion_button(ui, t!("Snap"), false).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {
+                if cushion_icon(ui, super::icons::draw_snap).on_hover_text(format!("{}\n{}", t!("Snap"), t!("Turn to the nearest straight-on view (front, side, top...)"))).clicked() {
                     let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
                     let quarter = std::f32::consts::FRAC_PI_2;
                     // 上下も 90 度刻みにそろえる（真上を越えて逆さのときは、逆さのまま）。
                     self.look_from((yaw / quarter).round() * quarter, (wrap_angle(pitch) / quarter).round() * quarter);
                 }
                 let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
-                if cushion_button(ui, t!("Down 90°"), false).on_hover_text(t!("Turn the box 90 degrees toward you, over the top")).clicked() {
-                    self.look_from(yaw, wrap_angle(pitch + std::f32::consts::FRAC_PI_2));
-                }
-                if cushion_button(ui, t!("Up 90°"), false).on_hover_text(t!("Turn the box 90 degrees away from you, over the bottom")).clicked() {
-                    self.look_from(yaw, wrap_angle(pitch - std::f32::consts::FRAC_PI_2));
-                }
-                if cushion_button(ui, t!("Right 90°"), false).on_hover_text(t!("Turn the box 90 degrees to the right")).clicked() {
-                    self.look_from(yaw - std::f32::consts::FRAC_PI_2, pitch);
-                }
-                if cushion_button(ui, t!("Left 90°"), false).on_hover_text(t!("Turn the box 90 degrees to the left")).clicked() {
-                    self.look_from(yaw + std::f32::consts::FRAC_PI_2, pitch);
+                // 右から左へ並ぶので、逆の順に足す（見た目は 左へ、右へ、奥へ、手前へ、そろえる）。
+                let turns = [
+                    (3usize, t!("Down 90°"), t!("Turn the box 90 degrees toward you, over the top"), (0.0, std::f32::consts::FRAC_PI_2)),
+                    (2, t!("Up 90°"), t!("Turn the box 90 degrees away from you, over the bottom"), (0.0, -std::f32::consts::FRAC_PI_2)),
+                    (1, t!("Right 90°"), t!("Turn the box 90 degrees to the right"), (-std::f32::consts::FRAC_PI_2, 0.0)),
+                    (0, t!("Left 90°"), t!("Turn the box 90 degrees to the left"), (std::f32::consts::FRAC_PI_2, 0.0)),
+                ];
+                for (dir, name, tip, (dyaw, dpitch)) in turns {
+                    if cushion_icon(ui, |painter, c, stroke| super::icons::draw_turn(painter, c, dir, stroke)).on_hover_text(format!("{name}\n{tip}")).clicked() {
+                        self.look_from(yaw + dyaw, wrap_angle(pitch + dpitch));
+                    }
                 }
             });
         });
@@ -984,6 +985,17 @@ fn cushion(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
                 add(ui);
             });
         });
+}
+
+/// 座布団の上の、アイコンだけのボタン。
+fn cushion_icon(ui: &mut egui::Ui, icon: impl FnOnce(&egui::Painter, egui::Pos2, egui::Stroke)) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 24.0), egui::Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 4.0, super::theme::HOVER);
+    }
+    let color = if response.hovered() { egui::Color32::WHITE } else { super::theme::TEXT };
+    icon(ui.painter(), rect.center(), egui::Stroke::new(1.1, color));
+    response
 }
 
 /// 座布団の上のボタン。`on` は、入っている切り替え（明るい地で見せる）。

@@ -174,6 +174,74 @@ pub(super) fn draw_export(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.add(Shape::line(vec![p(-3.5, -3.5), p(0.0, -7.0), p(3.5, -3.5)], stroke));
 }
 
+/// 吹き出し（エージェント）。
+pub(super) fn draw_chat(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.add(Shape::closed_line(vec![p(-7.0, -5.5), p(7.0, -5.5), p(7.0, 3.5), p(-1.0, 3.5), p(-4.5, 6.5), p(-4.0, 3.5), p(-7.0, 3.5)], stroke));
+    for x in [-3.0, 0.0, 3.0] {
+        painter.circle_filled(p(x, -1.0), 0.9, stroke.color);
+    }
+}
+
+/// 見る向きのアイコン。小さな立方体（斜めから見た形）に、その向きから見える面を塗る。
+/// `face`: 0 斜め、1 正面、2 背面、3 左、4 右、5 上、6 下（`VIEW_PRESETS` の並び）。
+pub(super) fn draw_view(painter: &egui::Painter, c: Pos2, face: usize, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x * 1.2, y * 1.2);
+    let (a, b, cc, d) = (p(-6.0, -2.5), p(2.5, -2.5), p(2.5, 6.0), p(-6.0, 6.0));
+    let (a2, b2, c2, d2) = (p(-2.5, -6.0), p(6.0, -6.0), p(6.0, 2.5), p(-2.5, 2.5));
+    // 見る面は、選択の色で塗る（どの面かが、ひと目で分かるように）。
+    let fill = egui::Color32::from_rgba_unmultiplied(0x37, 0x8e, 0xf0, 210);
+    let faces = [vec![], vec![a, b, cc, d], vec![a2, b2, c2, d2], vec![a, a2, d2, d], vec![b, b2, c2, cc], vec![a, a2, b2, b], vec![d, cc, c2, d2]];
+    if face == 0 {
+        // 斜め: 見えている 3 面を、明るさを変えて塗る。
+        for (pts, alpha) in [(vec![a, a2, b2, b], 230u8), (vec![b, b2, c2, cc], 150), (vec![a, b, cc, d], 90)] {
+            painter.add(Shape::convex_polygon(pts, egui::Color32::from_rgba_unmultiplied(0x37, 0x8e, 0xf0, alpha), Stroke::NONE));
+        }
+    } else if let Some(pts) = faces.get(face).filter(|f| !f.is_empty()) {
+        painter.add(Shape::convex_polygon(pts.clone(), fill, Stroke::NONE));
+    }
+    // 見えている辺は太く、隠れている辺は細く。
+    let thin = Stroke::new(0.6, stroke.color.gamma_multiply(0.55));
+    for (u, v) in [(d, d2), (a2, d2), (d2, c2)] {
+        painter.line_segment([u, v], thin);
+    }
+    painter.add(Shape::closed_line(vec![a, a2, b2, c2, cc, d], stroke));
+    painter.add(Shape::line(vec![a, b, cc], stroke));
+    painter.line_segment([b, b2], stroke);
+}
+
+/// 箱を 90 度回すアイコン。小さな箱と、回る向きの弧の矢印。
+/// `dir`: 0 左へ、1 右へ、2 奥へ（前の面が上へ）、3 手前へ（前の面が下へ）。
+pub(super) fn draw_turn(painter: &egui::Painter, c: Pos2, dir: usize, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.rect_stroke(Rect::from_center_size(c, vec2(6.0, 6.0)), 0.5, Stroke::new(stroke.width * 0.8, stroke.color.gamma_multiply(0.7)), StrokeKind::Middle);
+    let n = 14;
+    let pts: Vec<Pos2> = if dir < 2 {
+        // 横回り: 箱の前を通る、横長の弧。
+        (0..=n).map(|k| { let t = std::f32::consts::PI * k as f32 / n as f32; p(8.0 * t.cos(), 1.5 + 4.5 * t.sin()) }).collect()
+    } else {
+        // 縦回り: 箱の右を通る、縦長の弧。
+        (0..=n).map(|k| { let t = std::f32::consts::PI * (k as f32 / n as f32 - 0.5); p(1.5 + 4.5 * t.cos(), 8.0 * t.sin()) }).collect()
+    };
+    // 矢印の向き（左へ・奥へは弧の終わり、右へ・手前へは弧の始まりに矢じり）。
+    let pts: Vec<Pos2> = if dir == 1 || dir == 2 { pts.into_iter().rev().collect() } else { pts };
+    let tip = pts[pts.len() - 1];
+    let back = pts[pts.len() - 3];
+    let along = (tip - back).normalized();
+    let side = vec2(-along.y, along.x);
+    painter.add(Shape::line(pts, stroke));
+    painter.add(Shape::line(vec![tip - along * 3.2 + side * 2.6, tip, tip - along * 3.2 - side * 2.6], stroke));
+}
+
+/// そろえる（いちばん近い、まっすぐの向きへ）。四隅のかぎと、まん中の四角。
+pub(super) fn draw_snap(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        painter.add(Shape::line(vec![p(7.0 * sx, 3.5 * sy), p(7.0 * sx, 7.0 * sy), p(3.5 * sx, 7.0 * sy)], stroke));
+    }
+    painter.rect_stroke(Rect::from_center_size(c, vec2(6.0, 6.0)), 0.5, stroke, StrokeKind::Middle);
+}
+
 /// ごみ箱（削除）。
 pub(super) fn draw_trash(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     let p = |x: f32, y: f32| c + vec2(x, y);

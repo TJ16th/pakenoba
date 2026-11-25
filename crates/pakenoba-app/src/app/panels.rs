@@ -96,11 +96,12 @@ impl App {
                 // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if ui.selectable_label(self.agent.open, t!("  Agent  ")).on_hover_text(t!("Ask an AI to make changes (Anthropic or OpenAI)")).clicked() {
+                    ui.spacing_mut().item_spacing.x = 14.0;
+                    if step_tab_sized(ui, t!("Agent"), icons::draw_chat, self.agent.open, 13.0).on_hover_text(t!("Ask an AI to make changes (Anthropic or OpenAI)")).clicked() {
                         self.agent.open = !self.agent.open;
                     }
-                    // 素材は流れの一歩ではないので、工程の並びに混ぜず、右に置く。
-                    if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The assets of this project, and folders and samples to import from (press again to go back)")).clicked() {
+                    // 素材は流れの一歩ではないので、工程の並びに混ぜず、右に小さく置く。
+                    if step_tab_sized(ui, t!("Assets"), icons::draw_image, self.library.open, 13.0).on_hover_text(t!("The assets of this project, and folders and samples to import from (press again to go back)")).clicked() {
                         self.toggle_library();
                     }
                 });
@@ -1086,7 +1087,12 @@ const STEP_BAR: f32 = 38.0;
 
 /// 工程の帯の 1 つ（アイコンと名前。選んでいれば明るい字と、下に色の線）。
 fn step_tab(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool) -> egui::Response {
-    let font = egui::FontId::proportional(15.0);
+    step_tab_sized(ui, label, icon, selected, 15.0)
+}
+
+/// 工程の帯の 1 つ（字の大きさを選べる。素材とエージェントは小さく）。
+fn step_tab_sized(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool, size: f32) -> egui::Response {
+    let font = egui::FontId::proportional(size);
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), super::theme::TEXT));
     let width = 16.0 + 7.0 + galley.size().x + 8.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, STEP_BAR), egui::Sense::click());

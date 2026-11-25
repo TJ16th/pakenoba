@@ -310,7 +310,6 @@
 # pakenoba-app/src/app/panels.rs
 	Saving…	保存しています…
 	There are unsaved changes (Ctrl+S to save)	保存していない変更があります（Ctrl+S で保存）
-	  Assets  	  素材  
 	The assets of this project, and folders and samples to import from (press again to go back)	この案件の素材と、取り込み元のフォルダと見本（もう一度押すと戻ります）
 	Redo	やり直す
 	{} pieces of artwork	{} 個の柄
@@ -976,7 +975,6 @@ blend	Color	カラー
 	Unknown box type "{other}" (tuck_box, gable, pillow, plain_pillow, prism, ecma)	「{other}」という箱の型は知りません（tuck_box、gable、pillow、plain_pillow、prism、ecma）
 	{} already exists. AI does not overwrite files; choose another name.	{} はすでにあります。AI はファイルを上書きしません。別の名前にしてください。
 	{} is outside the folders allowed for AI	{} は、AI が使えるフォルダの外です
-	  Agent  	  エージェント  
 	(Undone)	（元に戻しました）
 	API key: saved	API キー: 保存済み
 	Agent	エージェント
