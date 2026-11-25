@@ -572,7 +572,9 @@ impl Template {
                 "のりしろ",
                 ccw(vec![[under, edge], [len - under, edge], [len - under - slant, base], [under + slant, base]]),
                 Some(Hinge { parent: 1, a: [under, edge], b: [len - under, edge], angle: std::f32::consts::PI + 2.0 * end_tilt + TUCKED_IN, window: MAIN, motion: Motion::Fixed }),
-                Role::Fin,
+                // 内側へ折り返して正面の裏に貼るので、外からは見えない（柄も置かない）。
+                // 背面の上の辺は、のりしろへの折り線ではなく、正面の上の辺との合わせ目として扱われる（柄が上の縁を越えて続く）。
+                Role::GlueTab,
             ));
         }
 

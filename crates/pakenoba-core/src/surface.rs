@@ -838,6 +838,19 @@ mod tests {
     }
 
     #[test]
+    fn ピロー型の上の縁は合わせ目で_柄が背面へ続く() {
+        let pillow = |t: f32| Template::pillow_with(160.0, 80.0, t, 70f32.to_radians(), false, false);
+        let tpl = pillow(0.5);
+        let surface = Surface::new(&tpl, &pillow(0.02));
+        assert!(has_seam(&tpl, &surface, "正面", "背面"), "{:?}", surface.seams);
+        // 正面の上の縁にかかった柄は、背面にも出る。のりしろ（内側に貼る）には出ない。
+        let front = index(&tpl, "正面");
+        let decal = Decal { panel: front, at: [0.5, 0.98], size: [30.0, 30.0], angle: surface.up(front, false) };
+        let panels: Vec<&str> = surface.layout(&tpl, &decal).iter().map(|p| tpl.panels[p.panel].name).collect();
+        assert!(panels.contains(&"背面") && !panels.contains(&"のりしろ"), "{panels:?}");
+    }
+
+    #[test]
     fn 組み立て向きに開くと_外側の面が十字に並ぶ() {
         let (tpl, surface) = tuck(0.5);
         let front = index(&tpl, "正面");

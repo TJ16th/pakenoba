@@ -366,22 +366,7 @@ impl App {
                 ui.close();
             }
         }
-        // 画像の道具（画像の柄と、トレースで作った柄）。
-        let raster = matches!(self.decals[index].picture, Picture::Image { vector: false, .. });
-        let traced = self.decals[index].layer.traced.is_some();
-        let free = !self.decals[index].layer.locked && !editing;
-        if raster || traced {
-            ui.separator();
-            let label = if traced { t!("Trace again…") } else { t!("Image Trace…") };
-            if ui.add_enabled(free && self.trace_session.is_none(), egui::Button::new(label)).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked() {
-                self.open_trace(index);
-                ui.close();
-            }
-        }
-        if raster && ui.add_enabled(free, egui::Button::new(t!("Trim margins"))).on_hover_text(t!("Cuts away the transparent area around the picture. It stays where it appears now")).clicked() {
-            self.adjust_decal(index, super::adjust::Adjust::Trim);
-            ui.close();
-        }
+        // ベクター化（画像トレース）と余白の切り詰めは、レイヤーの欄の ◐（調整と効果）のメニューと、「柄」のメニューにある。
         ui.separator();
         if ui.button(t!("Delete")).clicked() {
             self.cmd_delete();

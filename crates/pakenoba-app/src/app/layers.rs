@@ -1260,6 +1260,15 @@ impl App {
                                     ui.close();
                                 }
                             }
+                            // 余白の切り詰め（調整の行は増やさず、絵そのものを切る。元に戻せる）。
+                            ui.separator();
+                            let trim = artwork.filter(|&i| matches!(self.decals[i].picture, Picture::Image { vector: false, .. }) && !self.decals[i].layer.locked && !self.is_editing(&self.decals[i].picture));
+                            if ui.add_enabled(trim.is_some(), egui::Button::new(t!("Trim margins"))).on_hover_text(t!("Cuts away the transparent area around the picture. It stays where it appears now")).clicked()
+                                && let Some(i) = trim
+                            {
+                                self.adjust_decal(i, super::adjust::Adjust::Trim);
+                                ui.close();
+                            }
                         });
                     });
                     // 効果（柄の下に行として並ぶもの）。
@@ -1271,6 +1280,15 @@ impl App {
                     {
                         self.change_layer(i, |layer| layer.tile = Some(Default::default()));
                         (self.adjust_focus, self.effect_focus) = (None, Some((i, Effect::Tile)));
+                        ui.close();
+                    }
+                    // ベクター化（画像トレース）。できた形は、柄の下の「ベクター」の行になる。
+                    let trace = artwork.filter(|&i| (matches!(self.decals[i].picture, Picture::Image { vector: false, .. }) || self.decals[i].layer.traced.is_some()) && !self.decals[i].layer.locked && !self.is_editing(&self.decals[i].picture));
+                    let traced = trace.is_some_and(|i| self.decals[i].layer.traced.is_some());
+                    if ui.add_enabled(trace.is_some() && self.trace_session.is_none(), egui::Button::new(if traced { t!("Trace again…") } else { t!("Vectorize (Image Trace)…") })).on_hover_text(t!("Turns it into vector shapes (SVG) with VectorCraft Image Trace. Adjust while watching the preview, then apply. The original image is kept")).clicked()
+                        && let Some(i) = trace
+                    {
+                        self.open_trace(i);
                         ui.close();
                     }
                 });

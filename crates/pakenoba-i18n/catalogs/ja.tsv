@@ -1451,3 +1451,4 @@ blend	Color	カラー
 	Locking flap on	舌の付く面
 	"code" is missing (an ECMA number such as A20.20.03.01)	「code」がありません（A20.20.03.01 のような ECMA の番号）
 	"{text}" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on).	「{text}」は、パケノバで作れる ECMA の番号ではありません（A 類: A20.20.03.01 など）。
+	Vectorize (Image Trace)…	ベクター化（画像トレース）…
