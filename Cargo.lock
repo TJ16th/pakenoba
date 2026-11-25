@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "pakenoba-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "chrono",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "pakenoba-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "pakenoba-i18n",
@@ -3044,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "pakenoba-i18n"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pakenoba-i18n-macros",
  "sys-locale",
@@ -3052,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "pakenoba-i18n-macros"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "parking_lot"
