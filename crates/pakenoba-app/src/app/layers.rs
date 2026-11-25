@@ -1269,6 +1269,16 @@ impl App {
                                 self.adjust_decal(i, super::adjust::Adjust::Trim);
                                 ui.close();
                             }
+                            // 左右・上下の反転（絵そのものを反転した素材に差し替える。元に戻せる）。
+                            let flip = trim.filter(|&i| self.decals[i].layer.traced.is_none());
+                            for (how, label) in [(super::adjust::Adjust::FlipH, t!("Flip horizontal")), (super::adjust::Adjust::FlipV, t!("Flip vertical"))] {
+                                if ui.add_enabled(flip.is_some(), egui::Button::new(label)).clicked()
+                                    && let Some(i) = flip
+                                {
+                                    self.adjust_decal(i, how);
+                                    ui.close();
+                                }
+                            }
                         });
                     });
                     // 効果（柄の下に行として並ぶもの）。

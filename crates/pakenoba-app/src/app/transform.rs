@@ -2,7 +2,7 @@
 //!
 //! - 四隅のつまみをドラッグすると、大きさが変わる。はじめは縦横比を保つ。Shift を押しているあいだは比率を外す。
 //!   Alt を押しているあいだは、中心を動かさない（ふだんは、向かいの角が動かない）。
-//! - 角の少し外側をドラッグすると、回る。Shift を押しているあいだは 15 度ずつ。
+//! - 角の少し外側か、上の辺の先に出た丸いつまみをドラッグすると、回る。Shift を押しているあいだは 15 度ずつ。
 //! - プロパティの鎖のボタンを外していると、比率はふだんから外れ、Shift で保つ（Photoshop と同じ）。
 //!
 //! 計算は、どれも展開図の座標（mm）で行う。画面との行き来は、それぞれの表示が受け持つ。
@@ -18,6 +18,8 @@ const CORNERS: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.
 /// 角のつまみの大きさと、回す場所の広さ（画面の点）。
 const KNOB: f32 = 8.0;
 const TURN_REACH: f32 = 22.0;
+/// 回すための丸いつまみの、上の辺からの離れ（画面の点）。
+const TURN_KNOB: f32 = 26.0;
 /// 柄の大きさの下限（mm）。
 const MIN_MM: f32 = 1.0;
 
@@ -54,8 +56,20 @@ fn area_point(decal: &Decal, area: [f32; 4], sign: [f32; 2]) -> P2 {
     [x * decal.size[0] * 0.5, y * decal.size[1] * 0.5]
 }
 
+/// 回すための丸いつまみの場所と、それが付く上の辺の中点（画面）。上の辺は、柄の上（右上と左上の角の間）。
+fn turn_knob(screen: [Pos2; 4]) -> (Pos2, Pos2) {
+    let center = pos2(screen.iter().map(|p| p.x).sum::<f32>() / 4.0, screen.iter().map(|p| p.y).sum::<f32>() / 4.0);
+    let mid = pos2((screen[2].x + screen[3].x) * 0.5, (screen[2].y + screen[3].y) * 0.5);
+    let out = mid - center;
+    let dir = if out.length() > 1e-3 { out.normalized() } else { vec2(0.0, -1.0) };
+    (mid + dir * TURN_KNOB, mid)
+}
+
 /// 画面の点 `p` が、どのつまみの上か。`screen` は画面での四隅。
 pub fn handle_at(screen: [Pos2; 4], p: Pos2) -> Option<Handle> {
+    if (turn_knob(screen).0 - p).length() <= KNOB {
+        return Some(Handle::Turn);
+    }
     if let Some(i) = (0..4).find(|&i| (screen[i] - p).length() <= KNOB) {
         return Some(Handle::Corner(i));
     }
@@ -126,6 +140,10 @@ pub fn paint(painter: &egui::Painter, screen: [Pos2; 4], color: Color32) {
     for i in 0..4 {
         painter.line_segment([screen[i], screen[(i + 1) % 4]], Stroke::new(1.0, color));
     }
+    // 回すつまみ（上の辺の先の丸）。
+    let (knob, mid) = turn_knob(screen);
+    painter.line_segment([mid, knob], Stroke::new(1.0, color));
+    painter.circle(knob, KNOB * 0.55, Color32::WHITE, Stroke::new(1.2, color));
     for c in screen {
         let knob = Rect::from_center_size(c, vec2(KNOB, KNOB));
         painter.rect_filled(knob, 1.0, Color32::WHITE);
@@ -275,6 +293,9 @@ mod tests {
         assert_eq!(handle_at(quad, pos2(114.0, -10.0)), Some(Handle::Turn));
         assert_eq!(handle_at(quad, pos2(50.0, 50.0)), None);
         assert_eq!(handle_at(quad, pos2(90.0, 12.0)), None, "内側は、つかんで動かす場所");
+        // 上の辺（右上と左上の角の間）の先の丸いつまみでも回る。
+        let (knob, _) = turn_knob(quad);
+        assert_eq!(handle_at(quad, knob), Some(Handle::Turn));
     }
 
     #[test]

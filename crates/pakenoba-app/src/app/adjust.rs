@@ -19,12 +19,18 @@ use crate::paint::Picture;
 pub(super) enum Adjust {
     /// まわりの透明な余白を、切り落とす。
     Trim,
+    /// 左右を反転する（鏡に映した形）。
+    FlipH,
+    /// 上下を反転する。
+    FlipV,
 }
 
 impl Adjust {
     fn label(self) -> &'static str {
         match self {
             Adjust::Trim => t!("Margins trimmed"),
+            Adjust::FlipH => t!("Flipped horizontally"),
+            Adjust::FlipV => t!("Flipped vertically"),
         }
     }
 }
@@ -269,6 +275,16 @@ pub(super) fn opaque_bounds(w: usize, h: usize, rgba: &[u8]) -> Option<[usize; 4
 pub(super) fn run(how: Adjust, w: usize, h: usize, rgba: &[u8]) -> Result<Adjusted, &'static str> {
     let whole = [0, 0, w, h];
     match how {
+        Adjust::FlipH | Adjust::FlipV => {
+            let mut out = vec![0u8; w * h * 4];
+            for y in 0..h {
+                for x in 0..w {
+                    let (sx, sy) = if how == Adjust::FlipH { (w - 1 - x, y) } else { (x, h - 1 - y) };
+                    out[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&rgba[(sy * w + sx) * 4..(sy * w + sx) * 4 + 4]);
+                }
+            }
+            Ok(Adjusted { w, h, rgba: out, crop: whole })
+        }
         Adjust::Trim => {
             let crop = opaque_bounds(w, h, rgba).ok_or(t!("Everything is transparent, so there is nothing to trim."))?;
             if crop == whole {
@@ -356,6 +372,20 @@ impl App {
         let placed = &mut self.decals[index];
         placed.picture = picture;
         placed.decal = decal;
+        // 反転では、レイヤーマスクも一緒に反転する（絵と同じ場所を隠したまま）。
+        if matches!(how, Adjust::FlipH | Adjust::FlipV)
+            && let Some(mask) = placed.layer.mask.as_mut()
+        {
+            let (mw, mh) = (mask.w as usize, mask.h as usize);
+            let mut out = vec![0u8; mw * mh];
+            for y in 0..mh {
+                for x in 0..mw {
+                    let (sx, sy) = if how == Adjust::FlipH { (mw - 1 - x, y) } else { (x, mh - 1 - y) };
+                    out[y * mw + x] = mask.data[sy * mw + sx];
+                }
+            }
+            mask.data = Arc::new(out);
+        }
         (self.art_dirty, self.back_dirty) = (true, true);
         self.say(t!("Applied \"{}\". It is a new asset, \"{name}\", and the original asset is unchanged. Press Ctrl+Z to undo.", how.label()));
     }
@@ -389,6 +419,17 @@ mod tests {
         // 透明にして切り落とすと、赤い四角だけになる。
         let trimmed = run(Adjust::Trim, w, h, &out).unwrap();
         assert_eq!(trimmed.crop, [10, 5, 20, 10]);
+    }
+
+    #[test]
+    fn 左右と上下に反転する() {
+        // 2 × 2 の絵: 左上 赤、右上 緑、左下 青、右下 白。
+        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
+        let h = run(Adjust::FlipH, 2, 2, &rgba).unwrap();
+        assert_eq!(&h.rgba[0..4], &[0, 255, 0, 255], "左上は、もとの右上");
+        assert_eq!(h.crop, [0, 0, 2, 2]);
+        let v = run(Adjust::FlipV, 2, 2, &rgba).unwrap();
+        assert_eq!(&v.rgba[0..4], &[0, 0, 255, 255], "左上は、もとの左下");
     }
 
     #[test]

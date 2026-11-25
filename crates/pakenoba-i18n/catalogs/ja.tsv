@@ -46,6 +46,8 @@
 	Even out shading	陰影をならす
 	Reduce colors	色数を絞る
 	Margins trimmed	余白を切る
+	Flipped horizontally	左右反転
+	Flipped vertically	上下反転
 	No background that could be made transparent was found along the edges.	縁に、透明にできる背景が見つかりませんでした。
 	Everything is transparent, so there is nothing to trim.	すべて透明なので、切り落とせません。
 	There are no transparent margins to trim.	切り落とせる透明な余白がありません。
@@ -53,6 +55,8 @@
 	{stem} ({}).png	{stem}（{}）.png
 	Applied "{}". It is a new asset, "{name}", and the original asset is unchanged. Press Ctrl+Z to undo.	「{}」をしました。新しい素材「{name}」になり、元の素材はそのままです。Ctrl+Z で戻せます。
 	Trim margins	余白を切り落とす
+	Flip horizontal	左右に反転
+	Flip vertical	上下に反転
 	Cuts away the transparent area around the picture. It stays where it appears now	まわりの透明な部分を切り落とします。見える位置は変わりません
 # pakenoba-app/src/app/assets.rs
 	Logo (sample)	ロゴ（見本）
