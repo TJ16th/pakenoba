@@ -139,6 +139,7 @@ impl App {
     /// 右の欄の、文字の柄の設定（文字と書式）。プロパティの欄の上に出す。
     pub(super) fn text_properties(&mut self, ui: &mut egui::Ui, index: usize, locked: bool) {
         let Some(Picture::Text(art)) = self.decals.get(index).map(|d| d.picture.clone()) else { return };
+        super::kit::heading(ui, t!("Text"));
         let earlier = self.snapshot();
         let mut spec = art.spec.clone();
         let mut changed = false;

@@ -98,28 +98,6 @@ pub(super) fn eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
     })
 }
 
-/// 幅と高さの比率をそろえるボタン（Photoshop の鎖のボタン）。つないでいるあいだは、色を付けて鎖をつなげて描く。
-pub(super) fn link_button(ui: &mut egui::Ui, linked: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
-    let visuals = ui.visuals();
-    let (fill, color) = if linked {
-        (visuals.selection.bg_fill, Color32::WHITE)
-    } else if response.hovered() {
-        (visuals.widgets.hovered.bg_fill, visuals.strong_text_color())
-    } else {
-        (Color32::TRANSPARENT, visuals.text_color())
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, fill);
-    let c = rect.center();
-    let stroke = Stroke::new(1.3, color);
-    // 縦に並んだ 2 つの輪。つないでいないときは、間をあける。
-    let gap = if linked { 0.0 } else { 2.0 };
-    painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, -3.5 - gap), vec2(6.0, 8.0)), 3.0, stroke, StrokeKind::Middle);
-    painter.rect_stroke(Rect::from_center_size(c + vec2(0.0, 3.5 + gap), vec2(6.0, 8.0)), 3.0, stroke, StrokeKind::Middle);
-    response.on_hover_text(if linked { t!("Width and height keep their ratio (click to change them separately)") } else { t!("Width and height change separately (click to keep their ratio)") })
-}
-
 /// 筆（画像をロック）。16 × 16 の枠の中。
 pub(super) fn draw_brush(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.line_segment([c + vec2(-1.0, 1.0), c + vec2(5.0, -5.0)], Stroke::new(stroke.width + 0.6, stroke.color));

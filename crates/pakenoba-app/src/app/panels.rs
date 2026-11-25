@@ -108,11 +108,8 @@ impl App {
                 match self.tool {
                     Tool::Select => match self.selected.filter(|&i| i < self.decals.len()) {
                         Some(_) if self.selection().len() > 1 => {
-                            // いくつも選んでいるとき: 整列と、まとめて消す。
+                            // いくつも選んでいるとき: まとめて消す。整列は、右のプロパティの「整列」の節。
                             ui.label(t!("{} pieces of artwork", self.selection().len()));
-                            ui.separator();
-                            ui.label(t!("Align"));
-                            self.align_buttons(ui);
                             ui.separator();
                             if ui.button(t!("Delete")).on_hover_text("Delete").clicked() {
                                 self.cmd_delete();
@@ -132,9 +129,6 @@ impl App {
                             if ui.add_enabled(!self.decals[index].layer.fixed(), egui::Button::new(t!("Rotate 90°"))).on_disabled_hover_text(t!("Locked")).clicked() {
                                 self.rotate_selected();
                             }
-                            ui.separator();
-                            ui.label(t!("To the panel"));
-                            self.align_buttons(ui);
                         }
                         None => {
                             hint(ui, t!("Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline"));
@@ -203,14 +197,10 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 6.0;
                     icons::panel_tabs(ui, &[t!("Properties")], 0);
                     super::theme::panel_body().show(ui, |ui| {
-                        // 型の工程へ戻る入口。言語によっては長くなるので、折り返す。
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.small_button(t!("Structure")).on_hover_text(t!("Go back to the Structure step to change the box type and dimensions")).clicked() {
-                                self.workspace = Workspace::Shape;
-                            }
-                            ui.weak(self.shape_summary());
-                        });
+                        // 文字と間隔は、PhotoCraft の Compact（kit.rs）。
+                        super::kit::compact(ui);
                         self.properties(ui);
+                        // 型の名前と寸法は、下の帯に出ている。型を変えるのは、上の「型」の工程。
                     });
                 });
             });
@@ -310,47 +300,52 @@ impl App {
         let mut height = decal.size[1];
         // 0 に負の符号が付かないよう、0 を足しておく（「-0.0 度」と出るのを防ぐ）。
         let mut degrees = decal.angle.to_degrees() * turn + 0.0;
-        // 変形（PhotoCraft の「Transform」と同じ並び: W と H の間に鎖、その下に X と Y）。
-        // 欄の幅から、数値の欄の幅を決める（はみ出さないように。見出しの字下げのぶんも引く）。
-        let fw = ((ui.available_width() - 24.0 - 84.0) / 2.0).clamp(56.0, 90.0);
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Transform")).strong()).id_salt("transform").default_open(true).show(ui, |ui| {
-            let label = |ui: &mut egui::Ui, text: &str| {
-                ui.add_sized([22.0, 22.0], egui::Label::new(egui::RichText::new(text).color(super::theme::MUTED)));
-            };
-            let field = |ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, unit: &str| {
-                ui.add_sized([fw, 22.0], egui::DragValue::new(value).range(range).speed(0.5).max_decimals(1).suffix(unit));
-            };
+        // 変形（PhotoCraft の「Transform」と同じ並び）。2 列で、欄の幅いっぱいに広げる。
+        // 1 行目 W［鎖］H、2 行目 X Y、3 行目 角度。左の字を左右に引いても、値が変わる。
+        let link_tip = if *ratio_lock { t!("Width and height keep their ratio (click to change them separately)") } else { t!("Width and height change separately (click to keep their ratio)") };
+        let scrub = t!("Drag left or right to change the value");
+        let mut link_clicked = false;
+        super::kit::section(ui, "transform", t!("Transform"), true, false, |ui| {
+            // 字 14 + 間 4 + 欄、を 2 列。間に鎖（16）。
+            let gap = ui.spacing().item_spacing.x.min(4.0);
+            let fw = ((ui.available_width() - 2.0 * (14.0 + gap) - 16.0 - 2.0 * gap) / 2.0).max(48.0);
             ui.add_enabled_ui(!fixed, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    label(ui, t!("W"));
-                    field(ui, &mut width, 2.0..=2000.0, " mm");
-                    if icons::link_button(ui, *ratio_lock).clicked() {
-                        *ratio_lock = !*ratio_lock;
-                    }
-                    label(ui, t!("H"));
-                    field(ui, &mut height, 2.0..=2000.0, " mm");
+                    ui.spacing_mut().item_spacing.x = gap;
+                    super::kit::glyph(ui, t!("W"), &mut width, 2.0..=2000.0, 0.5, scrub);
+                    super::kit::number(ui, fw, &mut width, 2.0..=2000.0, " mm");
+                    link_clicked = super::kit::link(ui, *ratio_lock, link_tip).clicked();
+                    super::kit::glyph(ui, t!("H"), &mut height, 2.0..=2000.0, 0.5, scrub);
+                    super::kit::number(ui, fw, &mut height, 2.0..=2000.0, " mm");
                 });
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    label(ui, t!("X"));
-                    field(ui, &mut x, -2000.0..=4000.0, " mm");
-                    ui.add_space(22.0);
-                    label(ui, t!("Y"));
-                    field(ui, &mut y, -2000.0..=4000.0, " mm");
+                    ui.spacing_mut().item_spacing.x = gap;
+                    super::kit::glyph(ui, t!("X"), &mut x, -2000.0..=4000.0, 0.5, scrub);
+                    super::kit::number(ui, fw, &mut x, -2000.0..=4000.0, " mm");
+                    ui.allocate_exact_size(egui::vec2(16.0, super::kit::CONTROL), egui::Sense::hover());
+                    super::kit::glyph(ui, t!("Y"), &mut y, -2000.0..=4000.0, 0.5, scrub);
+                    super::kit::number(ui, fw, &mut y, -2000.0..=4000.0, " mm");
                 });
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    label(ui, t!("Angle"));
-                    field(ui, &mut degrees, -180.0..=180.0, t!("°"));
+                    ui.spacing_mut().item_spacing.x = gap;
+                    super::kit::rotate_glyph(ui, &mut degrees, -180.0..=180.0, t!("Angle. Drag left or right to change it"));
+                    super::kit::number(ui, fw, &mut degrees, -180.0..=180.0, t!("°"));
                 });
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(t!("Side of sheet")).color(super::theme::MUTED));
-                    ui.selectable_value(&mut back, false, t!(" Front ")).on_hover_text(t!("Place on the front of the sheet (outside of the box)"));
-                    ui.selectable_value(&mut back, true, t!(" Back ")).on_hover_text(t!("Place on the back of the sheet (inside of the box), such as under the lid"));
-                });
+                ui.add_space(2.0);
+                super::kit::caption(ui, t!("Side of sheet"));
+                super::kit::segmented(
+                    ui,
+                    &mut back,
+                    &[
+                        (false, t!("Front"), t!("Place on the front of the sheet (outside of the box)")),
+                        (true, t!("Back"), t!("Place on the back of the sheet (inside of the box), such as under the lid")),
+                    ],
+                );
             });
         });
+        if link_clicked {
+            *ratio_lock = !*ratio_lock;
+        }
         if (x, y) != (x0, y0) {
             // 数値で動かすときは、置かれている面の中にとどめる（隣の面へは、ドラッグで動かす）。
             decal.set_center(template, [template.min[0] + mirror(x), template.max[1] - y]);
@@ -390,11 +385,15 @@ impl App {
         let mut names: Vec<&str> = pieces.iter().map(|p| pakenoba_i18n::trc("panel", self.template.panels[p.panel].name)).collect();
         names.dedup();
         let seams = pieces.iter().map(|p| p.seams).max().unwrap_or(0);
-        ui.add_space(2.0);
-        ui.small(t!("On panels: {}", names.join(pakenoba_i18n::tr(", "))));
-        if seams > 0 {
-            ui.small(t!("Crosses {seams} seam(s)."));
+        if super::kit::section_open(ui, "transform", true) {
+            ui.add_space(-6.0);
+            super::kit::caption(ui, &t!("On panels: {}", names.join(pakenoba_i18n::tr(", "))));
+            if seams > 0 {
+                super::kit::caption(ui, &t!("Crosses {seams} seam(s)."));
+            }
+            ui.add_space(6.0);
         }
+        self.align_section(ui);
         self.effect_list(ui, index);
         // 中身ごとの設定（文字、図形）と、柄だけの調整。
         // 操作（画像トレース、余白の切り詰め、外のアプリで編集、消す）は、レイヤーの右クリックと「柄」のメニューにある。
@@ -428,7 +427,7 @@ impl App {
         // 色が多い（写真をトレースしたものなど）と並べきれないので、形の多い色から並べる。
         const SHOWN: usize = 40;
         let picked = self.path_pick.filter(|(i, ..)| *i == index);
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Vector")).strong()).id_salt("vector-style").default_open(true).open(picked.is_some().then_some(true)).show(ui, |ui| {
+        super::kit::section(ui, "vector-style", t!("Vector"), true, picked.is_some(), |ui| {
             if style.off {
                 ui.weak(t!("Hidden for now. Turn it back on with the eye in the Layers panel."));
             }
@@ -585,7 +584,7 @@ impl App {
         let mut tile = before.unwrap_or_default();
         let mut gap = tile.gap_mm();
         let mut shift = tile.shift as f32;
-        egui::CollapsingHeader::new(egui::RichText::new(t!("Tile")).strong()).id_salt("tile").default_open(focused).show(ui, |ui| {
+        super::kit::section(ui, "tile", t!("Tile"), true, focused, |ui| {
             if tile.off {
                 ui.weak(t!("Hidden for now. Turn it back on with the eye in the Layers panel."));
             }

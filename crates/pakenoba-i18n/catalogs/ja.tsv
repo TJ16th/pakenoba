@@ -316,7 +316,6 @@
 	Send backward	背面へ
 	Rotate 90°	90 度回す
 	Locked	ロックしています
-	To the panel	パネルに
 	Click artwork to select it. Hold Shift to select several (Ctrl+A for all). Place assets by dragging them from the assets panel on the left onto the box or the dieline	柄をクリックして選びます。Shift を押しながらで、いくつも選べます（Ctrl+A ですべて）。素材は、左の素材の欄から、箱や展開図へドラッグして置きます
 	Drag to turn the box or move the dieline	ドラッグで、箱を回す、展開図をずらす
 	Back	裏
@@ -325,15 +324,12 @@
 	Show or hide the {label} view. Press {key}, or click with Alt held, to show only this view	{label}の表示を出す、隠す。{key} のキーか、Alt を押しながら押すと、この表示だけにする
 	The last view cannot be hidden.	最後の 1 つの表示は隠せません。
 	View	表示
-	Go back to the Structure step to change the box type and dimensions	型の工程へ戻って、形と寸法を変える
 	Properties	プロパティ
 	Select artwork to see its settings here.	柄を選ぶと、ここに設定が出ます。
 	{others} more selected. They move together.	ほかに {others} 個を選んでいます。動かすと、いっしょに動きます。
 	Locked. To move it, unlock it in the Layers panel.	ロックしています。動かすには、レイヤーの欄で鍵を外してください。
 	Side of sheet	紙の面
-	 Front 	 表 
 	Place on the front of the sheet (outside of the box)	紙の表（箱の外側）に置く
-	 Back 	 裏 
 	Place on the back of the sheet (inside of the box), such as under the lid	紙の裏（箱の内側）に置く。フタの裏など
 	Width	幅
 	Height	高さ
@@ -1421,3 +1417,9 @@ blend	Color	カラー
 	Set up a local AI (Ollama) to give assets a name you can recognize and tags to search by	手元の AI（Ollama）を設定すると、素材に見て分かる名前と、探すためのタグを付けられます
 	Set up a local AI…	手元の AI を設定…
 	Tags	タグ
+	Aligns {tip}.	{tip}。
+	Angle. Drag left or right to change it	角度。左右に引いても変えられます
+	Distribute horizontally (three or more pieces)	左右に等しく並べる（3 つ以上のとき）
+	Distribute vertically (three or more pieces)	上下に等しく並べる（3 つ以上のとき）
+	Drag left or right to change the value	左右に引いても、値を変えられます
+	Align and distribute	整列

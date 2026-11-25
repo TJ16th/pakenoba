@@ -156,6 +156,7 @@ impl App {
         else {
             return;
         };
+        super::kit::heading(ui, t!("Shape"));
         let earlier = self.snapshot();
         let mut changed = false;
         ui.add_enabled_ui(!locked, |ui| {

@@ -184,22 +184,41 @@ impl App {
     }
 
     /// 上の帯とプロパティの欄に出す、整列のボタン。
-    pub(super) fn align_buttons(&mut self, ui: &mut egui::Ui) {
+    /// プロパティの「整列」の節。1 つなら置いている面に、いくつもなら選んだ柄の全体の枠にそろえる。
+    /// 3 つ以上なら、等しい間隔に並べることもできる。
+    pub(super) fn align_section(&mut self, ui: &mut egui::Ui) {
+        use super::kit::AlignIcon;
         let count = self.selection().len();
+        let movable = self.selection().into_iter().any(|i| !self.decals[i].layer.fixed());
         let tip = if count >= 2 { t!("to the box around all the selected artwork") } else { t!("to the panel it is on") };
-        for (how, label) in [(Align::Left, t!("Left")), (Align::CenterX, t!("Horizontal center")), (Align::Right, t!("Right")), (Align::Top, t!("Top")), (Align::CenterY, t!("Vertical center")), (Align::Bottom, t!("Bottom"))] {
-            if ui.small_button(label).on_hover_text(t!("Align {label} ({tip})")).clicked() {
-                self.align(how);
-            }
-        }
-        if count >= 3 {
-            if ui.small_button(t!("Distribute horizontally")).clicked() {
-                self.distribute(true);
-            }
-            if ui.small_button(t!("Distribute vertically")).clicked() {
-                self.distribute(false);
-            }
-        }
+        super::kit::section(ui, "align", t!("Align and distribute"), true, false, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let groups: [&[(AlignIcon, Align, &str)]; 2] = [
+                    &[(AlignIcon::Left, Align::Left, t!("Left")), (AlignIcon::CenterX, Align::CenterX, t!("Horizontal center")), (AlignIcon::Right, Align::Right, t!("Right"))],
+                    &[(AlignIcon::Top, Align::Top, t!("Top")), (AlignIcon::CenterY, Align::CenterY, t!("Vertical center")), (AlignIcon::Bottom, Align::Bottom, t!("Bottom"))],
+                ];
+                for (k, group) in groups.iter().enumerate() {
+                    if k > 0 {
+                        ui.add_space(8.0);
+                    }
+                    for &(icon, how, label) in group.iter() {
+                        if super::kit::align_button(ui, icon, movable, &t!("Align {label} ({tip})")).clicked() {
+                            self.align(how);
+                        }
+                    }
+                }
+                ui.add_space(8.0);
+                let spread = count >= 3 && movable;
+                if super::kit::align_button(ui, AlignIcon::SpreadX, spread, t!("Distribute horizontally (three or more pieces)")).clicked() {
+                    self.distribute(true);
+                }
+                if super::kit::align_button(ui, AlignIcon::SpreadY, spread, t!("Distribute vertically (three or more pieces)")).clicked() {
+                    self.distribute(false);
+                }
+            });
+            super::kit::caption(ui, &t!("Aligns {tip}."));
+        });
     }
 
     /// 1 回の画面の終わりに、カーソルの下の柄が変わっていたら、絵を描き直す。

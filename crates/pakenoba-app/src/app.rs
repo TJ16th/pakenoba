@@ -13,6 +13,7 @@ mod file;
 mod finishes;
 mod history;
 mod icons;
+mod kit;
 mod library;
 mod lighting;
 mod outputs;

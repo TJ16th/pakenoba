@@ -1071,8 +1071,7 @@ impl App {
         if effects.is_empty() {
             return;
         }
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(t!("Effects")).strong());
+        super::kit::heading(ui, t!("Effects"));
         for effect in effects {
             let label = egui::RichText::new(Self::effect_label(effect));
             let label = if self.effect_on(index, effect) { label } else { label.weak() };
@@ -1661,8 +1660,7 @@ impl App {
         let mut reset = None;
         ui.add_enabled_ui(!locked, |ui| {
             if !layer_only {
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new(t!("Adjustments (this artwork only)")).strong());
+                super::kit::heading(ui, t!("Adjustments (this artwork only)"));
             }
             let n = list.len();
             // 柄を選んでいるとき（調整を選んでいないとき）は、調整の名前だけを並べる。押すと、その調整だけを出す。
