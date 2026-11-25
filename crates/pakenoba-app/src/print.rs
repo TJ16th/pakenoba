@@ -304,6 +304,15 @@ pub struct ReadySide<'a> {
     pub folds: &'a [(P2, P2)],
 }
 
+/// 入稿用の PDF の絵の色。
+pub enum ReadyColor<'a> {
+    /// RGB のまま（sRGB）。
+    Rgb,
+    /// CMYK に変える。`profile` は刷る条件の ICC プロファイル（CMYK の出力プロファイル）。
+    /// 変換は相対的な色域（Relative Colorimetric）と黒点の補正。プロファイルは出力の意図（Output Intent）として PDF に入れる。
+    Cmyk { profile: &'a craft_cms::Profile },
+}
+
 /// 入稿用の PDF の、紙の端の余白（mm）。面の名前を刷る。
 const READY_MARGIN: f32 = 15.0;
 
@@ -320,12 +329,25 @@ fn plate_cmyk(rgb: [u8; 3]) -> [f32; 4] {
 
 /// 入稿用の PDF を作る。面ごとに 1 ページ（展開図の実寸に、余白を足した大きさ）。
 ///
-/// - 絵は、白の上に重ねた RGB の画像。
+/// - 絵は、白の上に重ねた画像。`color` が CMYK なら、ICC プロファイルで CMYK に変え（紙の白はインクなし）、
+///   プロファイルを出力の意図（GTS_PDFX の Output Intent）として入れる。
 /// - 切り線は特色「Die Cut」、折り線は特色「Crease」の線（ベクター、オーバープリント）。
 /// - 加工の版は、版の名前の特色（Separation）で、オーバープリントにして、絵の上に重ねる。
 ///   版の形は 1 ビットのステンシル（画像マスク）なので、特色を見せない画面では、代わりの CMYK で絵の上に見える。
 /// - 最後のページに、加工の指示（`notes`。英数字だけ刷る）。
-pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[ReadySide], title: &str, notes: &[String]) -> Result<Vec<u8>, String> {
+pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[ReadySide], title: &str, notes: &[String], color: &ReadyColor) -> Result<Vec<u8>, String> {
+    // CMYK にするなら、sRGB からの変換を、はじめに 1 度だけ作る。
+    let cmyk = match color {
+        ReadyColor::Rgb => None,
+        ReadyColor::Cmyk { profile } => {
+            if profile.color_space.channels() != 4 || !profile.can_be_destination() {
+                return Err(format!("\"{}\" is not a CMYK output profile", profile.description));
+            }
+            let srgb = craft_cms::builtin::Builtin::Srgb.profile();
+            let transform = craft_cms::Transform::new(srgb, profile, craft_cms::Intent::RelativeColorimetric, true).map_err(|e| format!("{e:?}"))?;
+            Some((transform, *profile))
+        }
+    };
     let (w, h) = (frame.w, frame.h);
     let size = [max[0] - min[0], max[1] - min[1]];
     // 画像の置き場所（mm。紙の左下からの、画像の左下と、幅と高さ）。画素の数どおりの大きさにする（実寸がずれないように）。
@@ -378,11 +400,23 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
                 [0, 1, 2].map(|i| ((p[i] as u32 * a + 255 * (255 - a) + 127) / 255) as u8)
             })
             .collect();
-        let compressed = deflate(&rgb)?;
+        let pixels = match &cmyk {
+            Some((transform, _)) => {
+                let mut out = vec![0u8; w * h * 4];
+                transform.convert_u8(&rgb, 3, &mut out, 4, false).map_err(|e| format!("{e:?}"))?;
+                out
+            }
+            None => rgb,
+        };
+        let compressed = deflate(&pixels)?;
         let mut xobject = pdf.image_xobject(image, &compressed);
         xobject.filter(Filter::FlateDecode);
         xobject.width(w as i32).height(h as i32).bits_per_component(8);
-        xobject.color_space().device_rgb();
+        if cmyk.is_some() {
+            xobject.color_space().device_cmyk();
+        } else {
+            xobject.color_space().device_rgb();
+        }
         xobject.finish();
         let mut masks = Vec::new();
         for plate in side.plates {
@@ -447,7 +481,11 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
             content.stroke();
         }
         content.restore_state();
-        let label = format!("PAKENOBA print-ready  {}  {}  actual size  ({:.1} x {:.1} mm, bleed {:.1} mm, {:.0} dpi)  plates: {}", ascii(title), ascii(side.label), size[0], size[1], (min[0] - frame.left).max(0.0), frame.dpi_value(), side.plates.iter().map(|p| ascii(&p.name)).collect::<Vec<_>>().join(", "));
+        let colors = match &cmyk {
+            Some((_, profile)) => format!("CMYK: {}", ascii(&profile.description)),
+            None => "RGB (sRGB)".to_owned(),
+        };
+        let label = format!("PAKENOBA print-ready  {}  {}  actual size  ({:.1} x {:.1} mm, bleed {:.1} mm, {:.0} dpi, {colors})  plates: {}", ascii(title), ascii(side.label), size[0], size[1], (min[0] - frame.left).max(0.0), frame.dpi_value(), side.plates.iter().map(|p| ascii(&p.name)).collect::<Vec<_>>().join(", "));
         content.begin_text();
         content.set_font(Name(b"F1"), 7.0);
         content.set_fill_gray(0.35);
@@ -513,7 +551,29 @@ pub fn print_ready_pdf(min: P2, max: P2, frame: crate::art::Frame, sides: &[Read
     pdf.stream(content_id, &content.finish());
 
     pdf.pages(tree).kids(page_ids.iter().copied()).count(page_ids.len() as i32);
-    pdf.catalog(catalog).pages(tree);
+    // CMYK にしたときは、刷る条件のプロファイルを、出力の意図として入れる。
+    let intent = match &cmyk {
+        Some((_, profile)) => {
+            let icc = alloc();
+            let bytes = profile.to_bytes();
+            let compressed = deflate(&bytes)?;
+            let mut stream = pdf.icc_profile(icc, &compressed);
+            stream.filter(Filter::FlateDecode);
+            stream.n(4);
+            stream.alternate().device_cmyk();
+            stream.finish();
+            Some((icc, profile.description.clone()))
+        }
+        None => None,
+    };
+    let mut catalog = pdf.catalog(catalog);
+    catalog.pages(tree);
+    if let Some((icc, name)) = &intent {
+        let mut intents = catalog.output_intents();
+        intents.push().subtype(pdf_writer::types::OutputIntentSubtype::PDFX).output_condition_identifier(pdf_writer::TextStr(name)).info(pdf_writer::TextStr(name)).dest_output_profile(*icc);
+        intents.finish();
+    }
+    catalog.finish();
     Ok(pdf.finish())
 }
 
@@ -570,7 +630,7 @@ mod tests {
         let cuts = [([0.0, 0.0], [200.0, 0.0])];
         let side = ReadySide { label: "Front", rgba: &rgba, plates: &plates, cuts: &cuts, folds: &[] };
         let frame = crate::art::Frame { left: 0.0, top: 100.0, ppm: 0.1, w, h };
-        let bytes = print_ready_pdf([0.0, 0.0], [200.0, 100.0], frame, &[side], "box", &["- Foil Gold (front)".into()]).unwrap();
+        let bytes = print_ready_pdf([0.0, 0.0], [200.0, 100.0], frame, &[side], "box", &["- Foil Gold (front)".into()], &ReadyColor::Rgb).unwrap();
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("/Separation /Foil#20Gold"), "特色の名前");
         assert!(text.contains("/Separation /Die#20Cut") && text.contains("/Separation /Crease"));
@@ -578,5 +638,37 @@ mod tests {
         assert!(text.contains("/ImageMask true"));
         assert!(text.contains("/TrimBox"));
         assert_eq!(plate_cmyk([255, 255, 255]), [0.15, 0.0, 0.0, 0.0]);
+        assert!(text.contains("/DeviceRGB") && !text.contains("/OutputIntents"));
+    }
+
+    #[test]
+    fn 入稿用の_pdf_を_cmyk_にすると_絵がcmykになり_出力の意図が入る() {
+        let (w, h) = (4, 2);
+        // 左半分は透明（紙の白）、右半分は赤。
+        let mut rgba = Vec::new();
+        for _ in 0..h {
+            for x in 0..w {
+                rgba.extend_from_slice(if x < 2 { &[0, 0, 0, 0] } else { &[255, 0, 0, 255] });
+            }
+        }
+        let side = ReadySide { label: "Front", rgba: &rgba, plates: &[], cuts: &[], folds: &[] };
+        let frame = crate::art::Frame { left: 0.0, top: 2.0, ppm: 1.0, w, h };
+        let profile = craft_cms::builtin::Builtin::CoatedFogra39.profile();
+        let bytes = print_ready_pdf([0.0, 0.0], [4.0, 2.0], frame, &[side], "box", &[], &ReadyColor::Cmyk { profile }).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("/DeviceCMYK"));
+        assert!(text.contains("/OutputIntents") && text.contains("/GTS_PDFX") && text.contains("/DestOutputProfile"));
+        // 絵の画素: 紙の白はインクなし、赤はマゼンタとイエローが濃く、シアンが薄い。
+        let start = text.find("/Subtype /Image").unwrap();
+        let stream_at = bytes[start..].windows(7).position(|w| w == b"stream\n").unwrap() + start + 7;
+        let mut z = flate2::read::ZlibDecoder::new(&bytes[stream_at..]);
+        let mut px = vec![0u8; w * h * 4];
+        std::io::Read::read_exact(&mut z, &mut px).unwrap();
+        assert_eq!(&px[0..4], &[0, 0, 0, 0], "紙の白");
+        let red = &px[8..12];
+        assert!(red[1] > 180 && red[2] > 180 && red[0] < 40 && red[3] < 40, "赤: {red:?}");
+        // CMYK のプロファイルでないものは断る。
+        let srgb = craft_cms::builtin::Builtin::Srgb.profile();
+        assert!(print_ready_pdf([0.0, 0.0], [4.0, 2.0], frame, &[], "box", &[], &ReadyColor::Cmyk { profile: srgb }).is_err());
     }
 }

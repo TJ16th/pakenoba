@@ -37,6 +37,8 @@ craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233
 craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233934d1b2f74e3c0f235168bf5f13ef3", features = ["tree-render"] }
 # 画像のベクター化。VectorCraft の画像トレース（Illustrator の画像トレースにならったもの）を、部品としてそのまま使う。
 vectorcraft-trace = { git = "https://github.com/storytold/vectorcraft", rev = "db9acab4da715945ea12c865e6ec54a5589588c9" }
+# 色の管理（ICC）。入稿用の PDF の絵を CMYK にする。Rust だけで書かれ、CC0 の CMYK プロファイル（FOGRA39 に合わせたもの）を持つ。
+craft-cms = { git = "https://github.com/storytold/craft-libs", rev = "ba25ccd233934d1b2f74e3c0f235168bf5f13ef3" }
 # 案件をまたぐ設定（コレクションの登録）を、人が読める形で覚える。
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

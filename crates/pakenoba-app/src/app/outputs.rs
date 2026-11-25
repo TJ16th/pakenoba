@@ -22,7 +22,7 @@ use super::{App, Shown};
 use crate::art::{compose, mirror, mirror_gray, sheet_lines};
 use crate::gpu::BoxRenderer;
 use crate::paint::{Canvas, Marks, paint};
-use crate::print::{Paper, PrintSettings, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
+use crate::print::{Paper, PrintSettings, ReadyColor, ReadySide, SheetPrint, print_pdf, print_ready_pdf, tile};
 
 /// 出力の種類（左の一覧の順）。
 pub(super) const OUTPUTS: [(&str, bool); 9] = [("Dieline (PSD)", true), ("16:9 image (for slides)", true), ("Box-opening video", true), ("Store shelf picture", false), ("Full-size dieline (printed on A4 or A3 sheets)", true), ("Peek-in view (webcam)", true), ("Print-ready PDF (full size, with finish plates)", true), ("Images for generative AI (ControlNet, Firefly)", true), ("3D model (GLB, OBJ)", true)];
@@ -59,11 +59,52 @@ pub(super) struct OutputSettings {
     pub view_size: usize,
     /// 生成した絵を面へ貼るとき、面ごとの明るさをそろえる。
     pub even_faces: bool,
+    /// 入稿用の PDF の絵の色（RGB のままか、CMYK にするか）。
+    pub color: ReadyColorChoice,
+}
+
+/// 入稿用の PDF の絵の色の選び方。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) enum ReadyColorChoice {
+    /// RGB のまま（sRGB）。
+    #[default]
+    Rgb,
+    /// CMYK。内蔵のコート紙のプロファイル（FOGRA39 の測定値に合わせたもの。CC0）。
+    Fogra39,
+    /// CMYK。使う人が選んだ ICC プロファイルのファイル（Japan Color 2001 Coated など）。
+    Icc(PathBuf),
+}
+
+impl ReadyColorChoice {
+    /// 画面に出す名前。
+    pub fn label(&self) -> String {
+        match self {
+            ReadyColorChoice::Rgb => t!("RGB (as on screen)").to_owned(),
+            ReadyColorChoice::Fogra39 => t!("CMYK: coated paper (built in, FOGRA39)").to_owned(),
+            ReadyColorChoice::Icc(path) => t!("CMYK: {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        }
+    }
+
+    /// CMYK のプロファイルを用意する（RGB なら `None`）。ファイルは、ここで読んで確かめる。
+    pub fn profile(&self) -> Result<Option<std::borrow::Cow<'static, craft_cms::Profile>>, String> {
+        match self {
+            ReadyColorChoice::Rgb => Ok(None),
+            ReadyColorChoice::Fogra39 => Ok(Some(std::borrow::Cow::Borrowed(craft_cms::builtin::Builtin::CoatedFogra39.profile()))),
+            ReadyColorChoice::Icc(path) => {
+                let bytes = std::fs::read(path).map_err(|e| t!("Could not read the ICC profile {}: {e}", path.display()))?;
+                let profile = craft_cms::Profile::parse(&bytes).map_err(|e| t!("{} is not an ICC profile PAKENOBA can read: {e:?}", path.display()))?;
+                if profile.color_space.channels() != 4 || !profile.can_be_destination() {
+                    return Err(t!("{} is not a CMYK output profile", path.display()));
+                }
+                Ok(Some(std::borrow::Cow::Owned(profile)))
+            }
+        }
+    }
 }
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0, view_size: 0, even_faces: true }
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0, view_size: 0, even_faces: true, color: ReadyColorChoice::Rgb }
     }
 }
 
@@ -522,7 +563,12 @@ impl App {
         }
         let pages = sides.len() + 1;
         let title = self.project_name();
-        print_ready_pdf(min, max, frame, &sides, &title, &self.finish_notes_ascii()).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
+        let profile = self.output.color.profile()?;
+        let color = match &profile {
+            Some(profile) => ReadyColor::Cmyk { profile },
+            None => ReadyColor::Rgb,
+        };
+        print_ready_pdf(min, max, frame, &sides, &title, &self.finish_notes_ascii(), &color).and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))?;
         Ok(pages)
     }
 
@@ -603,6 +649,43 @@ impl App {
         match self.apply_view_image(&image, &spec, even) {
             Ok(faces) => self.say(t!("Put the image on {faces} face(s). Press Ctrl+Z to undo.")),
             Err(e) => self.say(e),
+        }
+    }
+
+    /// 入稿用の PDF の絵の色。RGB のまま、内蔵のコート紙の CMYK、または ICC のファイル。
+    fn ready_color_choice(&mut self, ui: &mut egui::Ui) {
+        let mut pick_file = false;
+        ui.horizontal(|ui| {
+            ui.label(t!("Color mode"));
+            egui::ComboBox::from_id_salt("ready-color").width(260.0).selected_text(self.output.color.label()).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.output.color, ReadyColorChoice::Rgb, ReadyColorChoice::Rgb.label());
+                ui.selectable_value(&mut self.output.color, ReadyColorChoice::Fogra39, ReadyColorChoice::Fogra39.label());
+                if let Some(path) = self.settings.cmyk_icc.clone() {
+                    let choice = ReadyColorChoice::Icc(path);
+                    let label = choice.label();
+                    ui.selectable_value(&mut self.output.color, choice, label);
+                }
+                if ui.button(t!("Choose an ICC profile…")).clicked() {
+                    pick_file = true;
+                    ui.close();
+                }
+            });
+        });
+        if pick_file && let Some(path) = rfd::FileDialog::new().set_title(t!("Choose a CMYK ICC profile")).add_filter("ICC", &["icc", "icm"]).pick_file() {
+            let choice = ReadyColorChoice::Icc(path.clone());
+            match choice.profile() {
+                Ok(_) => {
+                    self.output.color = choice;
+                    self.settings.cmyk_icc = Some(path);
+                    if let Err(e) = self.settings.save() {
+                        self.say(e);
+                    }
+                }
+                Err(e) => self.say(e),
+            }
+        }
+        if self.output.color != ReadyColorChoice::Rgb {
+            ui.small(t!("The artwork is converted from sRGB with relative colorimetric intent and black point compensation, and the profile is embedded as the output intent. Ask your print shop which profile to use (in Japan, often Japan Color 2001 Coated). Black text becomes four-color black."));
         }
     }
 
@@ -802,6 +885,7 @@ impl App {
                         ui.label(t!("Plates: {}", plates.join(", ")));
                     }
                     self.resolution_choice(ui);
+                    self.ready_color_choice(ui);
                     if self.export_busy(ui) {
                     } else if ui.button(t!("Save the print-ready PDF…")).clicked() {
                         self.export_ready();

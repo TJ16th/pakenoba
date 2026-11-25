@@ -1472,3 +1472,14 @@ blend	Color	カラー
 	This window lets MCP drive it (Edit > Preferences)	この画面は、MCP から動かせます（編集 → 環境設定）
 	While on, `pakenoba mcp` started by an AI app (VS Code, Claude Desktop and so on) connects to this window, and you see each change as it happens. Only programs on this computer run by you can connect. Files are read and written only in the folders AI may use	入れている間は、AI のアプリ（VS Code、Claude Desktop など）が起動した `pakenoba mcp` が、この画面につながり、変わるところがその場で見えます。つなげるのは、この PC で自分が動かしたプログラムだけです。ファイルを読み書きできるのは、AI が使ってよいフォルダの中だけです
 	● MCP connected	● MCP 接続中
+	"color" must be rgb or cmyk, not "{other}"	「color」は rgb か cmyk です（「{other}」ではなく）
+	CMYK: coated paper (built in, FOGRA39)	CMYK: コート紙（内蔵、FOGRA39）
+	CMYK: {}	CMYK: {}
+	Choose a CMYK ICC profile	CMYK の ICC プロファイルを選ぶ
+	Choose an ICC profile…	ICC プロファイルを選ぶ…
+	Could not read the ICC profile {}: {e}	ICC プロファイル {} を読めませんでした: {e}
+	RGB (as on screen)	RGB（画面のまま）
+	The artwork is converted from sRGB with relative colorimetric intent and black point compensation, and the profile is embedded as the output intent. Ask your print shop which profile to use (in Japan, often Japan Color 2001 Coated). Black text becomes four-color black.	絵を sRGB から、相対的な色域（Relative Colorimetric）と黒点の補正で CMYK に変え、プロファイルを出力の意図として PDF に入れます。どのプロファイルにするかは、印刷所に確かめてください（日本では Japan Color 2001 Coated が多い）。黒い文字は 4 色の黒になります。
+	{} is not a CMYK output profile	{} は CMYK の出力プロファイルではありません
+	{} is not an ICC profile PAKENOBA can read: {e:?}	{} は、パケノバで読める ICC プロファイルではありません: {e:?}
+	Color mode	色

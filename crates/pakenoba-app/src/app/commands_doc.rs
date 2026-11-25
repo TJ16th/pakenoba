@@ -166,6 +166,22 @@ impl App {
             }
             self.output.bleed = bleed as f32;
         }
+        // 入稿用の PDF の色: "rgb"、"cmyk"（内蔵のコート紙）、または ICC のファイル（"icc"。決めたフォルダの中だけ）。
+        if let Some(color) = args.get("color").and_then(Value::as_str) {
+            self.output.color = match color {
+                "rgb" => super::outputs::ReadyColorChoice::Rgb,
+                "cmyk" => match args.get("icc").and_then(Value::as_str) {
+                    Some(_) => {
+                        let path = self.checked_path(&json!({ "path": args["icc"] }), false)?;
+                        let choice = super::outputs::ReadyColorChoice::Icc(path);
+                        choice.profile()?;
+                        choice
+                    }
+                    None => super::outputs::ReadyColorChoice::Fogra39,
+                },
+                other => return Err(t!("\"color\" must be rgb or cmyk, not \"{other}\"")),
+            };
+        }
         Ok(())
     }
 
