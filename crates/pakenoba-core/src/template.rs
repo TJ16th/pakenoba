@@ -447,6 +447,14 @@ fn rect(u0: f32, v0: f32, u1: f32, v1: f32) -> Vec<P2> {
     ccw(vec![[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
 }
 
+/// 点から線分までの距離。
+fn distance_to_segment(p: P2, a: P2, b: P2) -> f32 {
+    let (d, r) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+    let len2 = d[0] * d[0] + d[1] * d[1];
+    let t = if len2 > 0.0 { ((r[0] * d[0] + r[1] * d[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+    (r[0] - d[0] * t).hypot(r[1] - d[1] * t)
+}
+
 fn lerp(p: P2, q: P2, x: f32) -> P2 {
     [p[0] + (q[0] - p[0]) * x, p[1] + (q[1] - p[1]) * x]
 }
@@ -631,6 +639,17 @@ impl Template {
         let mut emit = |frame: &Affine, p: V3, normal: V3, uv: [f32; 2], kind: f32| {
             out.push(Vertex { pos: world.point(frame.point(p)), normal: world.vector(frame.vector(normal)), uv, kind });
         };
+        // 折り線（まっすぐなものと曲線のもの）。ここに乗る辺は、切った縁ではなく、紙が折れて続いている所。
+        let creases: Vec<(P2, P2)> = self
+            .panels
+            .iter()
+            .flat_map(|panel| {
+                let straight = panel.hinge.as_ref().map(|h| (h.a, h.b));
+                let curved = panel.curved.iter().flat_map(|c| c.line.windows(2).map(|w| (w[0], w[1])));
+                straight.into_iter().chain(curved)
+            })
+            .collect();
+        let on_crease = |p: P2| creases.iter().any(|&(a, b)| distance_to_segment(p, a, b) < 0.05);
 
         for (panel, place) in self.panels.iter().zip(&placements) {
             let pts = &panel.outline;
@@ -664,9 +683,11 @@ impl Template {
                 }
             }
             // 断面。丸めたパネルでは、辺も細かく分ける。
+            // 折り線に乗る辺の断面は、折り目の丸みの外側として、表の柄で塗る（紙の切り口の色にすると、折り目に白い筋が出る）。
             for i in 0..pts.len() {
                 let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
                 let normal = normalize([q[1] - p[1], p[0] - q[0], 0.0]);
+                let side_kind = if on_crease(p) && on_crease(q) && on_crease(lerp(p, q, 0.5)) { 0.0 } else { 2.0 };
                 let count = match (place.active_bend(), place.distance(p), place.distance(q)) {
                     (Some(b), Some(sp), Some(sq)) => ((b.steepest() * (sq - sp).abs() / STRIP_ANGLE).ceil() as usize).clamp(1, 64),
                     _ => 1,
@@ -675,7 +696,7 @@ impl Template {
                     let (a, b) = (lerp(p, q, k as f32 / count as f32), lerp(p, q, (k + 1) as f32 / count as f32));
                     let quad = [[a[0], a[1], 0.0], [b[0], b[1], 0.0], [b[0], b[1], t], [a[0], a[1], t]];
                     for idx in [0usize, 1, 2, 0, 2, 3] {
-                        emit(&place.at([quad[idx][0], quad[idx][1]]), quad[idx], normal, self.uv(a), 2.0);
+                        emit(&place.at([quad[idx][0], quad[idx][1]]), quad[idx], normal, self.uv([quad[idx][0], quad[idx][1]]), side_kind);
                     }
                 }
             }
