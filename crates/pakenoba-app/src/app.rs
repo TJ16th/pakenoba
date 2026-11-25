@@ -44,6 +44,7 @@ mod theme;
 mod commands;
 mod commands_doc;
 pub(crate) mod mcp;
+mod bridge;
 mod agent;
 mod dialog;
 mod versions;
@@ -637,6 +638,10 @@ struct App {
     actor: String,
     /// 人以外がファイルを扱ってよいフォルダ（起動のときに渡したもの。設定の `agent_folders` と合わせて使う）。
     allowed: Vec<PathBuf>,
+    /// MCP からこの画面を動かす口（設定で入れている間だけ開く）。
+    bridge: Option<bridge::Bridge>,
+    /// 設定の「MCP からこの画面を動かす」を、起動のあと 1 度だけ反映したか。
+    bridge_started: bool,
     /// 操作の記録の窓を開いている。
     log_open: bool,
     /// エージェントの欄。
@@ -831,6 +836,8 @@ impl App {
             undo_batch: None,
             actor: "person".to_owned(),
             allowed: Vec::new(),
+            bridge: None,
+            bridge_started: false,
             log_open: false,
             agent: agent::Agent::default(),
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
@@ -1532,6 +1539,14 @@ impl eframe::App for App {
             }
             ui.ctx().request_repaint();
         }
+        // MCP から届いた依頼を、画面と同じコマンドの入口から実行する。
+        if !self.bridge_started {
+            self.bridge_started = true;
+            if self.settings.mcp_window {
+                self.set_mcp_window(ui.ctx(), true);
+            }
+        }
+        self.run_bridge_jobs();
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
             let Some(target) = self.open_to[which] else { continue };

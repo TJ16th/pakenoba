@@ -1033,6 +1033,16 @@ impl App {
                     ui.small(text);
                     ui.separator();
                 }
+                // MCP がこの画面につないでいる。
+                if let Some(bridge) = &self.bridge {
+                    let n = bridge.clients.load(std::sync::atomic::Ordering::Relaxed);
+                    if n > 0 {
+                        ui.small(egui::RichText::new(t!("● MCP connected")).color(super::theme::ACCENT)).on_hover_text(t!("An AI app is driving this window through MCP. Its changes can be undone"));
+                    } else {
+                        ui.small(egui::RichText::new(t!("MCP waiting")).color(super::theme::FAINT)).on_hover_text(t!("This window lets MCP drive it (Edit > Preferences)"));
+                    }
+                    ui.separator();
+                }
                 // カーソルの下の面の名前と、いまの型。
                 if let Some(panel) = self.hover.and_then(|i| self.template.panels.get(i)) {
                     ui.small(t!("Under the cursor: {}", pakenoba_i18n::trc("panel", panel.name)));

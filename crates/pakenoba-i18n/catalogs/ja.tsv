@@ -1465,3 +1465,10 @@ blend	Color	カラー
 	Length of the top edge of the body. Shorter than the width, the box narrows toward the top when seen from the front	本体の上の辺の長さ。横の長さより短くすると、正面から見て上がすぼまります
 	The same length as the width. Move the slider to choose your own length.	横の長さと同じです。つまみを動かすと、自分で決めた長さになります。
 	Top edge	上の辺
+	An AI app is driving this window through MCP. Its changes can be undone	AI のアプリが、MCP でこの画面を動かしています。変えたところは元に戻せます
+	Could not let MCP drive this window: {e}	MCP からこの画面を動かせるようにできませんでした: {e}
+	Let MCP drive this window	MCP からこの画面を動かす
+	MCP waiting	MCP 待ち受け中
+	This window lets MCP drive it (Edit > Preferences)	この画面は、MCP から動かせます（編集 → 環境設定）
+	While on, `pakenoba mcp` started by an AI app (VS Code, Claude Desktop and so on) connects to this window, and you see each change as it happens. Only programs on this computer run by you can connect. Files are read and written only in the folders AI may use	入れている間は、AI のアプリ（VS Code、Claude Desktop など）が起動した `pakenoba mcp` が、この画面につながり、変わるところがその場で見えます。つなげるのは、この PC で自分が動かしたプログラムだけです。ファイルを読み書きできるのは、AI が使ってよいフォルダの中だけです
+	● MCP connected	● MCP 接続中

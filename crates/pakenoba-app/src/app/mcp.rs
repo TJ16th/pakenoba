@@ -1,12 +1,13 @@
 //! MCP サーバー（`pakenoba mcp`）。ほかの AI のアプリ（Claude Desktop、VS Code など）から、パケノバを動かす。
 //!
 //! - 標準入出力で、1 行 1 通の JSON-RPC 2.0 をやりとりする（MCP の stdio の決まり）。ネットワークの口は開けない。
-//! - 画面は出さない。案件を開いて、コマンドで変え、名前を付けて保存する。
+//! - 画面で「MCP からこの画面を動かす」を入れていれば、開いている画面へつなぎ、画面がそのまま動く（bridge.rs）。
+//! - そうでなければ、画面は出さない。案件を開いて、コマンドで変え、名前を付けて保存する。
 //! - 道具（tools）は PhotoCraft と同じ 5 つ: `command_list`、`command_run`、`command_batch`、`doc_inspect`、`render_preview`。
 //! - 読み物（resources）は `pakenoba://document`（案件の状態）と `pakenoba://commands`（コマンドの一覧）。
 //! - ファイルを読み書きできるのは、`--allow` で渡したフォルダと、設定で決めたフォルダの中だけ。すでにあるファイルには書かない。
 //!
-//! 使い方: `pakenoba mcp [--allow <フォルダ>]... [案件.pknb]`。詳しくは docs/agent-and-mcp.md の 2 章。
+//! 使い方: `pakenoba mcp [--allow <フォルダ>]... [--headless | --window] [案件.pknb]`。詳しくは docs/agent-and-mcp.md の 2 章。
 
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
@@ -87,67 +88,77 @@ pub(super) fn call_tool(app: &mut App, actor: &str, name: &str, args: &Value) ->
 }
 
 impl Server {
-    fn call(&mut self, name: &str, args: &Value) -> Result<Value, String> {
-        call_tool(&mut self.app, &self.actor, name, args)
-    }
-
-    /// 1 通に答える。知らせ（`id` のないもの）には答えない。
     fn handle(&mut self, message: &Value) -> Option<Value> {
-        let id = message.get("id").cloned()?;
-        let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-        let params = message.get("params").cloned().unwrap_or(json!({}));
-        let result = match method {
-            "initialize" => {
-                let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(VERSIONS[0]);
-                let version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
-                if let Some(client) = params.pointer("/clientInfo/name").and_then(Value::as_str) {
-                    self.actor = format!("mcp:{client}");
-                }
-                Ok(json!({
-                    "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false }, "resources": { "listChanged": false } },
-                    "serverInfo": { "name": "pakenoba", "title": "PAKENOBA", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": INSTRUCTIONS,
-                }))
-            }
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools() })),
-            "tools/call" => {
-                let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                Ok(tool_result(self.call(&name, &args)))
-            }
-            "resources/list" => Ok(json!({ "resources": [
-                { "uri": "pakenoba://document", "name": "document", "title": "The open project", "mimeType": "application/json" },
-                { "uri": "pakenoba://commands", "name": "commands", "title": "PAKENOBA commands", "mimeType": "application/json" },
-            ] })),
-            "resources/read" => match params.get("uri").and_then(Value::as_str) {
-                Some(uri @ "pakenoba://document") => self.app.run_command(&self.actor, "doc.inspect", Value::Null).map(|v| json!({ "contents": [{ "uri": uri, "mimeType": "application/json", "text": v.to_string() }] })),
-                Some(uri @ "pakenoba://commands") => Ok(json!({ "contents": [{ "uri": uri, "mimeType": "application/json", "text": command_list().to_string() }] })),
-                _ => Err("Resource not found".to_owned()),
-            },
-            _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("Method not found: {method}") } })),
-        };
-        Some(match result {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err(message) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": message } }),
-        })
+        handle(&mut self.app, &mut self.actor, message)
     }
+}
+
+/// 1 通に答える。知らせ（`id` のないもの）には答えない。画面なしのサーバーと、開いている画面（bridge.rs）の両方で使う。
+/// `actor` は記録に残す相手の名前で、`initialize` で相手が名乗れば変わる。
+pub(super) fn handle(app: &mut App, actor: &mut String, message: &Value) -> Option<Value> {
+    let id = message.get("id").cloned()?;
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    let params = message.get("params").cloned().unwrap_or(json!({}));
+    let result = match method {
+        "initialize" => {
+            let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(VERSIONS[0]);
+            let version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
+            if let Some(client) = params.pointer("/clientInfo/name").and_then(Value::as_str) {
+                *actor = format!("mcp:{client}");
+            }
+            Ok(json!({
+                "protocolVersion": version,
+                "capabilities": { "tools": { "listChanged": false }, "resources": { "listChanged": false } },
+                "serverInfo": { "name": "pakenoba", "title": "PAKENOBA", "version": env!("CARGO_PKG_VERSION") },
+                "instructions": INSTRUCTIONS,
+            }))
+        }
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/call" => {
+            let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            Ok(tool_result(call_tool(app, actor, &name, &args)))
+        }
+        "resources/list" => Ok(json!({ "resources": [
+            { "uri": "pakenoba://document", "name": "document", "title": "The open project", "mimeType": "application/json" },
+            { "uri": "pakenoba://commands", "name": "commands", "title": "PAKENOBA commands", "mimeType": "application/json" },
+        ] })),
+        "resources/read" => match params.get("uri").and_then(Value::as_str) {
+            Some(uri @ "pakenoba://document") => app.run_command(actor, "doc.inspect", Value::Null).map(|v| json!({ "contents": [{ "uri": uri, "mimeType": "application/json", "text": v.to_string() }] })),
+            Some(uri @ "pakenoba://commands") => Ok(json!({ "contents": [{ "uri": uri, "mimeType": "application/json", "text": command_list().to_string() }] })),
+            _ => Err("Resource not found".to_owned()),
+        },
+        _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("Method not found: {method}") } })),
+    };
+    Some(match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err(message) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": message } }),
+    })
 }
 
 /// `pakenoba mcp` の引数を読んで、標準入力が閉じるまで答え続ける。
 pub(crate) fn serve(args: &[String]) -> std::process::ExitCode {
     let mut allowed = Vec::new();
     let mut project = None;
+    let (mut headless, mut window) = (false, false);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--headless" => {
+                headless = true;
+                i += 1;
+            }
+            "--window" => {
+                window = true;
+                i += 1;
+            }
             "--allow" if i + 1 < args.len() => {
                 allowed.push(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
             "--help" | "-h" => {
-                eprintln!("Usage: pakenoba mcp [--allow <folder>]... [project.pknb]\nRuns PAKENOBA as an MCP server on standard input and output. AI may read and write files only inside the allowed folders.");
+                eprintln!("Usage: pakenoba mcp [--allow <folder>]... [--headless | --window] [project.pknb]\nRuns PAKENOBA as an MCP server on standard input and output. AI may read and write files only inside the allowed folders.\nIf a PAKENOBA window lets MCP drive it (Edit > Preferences), the server drives that window; otherwise it runs without a window.\n--headless always runs without a window. --window fails when no window can be driven. Giving a project file runs without a window.");
                 return std::process::ExitCode::SUCCESS;
             }
             other => {
@@ -155,6 +166,14 @@ pub(crate) fn serve(args: &[String]) -> std::process::ExitCode {
                 i += 1;
             }
         }
+    }
+    // 開いている画面があれば、そちらへつなぐ（案件を渡したときと、--headless のときは、画面なしで動く）。
+    if project.is_none() && !headless && super::bridge::relay(&allowed) {
+        return std::process::ExitCode::SUCCESS;
+    }
+    if window {
+        eprintln!("No open PAKENOBA window lets MCP drive it. Turn on Edit > Preferences > Let MCP drive this window.");
+        return std::process::ExitCode::FAILURE;
     }
     let mut server = Server { app: App::new(&Initial::default()), actor: "mcp:client".to_owned() };
     server.app.allowed = allowed;
