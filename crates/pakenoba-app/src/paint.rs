@@ -708,11 +708,70 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
     let items: Vec<usize> = (0..decals.len()).filter(|&i| decals[i].back == back).collect();
     painter.stack(&items, rgba, 1.0, 0);
     fold_into_glue_tabs(tpl, frame, rgba);
+    fold_into_hidden_flaps(tpl, frame, rgba);
     for &index in &items {
         let picked = marks.selected.contains(&index);
         let hovered = marks.hover == Some(index) && !picked;
         if (picked || hovered) && is_artwork(&decals[index].picture) && shown_in_group(decals, index) {
             painter.marks(&decals[index], picked, rgba);
+        }
+    }
+}
+
+/// 閉じると隠れるフラップの、曲線の折り線から先の帯の幅（mm）。
+const HIDDEN_FOLD_BAND: f32 = 3.0;
+
+/// 曲線の折り線で親の面につながる、閉じると隠れるフラップ（ピロー型の端の内側のフラップ）の、折り線に沿った帯のうち、
+/// まだ何も描かれていない所に、親の面の柄を折り線で映して描く。
+/// 閉じた箱では、この帯は外側のフラップの先と、親の面の縁の間に見える。柄が合わせ目を越えて親の面に来たときは、
+/// フラップへは続かないので、ここで埋めないと白い筋になる。
+fn fold_into_hidden_flaps(tpl: &Template, frame: Frame, rgba: &mut [u8]) {
+    let w = frame.w;
+    for panel in tpl.panels.iter().filter(|p| p.role == Role::Flap) {
+        let Some(curved) = &panel.curved else { continue };
+        if !tpl.panels[curved.parent].takes_art() || curved.line.len() < 2 {
+            continue;
+        }
+        let lo = panel.outline.iter().fold([f32::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+        let hi = panel.outline.iter().fold([f32::NEG_INFINITY; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
+        let (x0, x1, y0, y1) = frame.span(lo, hi);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let to = (y * w + x) * 4;
+                if rgba[to + 3] != 0 {
+                    continue;
+                }
+                let p = frame.at(x, y);
+                // いちばん近い折り線の区間と、そこまでの距離。
+                let Some((dist, foot)) = curved
+                    .line
+                    .windows(2)
+                    .map(|s| {
+                        let (a, b) = (s[0], s[1]);
+                        let d = [b[0] - a[0], b[1] - a[1]];
+                        let len2 = (d[0] * d[0] + d[1] * d[1]).max(1e-9);
+                        let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0);
+                        let f = [a[0] + d[0] * t, a[1] + d[1] * t];
+                        ((p[0] - f[0]).hypot(p[1] - f[1]), f)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                else {
+                    continue;
+                };
+                if dist > HIDDEN_FOLD_BAND || !inside(&panel.outline, p) {
+                    continue;
+                }
+                // 折り線で映した、親の面の点（1 画素ぶん先にして、折り線のすぐそばでも親の側を取る）。
+                let out = if dist > 1e-6 { [(foot[0] - p[0]) / dist, (foot[1] - p[1]) / dist] } else { continue };
+                let back = dist + (dist + 1.0 / frame.ppm);
+                let m = frame.to_px([p[0] + out[0] * back, p[1] + out[1] * back]);
+                let (mx, my) = (m[0].floor(), m[1].floor());
+                if mx < 0.0 || my < 0.0 || mx as usize >= w || my as usize >= frame.h {
+                    continue;
+                }
+                let from = ((my as usize) * w + mx as usize) * 4;
+                rgba.copy_within(from..from + 4, to);
+            }
         }
     }
 }
