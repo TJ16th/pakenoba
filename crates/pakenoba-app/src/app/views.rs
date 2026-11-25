@@ -89,7 +89,7 @@ pub(super) const VIEW_PRESETS: [(&str, f32, f32); 7] = [
 impl App {
     /// 立体の表示の右上に、見る向きを 1 回で選ぶボタンを並べる。押すと、その向きへなめらかに回る。
     /// ボタンは、組ごとに半透明の座布団に乗せる（箱の柄の上でも読めて、ボタンだと分かるように）。
-    /// 1 行目は視点、2 行目は右から「表示の切り替え（照明、平行投影）」「回す（90 度ずつ、そろえる）」。
+    /// 1 行目は視点、2 行目は右から「照明」「見え方（透視、平行）」「回す（90 度ずつ、そろえる）」。
     fn view_presets(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let area = Rect::from_min_max(pos2(rect.left() + 8.0, rect.top() + 6.0), pos2(rect.right() - 8.0, rect.top() + 32.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
@@ -104,11 +104,18 @@ impl App {
         let area = area.translate(vec2(0.0, 30.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
+            // 見え方（透視か平行か）は、2 つのうち 1 つを選ぶ切り替え。いまどちらかが、いつも見える。
             cushion(ui, |ui| {
                 if cushion_button(ui, t!("Parallel"), self.ortho).on_hover_text(t!("Parallel projection: no perspective, so parallel edges stay parallel")).clicked() {
-                    self.ortho = !self.ortho;
+                    self.ortho = true;
                 }
-                ui.menu_button(t!("Lighting"), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
+                if cushion_button(ui, t!("Perspective"), !self.ortho).on_hover_text(t!("Perspective: near parts look larger, as the eye sees the box")).clicked() {
+                    self.ortho = false;
+                }
+            });
+            // 照明は、光の当て方を選ぶメニュー。見え方とは別のものなので、別の座布団にする。
+            cushion(ui, |ui| {
+                ui.menu_button(format!("{} ▾", t!("Lighting")), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
             });
             cushion(ui, |ui| {
                 if cushion_button(ui, t!("Snap"), false).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {

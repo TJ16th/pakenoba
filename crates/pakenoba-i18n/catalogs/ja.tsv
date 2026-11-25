@@ -649,7 +649,9 @@
 	Turn 90°	90° 回す
 	Turns the angle new artwork is placed at by 90 degrees (R while dragging)	新しく置く柄の向きを 90 度回します（運んでいる間は R キーでも）
 	Click an axis to view from that side (again for the opposite side)	軸の丸を押すと、その側から見ます（もう一度押すと、反対の側から）
-	Parallel	平行投影
+	Parallel	平行
+	Perspective	透視
+	Perspective: near parts look larger, as the eye sees the box	透視投影: 近いところが大きく見える、目で見たままの見え方
 	Parallel projection: no perspective, so parallel edges stay parallel	平行投影: 遠近を付けずに見ます。平行な辺は、平行のまま見えます
 	Snap	そろえる
 	Turn to the nearest straight-on view (front, side, top...)	いちばん近い、まっすぐの向き（正面、側面、上など）にそろえます
