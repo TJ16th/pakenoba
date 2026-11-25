@@ -46,6 +46,7 @@ mod commands_doc;
 pub(crate) mod mcp;
 mod bridge;
 mod usage;
+pub(crate) mod updates;
 mod agent;
 mod dialog;
 mod versions;
@@ -647,6 +648,8 @@ struct App {
     usage: usage::Usage,
     /// 起動のイベントを送ったか（同意を聞いたか）。
     usage_started: bool,
+    /// アップデートを確かめる係。
+    updates: updates::Updates,
     /// 操作の記録の窓を開いている。
     log_open: bool,
     /// エージェントの欄。
@@ -845,6 +848,7 @@ impl App {
             bridge_started: false,
             usage: usage::Usage::default(),
             usage_started: false,
+            updates: Default::default(),
             log_open: false,
             agent: agent::Agent::default(),
             library: library::Library::new(initial.library, initial.answer_folder.clone()),
@@ -1534,6 +1538,7 @@ impl eframe::App for App {
     /// ふつうに終わるとき。落ちたときの控えを消す。
     fn on_exit(&mut self) {
         self.finish_all_tabs();
+        self.updates_exit();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -1555,6 +1560,7 @@ impl eframe::App for App {
         }
         self.run_bridge_jobs();
         self.usage_frame(ui.ctx());
+        self.updates_frame(ui.ctx());
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
             let Some(target) = self.open_to[which] else { continue };

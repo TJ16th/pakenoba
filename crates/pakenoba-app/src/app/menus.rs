@@ -105,6 +105,7 @@ impl App {
                 }
                 self.ai_folders_menu(ui);
                 self.usage_menu(ui);
+                self.updates_menu(ui);
                 // MCP（VS Code、Claude Desktop など）から、この画面を動かす。
                 let mut on = self.settings.mcp_window;
                 if ui.checkbox(&mut on, t!("Let MCP drive this window")).on_hover_text(t!("While on, `pakenoba mcp` started by an AI app (VS Code, Claude Desktop and so on) connects to this window, and you see each change as it happens. Only programs on this computer run by you can connect. Files are read and written only in the folders AI may use")).changed() {
@@ -299,6 +300,9 @@ impl App {
     fn help_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(t!("Help"), |ui| {
             ui.set_min_width(200.0);
+            if item(ui, true, t!("Check for updates…"), "", "") {
+                self.check_updates_now(ui.ctx());
+            }
             if item(ui, true, t!("About PAKENOBA"), "", "") {
                 self.about_open = true;
             }

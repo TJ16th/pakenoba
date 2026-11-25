@@ -1509,3 +1509,6 @@ blend	Color	カラー
 	You can change this at any time in Edit > Preferences.	「編集」→「環境設定」で、いつでも変えられます。
 	Age	年代
 	Other	その他
+	Asks GitHub whether a newer version of PAKENOBA has been released. Nothing about you or your work is sent	新しい版のパケノバが出ているかを、GitHub に確かめます。あなたや作品についての情報は送りません
+	Check for updates at start	起動したときにアップデートを確かめる
+	Check for updates…	アップデートを確かめる…

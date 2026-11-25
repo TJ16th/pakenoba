@@ -28,6 +28,10 @@ mod vector;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Windows で、アップデートを入れ替える係として起動されたときは、それだけをして終わる。
+    if app::updates::finish_helper() {
+        return ExitCode::SUCCESS;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `pakenoba mcp …`: 画面を出さずに、MCP のサーバーとして動く。
     if args.first().map(String::as_str) == Some("mcp") {

@@ -11,6 +11,10 @@
   -SkipBuild のときは、前にビルドした exe の中の版の名前のまま（ZIP の名前だけ新しくなる）。
   見本パック（dist\pakenoba-samples-1.zip）があれば、-WithSamples で ZIP の横に写しを置く（本体の ZIP には入れない。大きいので別に渡す）。
 
+  -Release のときは、公開用の名前にする（版の名前は「v0.1.0」、ZIP は dist\pakenoba-0.1.0-windows-x64-portable.zip）。
+  アプリ内のアップデート（craft-update）は、この名前と、横に作る SHA256SUMS.txt を GitHub の Releases から探す。
+  GitHub Actions の .github/workflows/release.yml が、版のタグを付けたときに、これで作って Releases に置く。
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\make_release.ps1
   powershell -ExecutionPolicy Bypass -File tools\make_release.ps1 -SkipBuild
@@ -19,7 +23,9 @@ param(
     # ビルドを飛ばして、いまある target\release\pakenoba.exe を使う。
     [switch]$SkipBuild,
     # 見本パックの写しも、渡すフォルダに置く。
-    [switch]$WithSamples
+    [switch]$WithSamples,
+    # 公開用の名前にする（テストの通し番号を付けない）。
+    [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +47,10 @@ try { if ((git status --porcelain -- crates 2>$null)) { $dirty = '+' } } catch {
 $label = "v$version test$count$dirty"
 $date = Get-Date -Format 'yyyy-MM-dd'
 $name = "pakenoba-v$version-test$count-windows-x64"
+if ($Release) {
+    $label = "v$version"
+    $name = "pakenoba-$version-windows-x64-portable"
+}
 Write-Host "版: $label（$date、コミット $commit）"
 
 if (-not $SkipBuild) {
@@ -84,6 +94,12 @@ Compress-Archive -Path $out -DestinationPath $zip -CompressionLevel Optimal
 if ($WithSamples) {
     $samples = Join-Path $dist 'pakenoba-samples-1.zip'
     if (Test-Path $samples) { Write-Host "見本パック: $samples （本体とは別に渡してください）" } else { Write-Warning '見本パック（dist\pakenoba-samples-1.zip）がありません。' }
+}
+
+if ($Release) {
+    # アップデートの確かめに使う、ファイルの SHA-256（GNU の sha256sum と同じ形: 「値  名前」）。
+    $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+    [System.IO.File]::WriteAllText((Join-Path $dist 'SHA256SUMS.txt'), "$hash  $name.zip`n", (New-Object System.Text.UTF8Encoding $false))
 }
 
 $size = [math]::Round((Get-Item $zip).Length / 1MB, 1)

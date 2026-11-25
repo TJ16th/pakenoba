@@ -72,6 +72,9 @@ struct Stored {
     /// 利用状況を送ることへの同意。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     usage: Option<super::usage::Consent>,
+    /// 起動したときに、アップデートを確かめる（書いていなければ確かめる）。
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    check_updates: bool,
     /// 立体の表示の照らし方。
     #[serde(default)]
     lighting: Lighting,
@@ -224,12 +227,14 @@ pub(super) struct Settings {
     pub cmyk_icc: Option<PathBuf>,
     /// 利用状況を送ることへの同意と、自分についての答え。
     pub usage: super::usage::Consent,
+    /// 起動したときに、アップデートを確かめる（はじめは確かめる）。
+    pub check_updates: bool,
 }
 
 impl Settings {
     /// 覚えない（自動のテストのとき。使う人のフォルダに書かないため）。
     pub fn off() -> Settings {
-        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default() }
+        Settings { file: None, writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default(), check_updates: true }
     }
 
     /// 起動したときに読む。`file` がなければ、いつもの場所。
@@ -237,17 +242,17 @@ impl Settings {
         let Some(file) = file.or_else(|| data_dir().map(|dir| dir.join("settings.toml"))) else { return Settings::off() };
         match fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Stored>(&text) {
-                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor, language: stored.language, record_log: stored.record_log, agent_folders: stored.agent_folders, lighting: stored.lighting, motions: stored.motion, shapes: stored.shape, local_ai: stored.local_ai.unwrap_or_default(), mcp_window: stored.mcp_window, cmyk_icc: stored.cmyk_icc, usage: stored.usage.unwrap_or_default() },
+                Ok(stored) => Settings { file: Some(file), writable: true, collections: stored.collection, recent: stored.recent, recent_assets: stored.recent_assets, editor: stored.editor, vector_editor: stored.vector_editor, language: stored.language, record_log: stored.record_log, agent_folders: stored.agent_folders, lighting: stored.lighting, motions: stored.motion, shapes: stored.shape, local_ai: stored.local_ai.unwrap_or_default(), mcp_window: stored.mcp_window, cmyk_icc: stored.cmyk_icc, usage: stored.usage.unwrap_or_default(), check_updates: stored.check_updates },
                 Err(e) => {
                     eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
-                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default() }
+                    Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default(), check_updates: true }
                 }
             },
             // まだない。
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings { file: Some(file), writable: true, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default(), check_updates: true },
             Err(e) => {
                 eprintln!("Could not read the settings ({}); they will not be remembered this time: {e}", file.display());
-                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default() }
+                Settings { file: Some(file), writable: false, collections: Vec::new(), recent: Vec::new(), recent_assets: Vec::new(), editor: None, vector_editor: None, language: None, record_log: true, agent_folders: Vec::new(), lighting: Lighting::default(), motions: Vec::new(), shapes: Vec::new(), local_ai: Default::default(), mcp_window: false, cmyk_icc: None, usage: Default::default(), check_updates: true }
             }
         }
     }
@@ -260,7 +265,7 @@ impl Settings {
 
     pub fn save(&self) -> Result<(), String> {
         let (Some(file), true) = (&self.file, self.writable) else { return Ok(()) };
-        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone(), record_log: self.record_log, agent_folders: self.agent_folders.clone(), lighting: self.lighting.clone(), motion: self.motions.clone(), shape: self.shapes.clone(), local_ai: (self.local_ai != Default::default()).then(|| self.local_ai.clone()), mcp_window: self.mcp_window, cmyk_icc: self.cmyk_icc.clone(), usage: (self.usage != Default::default()).then(|| self.usage.clone()) }).map_err(|e| e.to_string())?;
+        let text = toml::to_string(&Stored { recent: self.recent.clone(), recent_assets: self.recent_assets.clone(), collection: self.collections.clone(), editor: self.editor.clone(), vector_editor: self.vector_editor.clone(), language: self.language.clone(), record_log: self.record_log, agent_folders: self.agent_folders.clone(), lighting: self.lighting.clone(), motion: self.motions.clone(), shape: self.shapes.clone(), local_ai: (self.local_ai != Default::default()).then(|| self.local_ai.clone()), mcp_window: self.mcp_window, cmyk_icc: self.cmyk_icc.clone(), usage: (self.usage != Default::default()).then(|| self.usage.clone()), check_updates: self.check_updates }).map_err(|e| e.to_string())?;
         write_text(file, &format!("# PAKENOBA settings. The app rewrites this file.\n{text}")).map_err(|e| t!("Could not save the settings: {e}"))
     }
 

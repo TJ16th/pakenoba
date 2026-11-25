@@ -1,0 +1,50 @@
+# 版のタグ（v0.1.0 など）を押すと、Windows 用の ZIP を作って、GitHub の Releases に置く。
+# アプリ内のアップデートは、ここに置いた ZIP と SHA256SUMS.txt を見に来る（crates/pakenoba-app/src/app/updates.rs）。
+#
+# 使う秘密（リポジトリの Settings → Secrets and variables → Actions）:
+#   APTABASE_APP_KEY  利用状況の送り先の鍵（A-EU-… か A-US-…）。なければ、送らないビルドになる。
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # make_release.ps1 がコミットの数を数えるので、履歴をすべて取る。
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check that the tag matches the version
+        shell: pwsh
+        run: |
+          $toml = Get-Content Cargo.toml -Raw
+          if ($toml -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw 'No version in Cargo.toml' }
+          $version = $Matches[1]
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "The tag ${{ github.ref_name }} does not match the version $version in Cargo.toml" }
+          "VERSION=$version" >> $env:GITHUB_ENV
+      - name: Test
+        run: cargo test --workspace
+      - name: Build and package
+        shell: pwsh
+        env:
+          PAKENOBA_APTABASE_KEY: ${{ secrets.APTABASE_APP_KEY }}
+        run: tools\make_release.ps1 -Release
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "dist\pakenoba-$env:VERSION-windows-x64-portable.zip" `
+            "dist\SHA256SUMS.txt" `
+            --title "PAKENOBA ${{ github.ref_name }}" `
+            --notes-file docs/release-notes.md
