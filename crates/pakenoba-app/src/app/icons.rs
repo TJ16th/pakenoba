@@ -158,6 +158,22 @@ pub(super) fn draw_folder(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.line_segment([p(-7.0, -1.0), p(7.0, -1.0)], stroke);
 }
 
+/// 箱（型の工程）。斜めから見た立方体。
+pub(super) fn draw_box(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.add(Shape::closed_line(vec![p(0.0, -7.0), p(6.5, -3.5), p(6.5, 4.0), p(0.0, 7.5), p(-6.5, 4.0), p(-6.5, -3.5)], stroke));
+    painter.add(Shape::line(vec![p(-6.5, -3.5), p(0.0, 0.0), p(6.5, -3.5)], stroke));
+    painter.line_segment([p(0.0, 0.0), p(0.0, 7.5)], stroke);
+}
+
+/// 書き出し（出力の工程）。受け皿と、上へ出ていく矢印。
+pub(super) fn draw_export(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    painter.add(Shape::line(vec![p(-6.5, 1.0), p(-6.5, 6.5), p(6.5, 6.5), p(6.5, 1.0)], stroke));
+    painter.line_segment([p(0.0, 3.0), p(0.0, -7.0)], stroke);
+    painter.add(Shape::line(vec![p(-3.5, -3.5), p(0.0, -7.0), p(3.5, -3.5)], stroke));
+}
+
 /// ごみ箱（削除）。
 pub(super) fn draw_trash(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     let p = |x: f32, y: f32| c + vec2(x, y);

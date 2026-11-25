@@ -75,24 +75,33 @@ impl App {
         if self.home {
             return;
         }
-        let steps = egui::Frame::new().fill(super::theme::PANEL).inner_margin(egui::Margin { left: 6, right: 6, top: 3, bottom: 3 });
+        // 工程の帯（Premiere Pro の上の帯の「読み込み・編集・書き出し」と同じ扱い）。画面全体が切り替わるいちばん上の操作なので、
+        // ほかのボタンより大きく出す。選んでいる工程は明るい字と下線、ほかは灰色。素材とエージェントは工程ではないので、右に小さく。
+        let steps = egui::Frame::new().fill(super::theme::TAB_BAR).inner_margin(egui::Margin { left: 10, right: 8, top: 0, bottom: 0 });
         egui::Panel::top("workspaces").frame(steps).show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (workspace, label) in [(Workspace::Shape, t!("Structure")), (Workspace::Design, t!("Design")), (Workspace::Output, t!("Output"))] {
+                ui.set_height(STEP_BAR);
+                ui.spacing_mut().item_spacing.x = 18.0;
+                let steps: [(Workspace, &str, &str, Icon); 3] = [
+                    (Workspace::Shape, t!("Structure"), "Ctrl+Alt+1", icons::draw_box),
+                    (Workspace::Design, t!("Design"), "Ctrl+Alt+2", icons::draw_brush),
+                    (Workspace::Output, t!("Output"), "Ctrl+Alt+3", icons::draw_export),
+                ];
+                for (workspace, label, keys, icon) in steps {
                     // 「素材」を開いているあいだは、どの工程も選んでいない見た目にする。
-                    if ui.selectable_label(!self.library.open && self.workspace == workspace, format!("  {label}  ")).clicked() {
+                    if step_tab(ui, label, icon, !self.library.open && self.workspace == workspace).on_hover_text(keys).clicked() {
                         self.go_to(workspace);
                     }
                 }
-                // 素材は流れの一歩ではないので、細い区切りを入れて、工程の右に置く。
-                ui.separator();
-                if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The assets of this project, and folders and samples to import from (press again to go back)")).clicked() {
-                    self.toggle_library();
-                }
                 // 元に戻すとやり直すは、「編集」のメニューと Ctrl+Z に移した。
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
                     if ui.selectable_label(self.agent.open, t!("  Agent  ")).on_hover_text(t!("Ask an AI to make changes (Anthropic or OpenAI)")).clicked() {
                         self.agent.open = !self.agent.open;
+                    }
+                    // 素材は流れの一歩ではないので、工程の並びに混ぜず、右に置く。
+                    if ui.selectable_label(self.library.open, t!("  Assets  ")).on_hover_text(t!("The assets of this project, and folders and samples to import from (press again to go back)")).clicked() {
+                        self.toggle_library();
                     }
                 });
             });
@@ -1067,4 +1076,36 @@ impl App {
 /// `#rrggbb`。
 fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// アイコンを描く関数（中心と線を受け取る）。
+type Icon = fn(&egui::Painter, egui::Pos2, egui::Stroke);
+
+/// 工程の帯の高さ。
+const STEP_BAR: f32 = 38.0;
+
+/// 工程の帯の 1 つ（アイコンと名前。選んでいれば明るい字と、下に色の線）。
+fn step_tab(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool) -> egui::Response {
+    let font = egui::FontId::proportional(15.0);
+    let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), super::theme::TEXT));
+    let width = 16.0 + 7.0 + galley.size().x + 8.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, STEP_BAR), egui::Sense::click());
+    let color = if selected {
+        egui::Color32::from_rgb(0xf4, 0xf4, 0xf4)
+    } else if response.hovered() {
+        super::theme::TEXT
+    } else {
+        super::theme::FAINT
+    };
+    let painter = ui.painter();
+    let y = rect.center().y;
+    icon(painter, egui::pos2(rect.left() + 8.0, y), egui::Stroke::new(1.3, color));
+    painter.galley(egui::pos2(rect.left() + 23.0, y - galley.size().y * 0.5), galley, color);
+    if selected {
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 2.5), rect.right_bottom()), 1.0, super::theme::ACCENT);
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response
 }

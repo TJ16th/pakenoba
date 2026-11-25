@@ -88,46 +88,49 @@ pub(super) const VIEW_PRESETS: [(&str, f32, f32); 7] = [
 
 impl App {
     /// 立体の表示の右上に、見る向きを 1 回で選ぶボタンを並べる。押すと、その向きへなめらかに回る。
+    /// ボタンは、組ごとに半透明の座布団に乗せる（箱の柄の上でも読めて、ボタンだと分かるように）。
+    /// 1 行目は視点、2 行目は右から「表示の切り替え（照明、平行投影）」「回す（90 度ずつ、そろえる）」。
     fn view_presets(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        let area = Rect::from_min_max(pos2(rect.left() + 8.0, rect.top() + 6.0), pos2(rect.right() - 8.0, rect.top() + 30.0));
+        let area = Rect::from_min_max(pos2(rect.left() + 8.0, rect.top() + 6.0), pos2(rect.right() - 8.0, rect.top() + 32.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.spacing_mut().button_padding = vec2(5.0, 1.0);
-            for (label, yaw, pitch) in VIEW_PRESETS.iter().rev() {
-                if ui.small_button(pakenoba_i18n::tr(label)).clicked() {
-                    self.look_from(*yaw, *pitch);
+            cushion(ui, |ui| {
+                for (label, yaw, pitch) in VIEW_PRESETS.iter().rev() {
+                    if cushion_button(ui, pakenoba_i18n::tr(label), false).clicked() {
+                        self.look_from(*yaw, *pitch);
+                    }
                 }
-            }
+            });
         });
-        // 2 行目: 90 度ずつ回す、いちばん近い面にそろえる、平行投影。
-        let area = area.translate(vec2(0.0, 24.0));
+        let area = area.translate(vec2(0.0, 30.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.spacing_mut().button_padding = vec2(5.0, 1.0);
-            if ui.add(egui::Button::selectable(self.ortho, t!("Parallel"))).on_hover_text(t!("Parallel projection: no perspective, so parallel edges stay parallel")).clicked() {
-                self.ortho = !self.ortho;
-            }
-            ui.menu_button(t!("Lighting"), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
-            ui.add_space(6.0);
-            if ui.small_button(t!("Snap")).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            cushion(ui, |ui| {
+                if cushion_button(ui, t!("Parallel"), self.ortho).on_hover_text(t!("Parallel projection: no perspective, so parallel edges stay parallel")).clicked() {
+                    self.ortho = !self.ortho;
+                }
+                ui.menu_button(t!("Lighting"), |ui| self.lighting_menu(ui)).response.on_hover_text(t!("Choose the environment that lights the box, and turn it"));
+            });
+            cushion(ui, |ui| {
+                if cushion_button(ui, t!("Snap"), false).on_hover_text(t!("Turn to the nearest straight-on view (front, side, top...)")).clicked() {
+                    let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
+                    let quarter = std::f32::consts::FRAC_PI_2;
+                    // 上下も 90 度刻みにそろえる（真上を越えて逆さのときは、逆さのまま）。
+                    self.look_from((yaw / quarter).round() * quarter, (wrap_angle(pitch) / quarter).round() * quarter);
+                }
                 let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
-                let quarter = std::f32::consts::FRAC_PI_2;
-                // 上下も 90 度刻みにそろえる（真上を越えて逆さのときは、逆さのまま）。
-                self.look_from((yaw / quarter).round() * quarter, (wrap_angle(pitch) / quarter).round() * quarter);
-            }
-            let (yaw, pitch) = self.view_to.unwrap_or((self.yaw, self.pitch));
-            if ui.small_button(t!("Down 90°")).on_hover_text(t!("Turn the box 90 degrees toward you, over the top")).clicked() {
-                self.look_from(yaw, wrap_angle(pitch + std::f32::consts::FRAC_PI_2));
-            }
-            if ui.small_button(t!("Up 90°")).on_hover_text(t!("Turn the box 90 degrees away from you, over the bottom")).clicked() {
-                self.look_from(yaw, wrap_angle(pitch - std::f32::consts::FRAC_PI_2));
-            }
-            if ui.small_button(t!("Right 90°")).on_hover_text(t!("Turn the box 90 degrees to the right")).clicked() {
-                self.look_from(yaw - std::f32::consts::FRAC_PI_2, pitch);
-            }
-            if ui.small_button(t!("Left 90°")).on_hover_text(t!("Turn the box 90 degrees to the left")).clicked() {
-                self.look_from(yaw + std::f32::consts::FRAC_PI_2, pitch);
-            }
+                if cushion_button(ui, t!("Down 90°"), false).on_hover_text(t!("Turn the box 90 degrees toward you, over the top")).clicked() {
+                    self.look_from(yaw, wrap_angle(pitch + std::f32::consts::FRAC_PI_2));
+                }
+                if cushion_button(ui, t!("Up 90°"), false).on_hover_text(t!("Turn the box 90 degrees away from you, over the bottom")).clicked() {
+                    self.look_from(yaw, wrap_angle(pitch - std::f32::consts::FRAC_PI_2));
+                }
+                if cushion_button(ui, t!("Right 90°"), false).on_hover_text(t!("Turn the box 90 degrees to the right")).clicked() {
+                    self.look_from(yaw - std::f32::consts::FRAC_PI_2, pitch);
+                }
+                if cushion_button(ui, t!("Left 90°"), false).on_hover_text(t!("Turn the box 90 degrees to the left")).clicked() {
+                    self.look_from(yaw + std::f32::consts::FRAC_PI_2, pitch);
+                }
+            });
         });
     }
 
@@ -956,6 +959,31 @@ fn tag(ui: &egui::Ui, at: Pos2, text: &str) {
     let rect = Rect::from_min_size(at, galley.size() + vec2(12.0, 6.0));
     painter.rect_filled(rect, 4.0, Color32::from_black_alpha(150));
     painter.galley(rect.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+}
+
+/// 表示の上に浮かぶボタンの組の、半透明の座布団（右から左へ並べる）。
+fn cushion(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(0x3a, 0x3a, 0x3a, 0xd8))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0x48, 0x48, 0x48)))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(2))
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 1.0;
+                ui.spacing_mut().button_padding = vec2(6.0, 2.0);
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+                ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                add(ui);
+            });
+        });
+}
+
+/// 座布団の上のボタン。`on` は、入っている切り替え（明るい地で見せる）。
+fn cushion_button(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
+    let text = egui::RichText::new(text).size(11.5);
+    let button = egui::Button::new(text).frame_when_inactive(on).fill(if on { super::theme::SELECTED } else { egui::Color32::TRANSPARENT }).corner_radius(4.0);
+    ui.add(button)
 }
 
 #[cfg(test)]
