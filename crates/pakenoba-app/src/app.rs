@@ -587,7 +587,7 @@ struct App {
     mask_job: Option<layers::MaskJob>,
     /// レイヤーの欄で選んだ、柄の調整（柄の番号と、調整の番号）。プロパティで、その調整を開く。
     adjust_focus: Option<(usize, usize)>,
-    /// レイヤーの欄で選んでいる、柄の下の行（タイル、ベクターの見せ方）。プロパティには、その設定だけを出す。
+    /// レイヤーの欄で選んでいる、柄の下の行（タイル、塗りと線）。プロパティには、その設定だけを出す。
     effect_focus: Option<(usize, layers::Effect)>,
     /// ごみ箱へ運んでいる、柄の下の行。
     effect_drag: Option<(usize, layers::Effect)>,

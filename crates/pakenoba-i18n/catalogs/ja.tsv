@@ -1313,14 +1313,14 @@ blend	Color	カラー
 	Effects	効果
 	Hidden for now. Turn it back on with the eye in the Layers panel.	いまは隠しています。レイヤーの欄の目で、もとに戻せます。
 	Hide the tiles	タイルを隠す
-	Hide the vector style	ベクターの見せ方を隠す
-	Reset the vector style	ベクターの見せ方をもとに戻す
+	Hide the vector style	塗りと線を隠す
+	Reset the vector style	塗りと線をもとに戻す
 	Show only these settings	この設定だけを出す
 	Show the tiles	タイルを見せる
-	Show the vector style	ベクターの見せ方を見せる
+	Show the vector style	塗りと線を見せる
 	Stop tiling	タイルをやめる
 	This layer is locked.	このレイヤーはロックされています。
-	Vector style	ベクターの見せ方
+	Vector style	塗りと線
 	Deleted "{name}" from your box types.	自分の型から「{name}」を消しました。
 	Save the size and paper you use often, and pick them here next time.	よく使う寸法と紙を残しておくと、次からここで選べます。
 	Saved "{name}" to your box types. It can be used in any project.	自分の型に「{name}」を残しました。どの案件でも使えます。

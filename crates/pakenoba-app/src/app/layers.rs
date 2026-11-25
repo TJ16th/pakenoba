@@ -938,12 +938,12 @@ impl App {
         }
     }
 
-    /// いま選んでいる、柄の下の行（タイル、ベクターの見せ方）。柄が選ばれていて、その行がまだあるときだけ。
+    /// いま選んでいる、柄の下の行（タイル、塗りと線）。柄が選ばれていて、その行がまだあるときだけ。
     pub(super) fn focused_effect(&self) -> Option<(usize, Effect)> {
         self.effect_focus.filter(|&(i, e)| self.selected == Some(i) && i < self.decals.len() && self.has_effect(i, e))
     }
 
-    /// 柄に、その行があるか。ベクターの見せ方の行は、ベクターの柄で、見せ方を変えたか、柄を選んでいるときに出す。
+    /// 柄に、その行があるか。塗りと線の行は、ベクターの柄で、見せ方を変えたか、柄を選んでいるときに出す。
     fn has_effect(&self, index: usize, effect: Effect) -> bool {
         let placed = &self.decals[index];
         if !is_artwork(&placed.picture) {
@@ -997,7 +997,7 @@ impl App {
         });
     }
 
-    /// タイルをやめる、ベクターの見せ方をもとに戻す（元に戻せる）。
+    /// タイルをやめる、塗りと線をもとに戻す（元に戻せる）。
     pub(super) fn remove_effect(&mut self, index: usize, effect: Effect) {
         self.change_layer(index, |layer| match effect {
             Effect::Tile => layer.tile = None,
@@ -1014,12 +1014,12 @@ impl App {
         }
     }
 
-    /// 柄の下の、タイルやベクターの見せ方の行。押すとプロパティにその設定だけを出し、右クリックやごみ箱で外す。
+    /// 柄の下の、タイルや塗りと線の行。押すとプロパティにその設定だけを出し、右クリックやごみ箱で外す。
     fn effect_row(&mut self, ui: &mut egui::Ui, index: usize, effect: Effect) {
         if !self.has_effect(index, effect) {
             return;
         }
-        // ベクターの見せ方は、見せ方を変えたか、柄を選んでいるときだけ（ベクターの柄すべてに行を出すと、うるさい）。
+        // 塗りと線は、見せ方を変えたか、柄を選んでいるときだけ（ベクターの柄すべてに行を出すと、うるさい）。
         if effect == Effect::Vector && self.selected != Some(index) && self.decals[index].layer.vector.is_none() {
             return;
         }
@@ -1065,7 +1065,7 @@ impl App {
         }
     }
 
-    /// 柄そのものの設定を出しているときの、タイルとベクターの見せ方の一覧（押すと、その設定だけを出す）。
+    /// 柄そのものの設定を出しているときの、タイルと塗りと線の一覧（押すと、その設定だけを出す）。
     pub(super) fn effect_list(&mut self, ui: &mut egui::Ui, index: usize) {
         let effects: Vec<Effect> = [Effect::Tile, Effect::Vector].into_iter().filter(|&e| self.has_effect(index, e)).collect();
         if effects.is_empty() {

@@ -269,7 +269,7 @@ impl App {
             self.adjust_properties(ui, index, locked);
             return;
         }
-        // タイルやベクターの見せ方の行を選んでいるときも、その設定だけを出す。
+        // タイルや塗りと線の行を選んでいるときも、その設定だけを出す。
         if let Some((_, effect)) = self.focused_effect().filter(|(i, _)| *i == index) {
             if ui.small_button(t!("← Settings of this layer")).clicked() {
                 self.effect_focus = None;
