@@ -242,6 +242,64 @@ pub(super) fn draw_snap(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     painter.rect_stroke(Rect::from_center_size(c, vec2(6.0, 6.0)), 0.5, stroke, StrokeKind::Middle);
 }
 
+/// 出力の種類のアイコン（`outputs::OUTPUTS` の番号）。
+pub(super) fn draw_output(painter: &egui::Painter, c: Pos2, index: usize, stroke: Stroke) {
+    let p = |x: f32, y: f32| c + vec2(x, y);
+    match index {
+        // 型紙（PSD）: 重なったレイヤー。
+        0 => {
+            for dy in [-3.5, 0.0, 3.5] {
+                painter.add(Shape::closed_line(vec![p(0.0, dy - 3.5), p(7.0, dy), p(0.0, dy + 3.5), p(-7.0, dy)], stroke));
+            }
+        }
+        // 16:9 の画像: 横長の枠に、山と太陽。
+        1 => {
+            painter.rect_stroke(Rect::from_center_size(c, vec2(15.0, 10.0)), 1.0, stroke, StrokeKind::Middle);
+            painter.add(Shape::line(vec![p(-6.0, 4.0), p(-2.0, -0.5), p(1.0, 2.0), p(3.5, 0.0), p(6.5, 4.0)], stroke));
+            painter.circle_stroke(p(3.5, -2.5), 1.2, stroke);
+        }
+        // 箱開け動画: 横長の枠に、再生の三角。
+        2 => {
+            painter.rect_stroke(Rect::from_center_size(c, vec2(15.0, 10.0)), 1.0, stroke, StrokeKind::Middle);
+            painter.add(Shape::closed_line(vec![p(-2.0, -3.0), p(3.0, 0.0), p(-2.0, 3.0)], stroke));
+        }
+        // 店の棚: 棚板と、並んだ箱。
+        3 => {
+            painter.line_segment([p(-7.5, 1.0), p(7.5, 1.0)], stroke);
+            painter.line_segment([p(-7.5, 7.0), p(7.5, 7.0)], stroke);
+            for x in [-6.0, -1.5, 3.0] {
+                painter.rect_stroke(Rect::from_min_max(p(x, -6.0), p(x + 3.5, 1.0)), 0.5, stroke, StrokeKind::Middle);
+            }
+        }
+        // 実寸の型紙: 印刷機。
+        4 => {
+            painter.rect_stroke(Rect::from_min_max(p(-7.0, -2.0), p(7.0, 4.0)), 1.0, stroke, StrokeKind::Middle);
+            painter.add(Shape::line(vec![p(-4.0, -2.0), p(-4.0, -7.0), p(4.0, -7.0), p(4.0, -2.0)], stroke));
+            painter.rect_stroke(Rect::from_min_max(p(-4.0, 1.5), p(4.0, 7.0)), 0.5, stroke, StrokeKind::Middle);
+        }
+        // のぞき込み: カメラ（丸いレンズ）。
+        5 => {
+            painter.circle_stroke(p(0.0, -1.0), 5.5, stroke);
+            painter.circle_stroke(p(0.0, -1.0), 2.0, stroke);
+            painter.line_segment([p(-4.0, 7.0), p(4.0, 7.0)], stroke);
+            painter.line_segment([p(0.0, 4.5), p(0.0, 7.0)], stroke);
+        }
+        // 入稿用 PDF: 角を折った紙。
+        6 => {
+            painter.add(Shape::closed_line(vec![p(-5.5, -7.0), p(2.5, -7.0), p(5.5, -4.0), p(5.5, 7.0), p(-5.5, 7.0)], stroke));
+            painter.add(Shape::line(vec![p(2.5, -7.0), p(2.5, -4.0), p(5.5, -4.0)], stroke));
+            painter.line_segment([p(-3.0, 0.0), p(3.0, 0.0)], stroke);
+            painter.line_segment([p(-3.0, 3.0), p(3.0, 3.0)], stroke);
+        }
+        // 生成AI用の画像: きらめき。
+        7 => {
+            painter.add(Shape::closed_line(vec![p(0.0, -7.5), p(1.6, -1.6), p(7.5, 0.0), p(1.6, 1.6), p(0.0, 7.5), p(-1.6, 1.6), p(-7.5, 0.0), p(-1.6, -1.6)], stroke));
+        }
+        // 3D モデル: 箱。
+        _ => draw_box(painter, c, stroke),
+    }
+}
+
 /// ごみ箱（削除）。
 pub(super) fn draw_trash(painter: &egui::Painter, c: Pos2, stroke: Stroke) {
     let p = |x: f32, y: f32| c + vec2(x, y);

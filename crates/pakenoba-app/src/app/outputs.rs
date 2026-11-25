@@ -61,6 +61,8 @@ pub(super) struct OutputSettings {
     pub even_faces: bool,
     /// 入稿用の PDF の絵の色（RGB のままか、CMYK にするか）。
     pub color: ReadyColorChoice,
+    /// 型紙の PSD を、組み立て向き（外側の面を、箱の上での向きに並べたもの）で保存する。
+    pub assembled: bool,
 }
 
 /// 入稿用の PDF の絵の色の選び方。
@@ -104,7 +106,7 @@ impl ReadyColorChoice {
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0, view_size: 0, even_faces: true, color: ReadyColorChoice::Rgb }
+        OutputSettings { shot_size: 0, background: 0, movie_size: 0, movie_seconds: 3.0, movie_turn: true, print: PrintSettings::default(), dpi: 350, bleed: 3.0, view_size: 0, even_faces: true, color: ReadyColorChoice::Rgb, assembled: false }
     }
 }
 
@@ -579,29 +581,23 @@ impl App {
         Ok(pages)
     }
 
-    /// 生成AI用の画像の設定と、書き出し、生成した絵を面へ貼る操作。
+    /// 生成AI用の画像の設定（保存と、生成した絵を面へ貼る操作は、欄の下のボタン）。
     fn view_settings(&mut self, ui: &mut egui::Ui) {
-        ui.label(t!("Saves the box as you see it now as images to hand to generative AI: a shaded reference, line art, depth, normals, a mask and one colour per face, plus view.json (the camera). Turn the box in the middle to choose the angle."));
-        ui.horizontal(|ui| {
-            ui.label(t!("Size"));
-            let label = |i: usize| format!("{} x {}", super::viewgen::VIEW_SIZES[i][0], super::viewgen::VIEW_SIZES[i][1]);
-            egui::ComboBox::from_id_salt("view-size").selected_text(label(self.output.view_size)).show_ui(ui, |ui| {
-                for i in 0..super::viewgen::VIEW_SIZES.len() {
-                    ui.selectable_value(&mut self.output.view_size, i, label(i));
-                }
+        settings_section(ui, |ui| {
+            form_row(ui, t!("Size"), |ui| {
+                let label = |i: usize| format!("{} x {}", super::viewgen::VIEW_SIZES[i][0], super::viewgen::VIEW_SIZES[i][1]);
+                egui::ComboBox::from_id_salt("view-size").width(ui.available_width()).selected_text(label(self.output.view_size)).show_ui(ui, |ui| {
+                    for i in 0..super::viewgen::VIEW_SIZES.len() {
+                        ui.selectable_value(&mut self.output.view_size, i, label(i));
+                    }
+                });
             });
         });
-        if ui.button(t!("Save the images for generative AI…")).clicked() {
-            self.export_view();
-        }
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label(t!("Then generate with ComfyUI (ControlNet), Firefly (composition reference) or another tool, at the same width-to-height ratio, and put the result back on the faces you can see. The camera is read from view.json in the same folder as the image (or the images saved last)."));
+        info(ui, t!("Then generate with ComfyUI (ControlNet), Firefly (composition reference) or another tool, at the same width-to-height ratio, and put the result back on the faces you can see. The camera is read from view.json in the same folder as the image (or the images saved last)."));
         ui.checkbox(&mut self.output.even_faces, t!("Even out the brightness of the faces"));
-        if ui.button(t!("Put a generated image on the faces…")).clicked() {
-            self.import_view_image();
-        }
-        ui.small(t!("It goes onto the front of the sheet as dieline artwork (Ctrl+Z to undo). Faces that cannot be seen in the image stay as they are."));
+        details(ui, "view", |ui| {
+            ui.label(t!("It goes onto the front of the sheet as dieline artwork (Ctrl+Z to undo). Faces that cannot be seen in the image stay as they are."));
+        });
     }
 
     /// 生成AI用の画像を、選んだフォルダの中に、新しいフォルダを作って書く。
@@ -662,9 +658,8 @@ impl App {
     /// 入稿用の PDF の絵の色。RGB のまま、内蔵のコート紙の CMYK、または ICC のファイル。
     fn ready_color_choice(&mut self, ui: &mut egui::Ui) {
         let mut pick_file = false;
-        ui.horizontal(|ui| {
-            ui.label(t!("Color mode"));
-            egui::ComboBox::from_id_salt("ready-color").width(260.0).selected_text(self.output.color.label()).show_ui(ui, |ui| {
+        form_row(ui, t!("Color mode"), |ui| {
+            egui::ComboBox::from_id_salt("ready-color").width(ui.available_width()).selected_text(self.output.color.label()).show_ui(ui, |ui| {
                 ui.selectable_value(&mut self.output.color, ReadyColorChoice::Rgb, ReadyColorChoice::Rgb.label());
                 ui.selectable_value(&mut self.output.color, ReadyColorChoice::Fogra39, ReadyColorChoice::Fogra39.label());
                 if let Some(path) = self.settings.cmyk_icc.clone() {
@@ -691,124 +686,160 @@ impl App {
                 Err(e) => self.say(e),
             }
         }
+    }
+
+    /// 入稿用の PDF の色の、くわしい説明。
+    fn ready_color_details(&self, ui: &mut egui::Ui) {
         if self.output.color != ReadyColorChoice::Rgb {
-            ui.small(t!("The artwork is converted from sRGB with relative colorimetric intent and black point compensation, and the profile is embedded as the output intent. Ask your print shop which profile to use (in Japan, often Japan Color 2001 Coated). Black text becomes four-color black."));
+            ui.label(t!("The artwork is converted from sRGB with relative colorimetric intent and black point compensation, and the profile is embedded as the output intent. Ask your print shop which profile to use (in Japan, often Japan Color 2001 Coated). Black text becomes four-color black."));
         }
     }
 
-    /// 書き出しの細かさを選ぶ（型紙の PSD と入稿用の PDF で共通）。画素の数と、細かさの足りない画像も出す。
-    fn resolution_choice(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(t!("Bleed"));
+    /// 塗り足しと書き出しの細かさの行（型紙の PSD と入稿用の PDF で共通）。
+    fn resolution_rows(&mut self, ui: &mut egui::Ui) {
+        form_row(ui, t!("Bleed"), |ui| {
             ui.add(egui::DragValue::new(&mut self.output.bleed).range(0.0..=5.0).speed(0.1).max_decimals(1).suffix(" mm"));
         });
-        ui.small(t!("Artwork that crosses a cut line continues past it in the plane of its panel. Where nothing reaches, the edge colour is stretched. Finish plates get no bleed."));
         let label = |dpi: u32| if dpi <= 100 { t!("Same as the screen (about 100 dpi)").to_owned() } else { format!("{dpi} dpi") };
-        ui.horizontal(|ui| {
-            ui.label(t!("Resolution"));
-            egui::ComboBox::from_id_salt("export-dpi").selected_text(label(self.output.dpi)).show_ui(ui, |ui| {
+        form_row(ui, t!("Resolution"), |ui| {
+            egui::ComboBox::from_id_salt("export-dpi").width(ui.available_width()).selected_text(label(self.output.dpi)).show_ui(ui, |ui| {
                 for dpi in super::export::EXPORT_DPI {
                     ui.selectable_value(&mut self.output.dpi, dpi, label(dpi));
                 }
             });
         });
+    }
+
+    /// 書き出す絵の画素の数と、細かさの足りない画像の注意。
+    fn resolution_info(&self, ui: &mut egui::Ui) {
         let frame = self.export_frame();
-        ui.small(t!("{} x {} pixels. Text is drawn again at this resolution.", frame.w, frame.h));
+        info(ui, &t!("{} x {} pixels. Text is drawn again at this resolution.", frame.w, frame.h));
         let coarse = self.coarse_images();
         if !coarse.is_empty() {
             let list: Vec<String> = coarse.iter().map(|(name, dpi)| format!("{name} ({dpi} dpi)")).collect();
-            ui.colored_label(ui.visuals().warn_fg_color, t!("These images are coarse at actual size: {}", list.join(", ")));
+            warn(ui, &t!("These images are coarse at actual size: {}", list.join(", ")));
         }
     }
 
-    /// 右（出力）: 選んだ出力の設定。
+    /// 右（出力）: 選んだ出力の設定。どの出力も同じ骨組み:
+    /// 見出し（名前と 1 行の説明）、設定、仕上がりの大きさ、注意、くわしく（たたんだ説明）、いちばん下に保存のボタン。
     pub(super) fn output_settings(&mut self, ui: &mut egui::Ui) {
         egui::Panel::right("output-settings").resizable(false).exact_size(320.0).frame(super::theme::side_frame()).show(ui, |ui| {
-            super::panels::boxed(ui, pakenoba_i18n::tr(OUTPUTS[self.output_kind].0), true, |ui| {
-            let ctx = ui.ctx().clone();
-            match self.output_kind {
-                0 => {
-                    ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
-                    self.resolution_choice(ui);
-                    if self.export_busy(ui) {
-                    } else {
-                        if ui.button(t!("Save the dieline as PSD…")).clicked() {
-                            self.export_psd();
+            let kind = self.output_kind;
+            let (title, about) = OUTPUT_NAMES[kind];
+            // いちばん下: 保存のボタンと、注意書き。残りの高さを、上の中身に使う。
+            let footer = egui::Frame::new().fill(super::theme::PANEL).corner_radius(egui::CornerRadius { nw: 0, ne: 0, sw: 2, se: 2 }).inner_margin(egui::Margin { left: 10, right: 10, top: 10, bottom: 10 });
+            egui::Panel::bottom("output-actions").frame(footer).show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                    self.output_actions(ui, kind);
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(t!("This output is for checking the design. It is not production data and does not guarantee die-cutting, trimming or print positions.")).size(11.0).color(super::theme::FAINT));
+                });
+                let r = ui.max_rect();
+                ui.painter().hline(r.x_range(), r.top() - 10.0, egui::Stroke::new(1.0, super::theme::DIVIDER));
+            });
+            let body = egui::Frame::new().fill(super::theme::PANEL).corner_radius(egui::CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 });
+            egui::CentralPanel::default().frame(body).show(ui, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    super::theme::panel_body().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(pakenoba_i18n::tr(title)).size(15.0).color(super::theme::TEXT));
+                        if !about.is_empty() {
+                            ui.label(egui::RichText::new(pakenoba_i18n::tr(about)).size(11.5).color(super::theme::MUTED));
                         }
-                        if ui.button(t!("Save the assembled view as PSD…")).clicked() {
-                            self.export_atlas();
-                        }
-                    }
-                    ui.small(t!("Each PSD has a selection channel for each face: Ctrl+click a channel in Photoshop to select that face (for Generative Fill, for example). The assembled view lays the outside faces out as they face on the box (front in the middle, top above), so nothing comes out upside down; drop it back on the window to put each face back on the dieline."));
-                    ui.small(t!("After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel."));
-                    if self.has_back_decals() {
-                        ui.small(t!("There is artwork on the back of the sheet too, so the back dieline is saved in the same place with \"_back\" added to the name. The back dieline is seen from the back (flipped left to right)."));
-                    }
+                        ui.add_space(6.0);
+                        self.output_body(ui, kind);
+                    });
+                });
+            });
+        });
+    }
+
+    /// 出力ごとの、設定と説明（欄の上の部分）。
+    fn output_body(&mut self, ui: &mut egui::Ui, kind: usize) {
+        match kind {
+            0 => {
+                ui.label(t!("Saves the cut lines, fold lines, glue flaps and placed artwork as a PSD with separate layers."));
+                settings_section(ui, |ui| {
+                    form_row(ui, t!("Layout"), |ui| {
+                        super::kit::segmented(ui, &mut self.output.assembled, &[(false, t!("Flat"), t!("The dieline as it is printed")), (true, t!("Assembled"), t!("The outside faces laid out as they face on the box (front in the middle, top above), so nothing comes out upside down"))]);
+                    });
+                    self.resolution_rows(ui);
+                });
+                self.resolution_info(ui);
+                if self.has_back_decals() {
+                    info(ui, t!("There is artwork on the back of the sheet too, so the back dieline is saved in the same place with \"_back\" added to the name. The back dieline is seen from the back (flipped left to right)."));
                 }
-                1 => {
-                    ui.label(t!("Saves the box as you see it now as a 16:9 image (PNG). Set the angle and size by dragging and scrolling on the box in the middle."));
-                    egui::Grid::new("shot").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label(t!("Size"));
-                        egui::ComboBox::from_id_salt("shot-size").selected_text(pakenoba_i18n::tr(SHOT_SIZES[self.output.shot_size].0)).show_ui(ui, |ui| {
+                details(ui, "psd", |ui| {
+                    ui.label(t!("Artwork that crosses a cut line continues past it in the plane of its panel. Where nothing reaches, the edge colour is stretched. Finish plates get no bleed."));
+                    ui.label(t!("Each PSD has a selection channel for each face: Ctrl+click a channel in Photoshop to select that face (for Generative Fill, for example). The assembled view lays the outside faces out as they face on the box (front in the middle, top above), so nothing comes out upside down; drop it back on the window to put each face back on the dieline."));
+                    ui.label(t!("After painting on it in Photoshop or another app, drop the PSD on the window (or choose File > Import dieline artwork (PSD)…). It comes back as the dieline artwork in the Layers panel."));
+                });
+            }
+            1 => {
+                ui.label(t!("Saves the box as you see it now as a 16:9 image (PNG). Set the angle and size by dragging and scrolling on the box in the middle."));
+                settings_section(ui, |ui| {
+                    form_row(ui, t!("Size"), |ui| {
+                        egui::ComboBox::from_id_salt("shot-size").width(ui.available_width()).selected_text(pakenoba_i18n::tr(SHOT_SIZES[self.output.shot_size].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in SHOT_SIZES.iter().enumerate() {
                                 ui.selectable_value(&mut self.output.shot_size, i, pakenoba_i18n::tr(label));
                             }
                         });
-                        ui.end_row();
-                        ui.label(t!("Background"));
-                        egui::ComboBox::from_id_salt("shot-bg").selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background].0)).show_ui(ui, |ui| {
+                    });
+                    form_row(ui, t!("Background"), |ui| {
+                        egui::ComboBox::from_id_salt("shot-bg").width(ui.available_width()).selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in BACKGROUNDS.iter().enumerate() {
                                 ui.selectable_value(&mut self.output.background, i, pakenoba_i18n::tr(label));
                             }
                         });
-                        ui.end_row();
                     });
-                    if ui.button(t!("Save image…")).clicked() {
-                        self.export_image(&ctx);
-                    }
-                    ui.small(t!("The frame in the middle shows what goes into the image."));
-                }
-                2 => {
-                    ui.label(t!("Saves the closed box opening as a GIF animation you can put on a slide. It starts from the current angle. The size is set so the fully open box fits."));
-                    egui::Grid::new("movie").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label(t!("Size"));
-                        egui::ComboBox::from_id_salt("movie-size").selected_text(pakenoba_i18n::tr(MOVIE_SIZES[self.output.movie_size].0)).show_ui(ui, |ui| {
+                });
+                info(ui, t!("The frame in the middle shows what goes into the image."));
+            }
+            2 => {
+                ui.label(t!("Saves the closed box opening as a GIF animation you can put on a slide. It starts from the current angle. The size is set so the fully open box fits."));
+                settings_section(ui, |ui| {
+                    form_row(ui, t!("Size"), |ui| {
+                        egui::ComboBox::from_id_salt("movie-size").width(ui.available_width()).selected_text(pakenoba_i18n::tr(MOVIE_SIZES[self.output.movie_size].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in MOVIE_SIZES.iter().enumerate() {
                                 ui.selectable_value(&mut self.output.movie_size, i, pakenoba_i18n::tr(label));
                             }
                         });
-                        ui.end_row();
-                        ui.label(t!("Length"));
+                    });
+                    form_row(ui, t!("Length"), |ui| {
                         ui.add(egui::DragValue::new(&mut self.output.movie_seconds).range(1.5..=10.0).speed(0.1).max_decimals(1).suffix(t!(" s")));
-                        ui.end_row();
-                        ui.label(t!("Background"));
-                        egui::ComboBox::from_id_salt("movie-bg").selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background.min(1)].0)).show_ui(ui, |ui| {
+                    });
+                    form_row(ui, t!("Background"), |ui| {
+                        egui::ComboBox::from_id_salt("movie-bg").width(ui.available_width()).selected_text(pakenoba_i18n::tr(BACKGROUNDS[self.output.background.min(1)].0)).show_ui(ui, |ui| {
                             for (i, (label, _)) in BACKGROUNDS.iter().take(2).enumerate() {
                                 ui.selectable_value(&mut self.output.background, i, pakenoba_i18n::tr(label));
                             }
                         });
-                        ui.end_row();
                     });
-                    ui.checkbox(&mut self.output.movie_turn, t!("Turn slightly while opening"));
-                    // 動きのプリセット（どの案件でも使える）。
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(t!("Motion preset"));
-                        let mut chosen = None;
-                        egui::ComboBox::from_id_salt("motion-preset").selected_text(t!("Choose…")).show_ui(ui, |ui| {
-                            if self.settings.motions.is_empty() {
-                                ui.weak(t!("No presets yet"));
+                    form_row(ui, "", |ui| {
+                        ui.checkbox(&mut self.output.movie_turn, t!("Turn slightly while opening"));
+                    });
+                });
+                if !self.template.can_open_at(0) {
+                    warn(ui, t!("This box type has no opening motion."));
+                }
+                // 動きのプリセット（どの案件でも使える）。
+                super::kit::section(ui, "output-motion", t!("Motion preset"), false, false, |ui| {
+                    let mut chosen = None;
+                    egui::ComboBox::from_id_salt("motion-preset").width(ui.available_width()).selected_text(t!("Choose…")).show_ui(ui, |ui| {
+                        if self.settings.motions.is_empty() {
+                            ui.weak(t!("No presets yet"));
+                        }
+                        for (i, m) in self.settings.motions.iter().enumerate() {
+                            if ui.selectable_label(false, &m.name).clicked() {
+                                chosen = Some(i);
                             }
-                            for (i, m) in self.settings.motions.iter().enumerate() {
-                                if ui.selectable_label(false, &m.name).clicked() {
-                                    chosen = Some(i);
-                                }
-                            }
-                        });
-                        if let Some(i) = chosen {
-                            self.use_motion(i);
                         }
                     });
+                    if let Some(i) = chosen {
+                        self.use_motion(i);
+                    }
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.motion_name).hint_text(t!("Preset name")).desired_width(120.0));
                         if ui.add_enabled(!self.motion_name.trim().is_empty(), egui::Button::new(t!("Save motion"))).on_hover_text(t!("Saves the length, turning, size, background and the current viewing angle")).clicked() {
@@ -825,86 +856,129 @@ impl App {
                             }
                         }
                     });
-                    ui.add_space(4.0);
-                    let busy = self.movie.is_some();
-                    ui.horizontal(|ui| {
-                        let playing = self.movie_preview.is_some();
-                        if ui.add_enabled(!busy && self.template.can_open_at(0), egui::Button::new(if playing { t!("Stop preview") } else { t!("Preview") })).on_hover_text(t!("Plays the video on screen, the same as it will be saved")).clicked() {
-                            self.toggle_movie_preview();
-                        }
-                        if ui.add_enabled(!busy, egui::Button::new(t!("Save video…"))).clicked() {
-                            self.stop_movie_preview();
-                            self.export_movie();
-                        }
-                    });
-                    if !self.template.can_open_at(0) {
-                        ui.small(t!("This box type has no opening motion."));
-                    }
-                    ui.small(t!("Saving as MP4 is not available yet."));
-                }
-                4 => {
-                    ui.label(t!("Makes a full-size PDF of the dieline split across sheets of paper. Join them along the overlaps, stick them on card stock and assemble."));
-                    egui::Grid::new("print").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                        ui.label(t!("Paper"));
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut self.output.print.paper, Paper::A4, "A4");
-                            ui.selectable_value(&mut self.output.print.paper, Paper::A3, "A3");
-                        });
-                        ui.end_row();
-                        ui.label(t!("Overlap"));
-                        ui.add(egui::DragValue::new(&mut self.output.print.overlap).range(0.0..=30.0).speed(0.5).max_decimals(0).suffix(" mm"));
-                        ui.end_row();
-                        ui.label(t!("Paper margin"));
-                        ui.add(egui::DragValue::new(&mut self.output.print.margin).range(3.0..=25.0).speed(0.5).max_decimals(0).suffix(" mm"));
-                        ui.end_row();
-                    });
-                    let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
-                    let tiling = tile(size, &self.output.print);
-                    let used = self.used_tiles(size, &tiling);
-                    ui.label(t!("{} {} sheets of {} ({} across x {} down; sheets the dieline does not touch are skipped)", self.output.print.paper.name(), if tiling.landscape() { t!("landscape") } else { t!("portrait") }, used.len(), tiling.columns, tiling.rows));
-                    self.print_preview(ui, size, &tiling, &used);
-                    if ui.button(t!("Save the full-size dieline as PDF…")).clicked() {
-                        self.export_print();
-                    }
-                    ui.small(t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
-                }
-                super::peek::PEEK_OUTPUT => self.peek_settings(ui),
-                VIEW_OUTPUT => self.view_settings(ui),
-                MODEL_OUTPUT => {
-                    ui.label(t!("Saves the box as a 3D model, folded and opened as it is now on screen, with the artwork on the outside and inside."));
-                    ui.horizontal(|ui| {
-                        if ui.button(t!("Save as GLB…")).on_hover_text(t!("One file with the shape and artwork. Opens in Blender, browser viewers and many 3D apps")).clicked() {
-                            self.export_glb();
-                        }
-                        if ui.button(t!("Save as OBJ…")).on_hover_text(t!("For older 3D apps. Saves the .obj, a .mtl and two PNG images; keep them together")).clicked() {
-                            self.export_obj();
-                        }
-                    });
-                    ui.small(t!("Lengths are in meters. Foil, embossing and varnish are baked into the artwork as colors; their shine is not included."));
-                    ui.small(t!("To look at it on Windows, use Blender, or open it in a browser viewer such as Babylon.js Sandbox."));
-                }
-                READY_OUTPUT => {
-                    ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
-                    let plates = self.plate_names();
-                    if plates.is_empty() {
-                        ui.small(t!("There are no finishes (foil, embossing, spot UV, white ink) yet. Add them from the star button in the Layers panel."));
-                    } else {
-                        ui.label(t!("Plates: {}", plates.join(", ")));
-                    }
-                    self.resolution_choice(ui);
-                    self.ready_color_choice(ui);
-                    if self.export_busy(ui) {
-                    } else if ui.button(t!("Save the print-ready PDF…")).clicked() {
-                        self.export_ready();
-                    }
-                    ui.small(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges."));
-                }
-                _ => {}
+                });
+                details(ui, "movie", |ui| {
+                    ui.label(t!("Saving as MP4 is not available yet."));
+                });
             }
-            ui.add_space(6.0);
-            ui.small(t!("This output is for checking the design. It is not production data and does not guarantee die-cutting, trimming or print positions."));
-            });
-        });
+            4 => {
+                ui.label(t!("Makes a full-size PDF of the dieline split across sheets of paper. Join them along the overlaps, stick them on card stock and assemble."));
+                settings_section(ui, |ui| {
+                    form_row(ui, t!("Paper"), |ui| {
+                        super::kit::segmented(ui, &mut self.output.print.paper, &[(Paper::A4, "A4", ""), (Paper::A3, "A3", "")]);
+                    });
+                    form_row(ui, t!("Overlap"), |ui| {
+                        ui.add(egui::DragValue::new(&mut self.output.print.overlap).range(0.0..=30.0).speed(0.5).max_decimals(0).suffix(" mm"));
+                    });
+                    form_row(ui, t!("Paper margin"), |ui| {
+                        ui.add(egui::DragValue::new(&mut self.output.print.margin).range(3.0..=25.0).speed(0.5).max_decimals(0).suffix(" mm"));
+                    });
+                });
+                let size = [self.template.max[0] - self.template.min[0], self.template.max[1] - self.template.min[1]];
+                let tiling = tile(size, &self.output.print);
+                let used = self.used_tiles(size, &tiling);
+                self.print_preview(ui, size, &tiling, &used);
+                info(ui, &t!("{} {} sheets of {} ({} across x {} down; sheets the dieline does not touch are skipped)", self.output.print.paper.name(), if tiling.landscape() { t!("landscape") } else { t!("portrait") }, used.len(), tiling.columns, tiling.rows));
+                warn(ui, t!("When printing, do not scale; print at \"Actual size\" (100%). Measure the 100 mm scale on the first sheet with a ruler to check."));
+            }
+            super::peek::PEEK_OUTPUT => self.peek_settings(ui),
+            VIEW_OUTPUT => {
+                ui.label(t!("Saves the box as you see it now as images to hand to generative AI: a shaded reference, line art, depth, normals, a mask and one colour per face, plus view.json (the camera). Turn the box in the middle to choose the angle."));
+                self.view_settings(ui);
+            }
+            MODEL_OUTPUT => {
+                ui.label(t!("Saves the box as a 3D model, folded and opened as it is now on screen, with the artwork on the outside and inside."));
+                details(ui, "model", |ui| {
+                    ui.label(t!("Lengths are in meters. Foil, embossing and varnish are baked into the artwork as colors; their shine is not included."));
+                    ui.label(t!("To look at it on Windows, use Blender, or open it in a browser viewer such as Babylon.js Sandbox."));
+                });
+            }
+            READY_OUTPUT => {
+                ui.label(t!("Makes a PDF to hand to a print shop: one full-size page per side, with the cut and fold lines and each finish as its own spot color plate."));
+                settings_section(ui, |ui| {
+                    self.resolution_rows(ui);
+                    self.ready_color_choice(ui);
+                });
+                let plates = self.plate_names();
+                if plates.is_empty() {
+                    info(ui, t!("There are no finishes (foil, embossing, spot UV, white ink) yet. Add them from the star button in the Layers panel."));
+                } else {
+                    info(ui, &t!("Plates: {}", plates.join(", ")));
+                }
+                self.resolution_info(ui);
+                details(ui, "ready", |ui| {
+                    ui.label(t!("Cut lines are the spot color \"Die Cut\" and fold lines \"Crease\". Every plate is set to overprint. The last page lists the finishes, heights and edges."));
+                    ui.label(t!("Artwork that crosses a cut line continues past it in the plane of its panel. Where nothing reaches, the edge colour is stretched. Finish plates get no bleed."));
+                    self.ready_color_details(ui);
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// 出力ごとの、保存のボタン（欄のいちばん下）。主な 1 つを、選択の色で塗る。
+    fn output_actions(&mut self, ui: &mut egui::Ui, kind: usize) {
+        let ctx = ui.ctx().clone();
+        match kind {
+            0 => {
+                if self.export_busy(ui) {
+                } else if self.output.assembled {
+                    if primary(ui, t!("Save the assembled view as PSD…")).clicked() {
+                        self.export_atlas();
+                    }
+                } else if primary(ui, t!("Save the dieline as PSD…")).clicked() {
+                    self.export_psd();
+                }
+            }
+            1 => {
+                if primary(ui, t!("Save image…")).clicked() {
+                    self.export_image(&ctx);
+                }
+            }
+            2 => {
+                let busy = self.movie.is_some();
+                let playing = self.movie_preview.is_some();
+                if ui.add_enabled(!busy && self.template.can_open_at(0), egui::Button::new(if playing { t!("Stop preview") } else { t!("Preview") }).min_size(egui::vec2(0.0, 26.0))).on_hover_text(t!("Plays the video on screen, the same as it will be saved")).clicked() {
+                    self.toggle_movie_preview();
+                }
+                ui.add_space(4.0);
+                if ui.add_enabled_ui(!busy, |ui| primary(ui, t!("Save video…"))).inner.clicked() {
+                    self.stop_movie_preview();
+                    self.export_movie();
+                }
+            }
+            4 => {
+                if primary(ui, t!("Save the full-size dieline as PDF…")).clicked() {
+                    self.export_print();
+                }
+            }
+            VIEW_OUTPUT => {
+                if primary(ui, t!("Save the images for generative AI…")).clicked() {
+                    self.export_view();
+                }
+                ui.add_space(4.0);
+                if ui.add(egui::Button::new(t!("Put a generated image on the faces…")).min_size(egui::vec2(0.0, 26.0))).clicked() {
+                    self.import_view_image();
+                }
+            }
+            MODEL_OUTPUT => {
+                if primary(ui, t!("Save as GLB…")).on_hover_text(t!("One file with the shape and artwork. Opens in Blender, browser viewers and many 3D apps")).clicked() {
+                    self.export_glb();
+                }
+                ui.add_space(4.0);
+                if ui.add(egui::Button::new(t!("Save as OBJ…")).min_size(egui::vec2(0.0, 26.0))).on_hover_text(t!("For older 3D apps. Saves the .obj, a .mtl and two PNG images; keep them together")).clicked() {
+                    self.export_obj();
+                }
+            }
+            super::peek::PEEK_OUTPUT => self.peek_actions(ui),
+            READY_OUTPUT => {
+                if self.export_busy(ui) {
+                } else if primary(ui, t!("Save the print-ready PDF…")).clicked() {
+                    self.export_ready();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// 紙の分け方の見本。展開図の絵の上に、紙の区切り（刷れる範囲）と番号を描く。
@@ -960,6 +1034,83 @@ impl App {
         }
         painter.rect_stroke(frame, 0.0, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140)), egui::StrokeKind::Inside);
     }
+}
+
+
+/// 出力の一覧と見出しに出す、短い名前と、形式の 1 行（`OUTPUTS` と同じ並び）。
+pub(super) const OUTPUT_NAMES: [(&str, &str); 9] = [
+    ("Dieline", "PSD · with layers"),
+    ("16:9 image", "PNG · for slides"),
+    ("Box-opening video", "GIF"),
+    ("Store shelf picture", ""),
+    ("Full-size dieline", "PDF · split into A4 or A3 sheets"),
+    ("Peek-in view", "Webcam"),
+    ("Print-ready PDF", "Full size · finish plates · CMYK"),
+    ("Images for generative AI", "ControlNet, Firefly"),
+    ("3D model", "GLB, OBJ"),
+];
+
+/// 左の一覧の、まとまりと、そこに入る出力の番号。
+pub(super) const OUTPUT_GROUPS: [(&str, &[usize]); 3] = [
+    ("Show", &[1, 2, 3, super::peek::PEEK_OUTPUT]),
+    ("Make and hand to print", &[0, 4, READY_OUTPUT]),
+    ("To other apps", &[VIEW_OUTPUT, MODEL_OUTPUT]),
+];
+
+/// 「設定」のまとまり（ラベルと入力の 2 列）。
+pub(super) fn settings_section(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(4.0);
+    super::kit::section(ui, "output-settings", t!("Settings"), true, false, |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        add(ui);
+    });
+}
+
+/// 設定の 1 行（左にラベル、右に入力。幅をそろえる）。
+pub(super) fn form_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(84.0, super::kit::CONTROL), egui::Sense::hover());
+        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.0), super::theme::MUTED);
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width());
+            add(ui);
+        });
+    });
+}
+
+/// 薄い字の、1 段落の補足。
+pub(super) fn info(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(text).size(11.5).color(super::theme::MUTED));
+}
+
+/// 注意（左に橙の線の、帯）。
+fn warn(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    let frame = egui::Frame::new().fill(egui::Color32::from_rgb(0x3a, 0x33, 0x26)).inner_margin(egui::Margin { left: 10, right: 8, top: 6, bottom: 6 });
+    let response = frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(egui::RichText::new(text).size(11.5).color(egui::Color32::from_rgb(0xe8, 0xc9, 0x8a)));
+    });
+    let r = response.response.rect;
+    ui.painter().rect_filled(egui::Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 3.0, r.bottom())), 0.0, super::theme::WARN);
+}
+
+/// たたんだ、くわしい説明。
+fn details(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(4.0);
+    super::kit::section(ui, &format!("output-details-{id}"), t!("Details"), false, false, |ui| {
+        ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+        ui.visuals_mut().override_text_color = Some(super::theme::MUTED);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        add(ui);
+    });
+}
+
+/// 主な操作のボタン（幅いっぱい、選択の色で塗る）。
+pub(super) fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let button = egui::Button::new(egui::RichText::new(text).size(13.0).color(egui::Color32::WHITE)).fill(super::theme::ACCENT).corner_radius(5.0).min_size(egui::vec2(ui.available_width(), 30.0));
+    ui.add(button)
 }
 
 #[cfg(test)]

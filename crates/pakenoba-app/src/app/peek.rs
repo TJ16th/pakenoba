@@ -814,22 +814,20 @@ impl App {
     /// 右の欄: のぞき込みの設定。
     pub(super) fn peek_settings(&mut self, ui: &mut egui::Ui) {
         ui.label(t!("Shows the box as if it were behind the screen. A webcam watches where your face is: move your head to look around the box, and come closer to see it larger."));
-        ui.small(t!("The camera picture is only used inside this app to find the face. It is not saved or sent anywhere."));
-        ui.add_space(6.0);
+        super::outputs::info(ui, t!("The camera picture is only used inside this app to find the face. It is not saved or sent anywhere."));
         let cameras = self.peek.cameras.get_or_insert_with(cameras).clone();
         let s = &mut self.peek.settings;
         let before = s.clone();
-        egui::Grid::new("peek").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Camera"));
-            let name = cameras.get(s.camera).cloned().unwrap_or_else(|| if cameras.is_empty() { t!("No camera found").to_owned() } else { t!("Camera {}", s.camera + 1) });
-            egui::ComboBox::from_id_salt("peek-camera").width(190.0).selected_text(name).show_ui(ui, |ui| {
-                for (i, name) in cameras.iter().enumerate() {
-                    ui.selectable_value(&mut s.camera, i, name);
-                }
+        super::outputs::settings_section(ui, |ui| {
+            super::outputs::form_row(ui, t!("Camera"), |ui| {
+                let name = cameras.get(s.camera).cloned().unwrap_or_else(|| if cameras.is_empty() { t!("No camera found").to_owned() } else { t!("Camera {}", s.camera + 1) });
+                egui::ComboBox::from_id_salt("peek-camera").width(ui.available_width()).selected_text(name).show_ui(ui, |ui| {
+                    for (i, name) in cameras.iter().enumerate() {
+                        ui.selectable_value(&mut s.camera, i, name);
+                    }
+                });
             });
-            ui.end_row();
-            ui.label(t!("Screen width"));
-            ui.horizontal(|ui| {
+            super::outputs::form_row(ui, t!("Screen width"), |ui| {
                 ui.add_sized([80.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut s.screen_mm).range(150.0..=3000.0).speed(2.0).max_decimals(0).suffix(" mm"));
                 ui.menu_button(t!("Presets"), |ui| {
                     for (label, mm) in SCREENS {
@@ -840,35 +838,18 @@ impl App {
                     }
                 });
             });
-            ui.end_row();
-            ui.label(t!("Strength"));
-            ui.add(egui::Slider::new(&mut s.strength, 0.3..=3.0).max_decimals(1));
-            ui.end_row();
-            ui.label(t!("Stabilization"));
-            ui.add(egui::Slider::new(&mut s.stability, 0.0..=1.0).max_decimals(2)).on_hover_text(t!("Higher values hold the view steadier when your head is still, with a little more delay"));
-            ui.end_row();
-            ui.label("");
-            ui.checkbox(&mut s.mirror, t!("Flip left and right"));
-            ui.end_row();
+            super::outputs::form_row(ui, t!("Strength"), |ui| {
+                ui.add(egui::Slider::new(&mut s.strength, 0.3..=3.0).max_decimals(1));
+            });
+            super::outputs::form_row(ui, t!("Stabilization"), |ui| {
+                ui.add(egui::Slider::new(&mut s.stability, 0.0..=1.0).max_decimals(2)).on_hover_text(t!("Higher values hold the view steadier when your head is still, with a little more delay"));
+            });
+            super::outputs::form_row(ui, "", |ui| {
+                ui.checkbox(&mut s.mirror, t!("Flip left and right"));
+            });
         });
-        ui.small(t!("Set the visible width of your screen so the depth looks right. If the box moves the wrong way, turn on \"Flip left and right\"."));
+        super::outputs::info(ui, t!("Set the visible width of your screen so the depth looks right. If the box moves the wrong way, turn on \"Flip left and right\"."));
         let changed_camera = before.camera != self.peek.settings.camera;
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if self.peek.running() {
-                if ui.button(t!("Turn the camera off")).clicked() {
-                    self.peek.stop();
-                }
-            } else if ui.add_enabled(!cameras.is_empty(), egui::Button::new(t!("Turn the camera on"))).on_disabled_hover_text(t!("No camera found")).clicked() {
-                self.peek.start();
-            }
-            if ui.button(t!("Show full screen")).clicked() {
-                if !self.peek.running() && !cameras.is_empty() {
-                    self.peek.start();
-                }
-                self.set_peek_full(ui.ctx(), true);
-            }
-        });
         if changed_camera && self.peek.running() {
             self.peek.start();
         }
@@ -895,7 +876,26 @@ impl App {
                 None => t!("Looking for a face…"),
             });
         }
-        ui.small(t!("Drag on the box to turn it and scroll to resize it, together with your head movement. Esc or a double-click leaves full screen."));
+        super::outputs::info(ui, t!("Drag on the box to turn it and scroll to resize it, together with your head movement. Esc or a double-click leaves full screen."));
+    }
+
+    /// のぞき込みの、欄のいちばん下のボタン（カメラを点ける・消す、全画面で見せる）。
+    pub(super) fn peek_actions(&mut self, ui: &mut egui::Ui) {
+        let cameras = self.peek.cameras.get_or_insert_with(cameras).clone();
+        if self.peek.running() {
+            if ui.add(egui::Button::new(t!("Turn the camera off")).min_size(vec2(0.0, 26.0))).clicked() {
+                self.peek.stop();
+            }
+        } else if ui.add_enabled_ui(!cameras.is_empty(), |ui| super::outputs::primary(ui, t!("Turn the camera on"))).inner.on_disabled_hover_text(t!("No camera found")).clicked() {
+            self.peek.start();
+        }
+        ui.add_space(4.0);
+        if ui.add(egui::Button::new(t!("Show full screen")).min_size(vec2(0.0, 26.0))).clicked() {
+            if !self.peek.running() && !cameras.is_empty() {
+                self.peek.start();
+            }
+            self.set_peek_full(ui.ctx(), true);
+        }
     }
 }
 

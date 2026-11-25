@@ -203,6 +203,29 @@
 	Open or close the assets panel	素材の欄を開く、閉じる
 	Hide (not drawn on the box or the dieline)	隠す（箱にも、型紙にも描かない）
 	Show	見せる
+	PSD · with layers	PSD ・ レイヤー付き
+	16:9 image	16:9 の画像
+	PNG · for slides	PNG ・ スライド用
+	GIF	GIF
+	Full-size dieline	実寸の型紙
+	PDF · split into A4 or A3 sheets	PDF ・ A4 や A3 に分けて印刷
+	Peek-in view	のぞき込み
+	Webcam	Web カメラ
+	Print-ready PDF	入稿用 PDF
+	Full size · finish plates · CMYK	実寸 ・ 加工の版 ・ CMYK
+	Images for generative AI	生成AI用の画像
+	ControlNet, Firefly	ControlNet、Firefly
+	3D model	3D モデル
+	GLB, OBJ	GLB、OBJ
+	Make and hand to print	作る・入稿する
+	To other apps	ほかのアプリへ
+	Settings	設定
+	Details	くわしく
+	Layout	向き
+	Assembled	組み立て向き
+	The dieline as it is printed	刷るときの展開図のまま
+	The outside faces laid out as they face on the box (front in the middle, top above), so nothing comes out upside down	外側の面を、箱の上での向きに並べます（正面がまん中、天面が上）。絵が逆さになりません
+	Coming soon	準備中
 # pakenoba-app/src/app/library.rs
 	Could not open: {e}	開けませんでした: {e}
 	Not an image	画像ではありません
@@ -368,7 +391,6 @@
 	Problem: {text}	問題: {text}
 	Note: {text}	注意: {text}
 	Checks for open edges, openings and their closures, what each glue flap sticks to, and overlaps in the dieline.	閉じていない辺、開け口と留め、のりしろの貼る相手、展開図の重なりを見ています。
-	Coming later	これから作ります
 	another box type	別の型
 	Change the box type to "{name}"?	型を「{name}」に変えますか
 	Changing the box type changes the panels, so {count} placed piece(s) of artwork will come off the box.	型を変えると、面の並びが変わるので、置いた柄 {count} つが箱から外れます。

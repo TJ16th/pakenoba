@@ -10,8 +10,6 @@ use super::{App, SHAPES, Tool, View, Workspace, icons};
 use pakenoba_core::template::TuckFlaps;
 
 
-/// 出力の種類。（名前、もう使えるか）。
-use super::outputs::OUTPUTS;
 
 /// 数値の欄。右にそろえ、単位を必ず添える。
 /// 押すたびに 2 つの動きを切り替えるボタン。幅は、長いほうの文字に合わせて変えない（押しても並びが動かない）。
@@ -873,17 +871,24 @@ impl App {
         ui.small(t!("The top can also be wider than the bottom. The hole follows the width at the middle of the handle."));
     }
 
-    /// 左（出力）: 出力の種類。
+    /// 左（出力）: 出力の種類。まとまりごとに、アイコンと名前と形式の 1 行。まだないものは「準備中」の札。
     pub(super) fn output_list(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("output-list").resizable(false).exact_size(240.0).frame(super::theme::side_frame()).show(ui, |ui| {
-            boxed(ui, t!("Output"), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                for (index, (label, ready)) in OUTPUTS.iter().enumerate() {
-                    let response = ui.add_enabled(*ready, egui::Button::selectable(self.output_kind == index, pakenoba_i18n::tr(label))).on_disabled_hover_text(t!("Coming later"));
-                    if response.clicked() {
-                        self.output_kind = index;
+            boxed(ui, t!("Output"), true, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for (group, members) in super::outputs::OUTPUT_GROUPS {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(pakenoba_i18n::tr(group)).size(11.0).color(super::theme::FAINT));
+                    ui.add_space(2.0);
+                    for &index in members {
+                        let (title, about) = super::outputs::OUTPUT_NAMES[index];
+                        let ready = super::outputs::OUTPUTS[index].1;
+                        if output_row(ui, index, pakenoba_i18n::tr(title), pakenoba_i18n::tr(about), self.output_kind == index, ready).clicked() && ready {
+                            self.output_kind = index;
+                        }
                     }
                 }
-            }));
+            });
         });
     }
 
@@ -1111,6 +1116,40 @@ fn step_tab_sized(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool, si
         painter.rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 2.5), rect.right_bottom()), 1.0, super::theme::ACCENT);
     }
     if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response
+}
+
+/// 出力の一覧の 1 行。アイコン、名前、その下に形式。選んでいる行は灰色の帯。
+fn output_row(ui: &mut egui::Ui, index: usize, title: &str, about: &str, selected: bool, ready: bool) -> egui::Response {
+    let height = if about.is_empty() { 30.0 } else { 40.0 };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, 4.0, super::theme::SELECTED);
+    } else if response.hovered() && ready {
+        painter.rect_filled(rect, 4.0, super::theme::HOVER);
+    }
+    let color = if ready { super::theme::TEXT } else { super::theme::FAINT };
+    let icon = egui::pos2(rect.left() + 16.0, rect.center().y);
+    icons::draw_output(painter, icon, index, egui::Stroke::new(1.2, color));
+    let x = rect.left() + 34.0;
+    if about.is_empty() {
+        painter.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(12.5), color);
+    } else {
+        painter.text(egui::pos2(x, rect.top() + 6.0), egui::Align2::LEFT_TOP, title, egui::FontId::proportional(12.5), color);
+        painter.text(egui::pos2(x, rect.top() + 23.0), egui::Align2::LEFT_TOP, about, egui::FontId::proportional(11.0), if selected { super::theme::MUTED } else { super::theme::FAINT });
+    }
+    if !ready {
+        // 準備中の札。
+        let label = t!("Coming soon");
+        let galley = painter.layout_no_wrap(label.to_owned(), egui::FontId::proportional(10.5), super::theme::FAINT);
+        let r = egui::Rect::from_min_size(egui::pos2(rect.right() - galley.size().x - 16.0, rect.center().y - 8.0), egui::vec2(galley.size().x + 10.0, 16.0));
+        painter.rect_stroke(r, 4.0, egui::Stroke::new(1.0, super::theme::CONTROL_EDGE), egui::StrokeKind::Inside);
+        painter.galley(r.center() - galley.size() * 0.5, galley, super::theme::FAINT);
+    }
+    if response.hovered() && ready {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     response
