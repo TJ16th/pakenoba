@@ -1425,7 +1425,6 @@ blend	Color	カラー
 	Align and distribute	整列
 	"{}" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on).	「{}」は、パケノバで作れる ECMA の番号ではありません（A 類: A20.20.03.01 など）。
 	1-2-3 snap lock bottom	1-2-3 底（組み底）
-	Common styles	よく使う型
 	Crash lock bottom	ワンタッチ底
 	ECMA number	ECMA の番号
 	ECMA styles	ECMA の型
@@ -1442,6 +1441,14 @@ blend	Color	カラー
 	Tuck lid	差し込みのフタ
 	Tuck lid with hanger	差し込みのフタ＋吊り下げ
 	Use this number	この番号にする
+	Choose from the pictures…	絵を見て選ぶ…
+	Choose an ECMA style	ECMA の型を選ぶ
+	Each style shows the box with the top and bottom half open, and its dieline. Click one to use it; the box on the main view changes, so you can compare.	型ごとに、上と底のフタを半分開けた箱と、展開図を並べています。押すとその型になり、画面の箱も変わるので、見比べられます。
+	All styles	すべて
+	{} styles	{} 種類
+	No preview	絵を作れません
+	Common	よく使う
+	Use this style	この型にする
 	Front panel	正面
 	Back panel	背面
 	Top of the box	上

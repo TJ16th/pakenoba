@@ -3,7 +3,7 @@
 //! 形は `pakenoba_core::ecma` が描き起こす。番号は ECMA の呼び名で、メーカーとそのまま話が通じる。
 
 use eframe::egui;
-use pakenoba_core::ecma::{COMMON, Closure, Code};
+use pakenoba_core::ecma::{Closure, Code};
 use pakenoba_i18n::t;
 
 use super::{App, Dims, ECMA};
@@ -27,7 +27,7 @@ impl App {
     }
 
     /// 番号を変える（パネルの並びが変わるので、置いた柄があれば先に確かめる）。
-    fn set_ecma(&mut self, code: Code) {
+    pub(super) fn set_ecma(&mut self, code: Code) {
         let n = code.to_u32();
         if self.dims.sides == ECMA && self.dims.ecma == n {
             return;
@@ -53,6 +53,11 @@ impl App {
         };
         ui.label(egui::RichText::new(code.name()).size(16.0).strong());
         ui.add(egui::Label::new(egui::RichText::new(describe(code)).weak()).wrap());
+        ui.add_space(2.0);
+        // 組んだ形と展開図を見比べて選ぶ一覧。
+        if ui.add(egui::Button::new(t!("Choose from the pictures…")).min_size(egui::vec2(190.0, 26.0))).clicked() {
+            self.open_ecma_gallery();
+        }
         if !code.listed() {
             ui.small(t!("This combination is not in the public list of ECMA styles, but it can still be made."));
         }
@@ -106,15 +111,6 @@ impl App {
             }
         });
         ui.ctx().data_mut(|d| d.insert_temp(id, typed));
-        ui.add_space(4.0);
-        ui.weak(t!("Common styles"));
-        for n in COMMON {
-            let Some(c) = Code::from_u32(n) else { continue };
-            let response = ui.selectable_label(code == c, format!("{}  {}", c.name(), describe(c)));
-            if response.clicked() {
-                next = c;
-            }
-        }
         if next != code {
             self.set_ecma(next);
         }

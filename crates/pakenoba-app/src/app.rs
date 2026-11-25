@@ -27,6 +27,7 @@ mod shapes;
 mod my_shapes;
 mod dieline;
 mod ecma;
+mod ecma_gallery;
 mod local_ai;
 pub(crate) mod adjust;
 mod vectorize;
@@ -538,6 +539,8 @@ struct App {
     editing: bool,
     /// 型を変えようとして、確認を待っている型。
     pending_shape: Option<usize>,
+    /// ECMA の型を、絵で見比べて選ぶ一覧（開いているとき）。
+    ecma_gallery: Option<ecma_gallery::Gallery>,
     /// 自分の型を選んで、型が変わるのを確かめているあいだの、寸法と紙。
     pending_dims: Option<(Dims, pakenoba_core::material::Material)>,
     /// 型の線のファイル（DXF）を読み込む欄。
@@ -782,6 +785,7 @@ impl App {
             history: history::History::default(),
             editing: false,
             pending_shape: None,
+            ecma_gallery: None,
             pending_dims: None,
             dieline_import: None,
             fold_pick: None,
@@ -1560,6 +1564,7 @@ impl eframe::App for App {
         }
         self.run_bridge_jobs();
         self.usage_frame(ui.ctx());
+        self.ecma_gallery_window(ui.ctx());
         self.updates_frame(ui.ctx());
         // お客さんが開け閉めするアニメーション。約 0.6 秒（フタが開いてから、内側のフラップが開く）。
         for which in 0..2 {
