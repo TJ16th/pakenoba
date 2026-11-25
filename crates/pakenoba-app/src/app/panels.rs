@@ -732,6 +732,9 @@ impl App {
                 if self.dims.sides == 0 {
                     boxed(ui, t!("Flaps"), false, |ui| self.flap_settings(ui));
                 }
+                if self.dims.sides == super::PILLOW {
+                    boxed(ui, t!("Handle"), false, |ui| self.handle_settings(ui));
+                }
                 boxed(ui, t!("Paper and coating"), false, |ui| self.material_settings(ui));
                 boxed(ui, t!("Dieline check"), false, |ui| {
                     if self.problems.is_empty() {
@@ -793,6 +796,41 @@ impl App {
             }
         });
         ui.small(t!("The tuck and side flaps are the same at the top and bottom."));
+    }
+
+    /// 持ち手つきピロー型の持ち手（正面から見て等脚台形）の、下の幅、上の幅、高さ。差し込み箱のフラップと同じ形の欄。
+    fn handle_settings(&mut self, ui: &mut egui::Ui) {
+        use pakenoba_core::template::HandleSize;
+        let d = &mut self.dims;
+        let auto = HandleSize::auto(d.w, d.h);
+        let ranges = HandleSize::ranges(d.w, d.h);
+        let labels = [t!("Width at the bottom"), t!("Width at the top"), t!("Height")];
+        let HandleSize { bottom, top, height } = &mut d.handle;
+        egui::Grid::new("handle").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            for (i, chosen) in [bottom, top, height].into_iter().enumerate() {
+                let range = ranges[i].clone();
+                let mut value = chosen.unwrap_or(auto[i]).clamp(*range.start(), *range.end());
+                ui.label(egui::RichText::new(labels[i]).color(super::theme::MUTED));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().slider_width = 64.0;
+                    let slid = ui.add(egui::Slider::new(&mut value, range.clone()).show_value(false)).changed();
+                    let typed = ui.add_sized([80.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut value).range(range.clone()).speed(0.5).max_decimals(1).suffix(" mm")).changed();
+                    if slid || typed {
+                        *chosen = Some(value);
+                    }
+                    if chosen.is_some() {
+                        if ui.small_button(t!("Auto")).on_hover_text(t!("Back to the length set from the dimensions")).clicked() {
+                            *chosen = None;
+                        }
+                    } else {
+                        ui.weak(t!("Auto")).on_hover_text(t!("Set from the dimensions. Move the slider to choose your own length."));
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        ui.small(t!("The top can also be wider than the bottom. The hole follows the width at the middle of the handle."));
     }
 
     /// 左（出力）: 出力の種類。

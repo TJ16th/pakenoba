@@ -99,6 +99,13 @@ pub(crate) struct ShapePreset {
     pub dust_flap: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tuck_flap: Option<f32>,
+    /// 持ち手つきピロー型の、持ち手の下の幅、上の幅、高さ（決めていないものは書かない）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_bottom: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_top: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_height: Option<f32>,
     /// 紙とコート（`Paper::key`、`Coat::key`）。
     #[serde(default)]
     pub paper: String,

@@ -25,6 +25,9 @@ fn preset_of(name: &str, dims: &Dims, material: &Material) -> ShapePreset {
         glue_flap: dims.flaps.glue,
         dust_flap: dims.flaps.dust,
         tuck_flap: dims.flaps.tuck,
+        handle_bottom: dims.handle.bottom,
+        handle_top: dims.handle.top,
+        handle_height: dims.handle.height,
         paper: material.paper.key().to_owned(),
         coat: material.coat.key().to_owned(),
         dieline: (dims.sides == IMPORTED).then(|| dieline_preset(dims.dieline)).flatten(),
@@ -84,6 +87,7 @@ fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Di
         bulge: preset.bulge,
         roof: preset.roof,
         flaps: TuckFlaps { glue: preset.glue_flap, dust: preset.dust_flap, tuck: preset.tuck_flap },
+        handle: pakenoba_core::template::HandleSize { bottom: preset.handle_bottom, top: preset.handle_top, height: preset.handle_height },
         dieline,
         ecma,
     };
@@ -225,7 +229,7 @@ mod tests {
 
     #[test]
     fn preset_round_trips_dims_and_paper() {
-        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) }, dieline: 0, ecma: 0 };
+        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) }, handle: Default::default(), dieline: 0, ecma: 0 };
         let material = Material { paper: Paper::Kraft, coat: Coat::MattePp };
         let preset = preset_of("小箱", &dims, &material);
         let text = toml::to_string(&preset).unwrap();

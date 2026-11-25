@@ -1452,3 +1452,10 @@ blend	Color	カラー
 	"code" is missing (an ECMA number such as A20.20.03.01)	「code」がありません（A20.20.03.01 のような ECMA の番号）
 	"{text}" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on).	「{text}」は、パケノバで作れる ECMA の番号ではありません（A 類: A20.20.03.01 など）。
 	Vectorize (Image Trace)…	ベクター化（画像トレース）…
+	Handle	持ち手
+	Handle height	持ち手の高さ
+	Handle width at the bottom	持ち手の下の幅
+	Handle width at the top	持ち手の上の幅
+	The top can also be wider than the bottom. The hole follows the width at the middle of the handle.	上の幅は、下より広くもできます。手を入れる穴は、持ち手の中ほどの幅に合わせます。
+	Width at the bottom	下の幅
+	Width at the top	上の幅

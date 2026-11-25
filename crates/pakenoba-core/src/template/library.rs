@@ -52,6 +52,38 @@ impl TuckFlaps {
     }
 }
 
+/// 持ち手つきピロー型の持ち手（正面から見て等脚台形）の、下の幅、上の幅、高さ（mm）。`None` は、寸法から自動で決める。
+///
+/// 範囲の外の値は、作るときに範囲の中へ寄せる（[`HandleSize::ranges`]）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HandleSize {
+    pub bottom: Option<f32>,
+    pub top: Option<f32>,
+    pub height: Option<f32>,
+}
+
+impl HandleSize {
+    /// 自動のときの、下の幅、上の幅、高さ（`len` は横の長さ、`height` は 1 枚の面の高さ）。
+    pub fn auto(len: f32, height: f32) -> [f32; 3] {
+        let bottom = 0.46 * len;
+        [bottom, bottom * 0.82, (0.35 * height).clamp(25.0, 50.0)]
+    }
+
+    /// 選べる範囲。幅は、横の長さいっぱいまで。上の幅は、下より広くもできる（逆さの台形）。
+    pub fn ranges(len: f32, height: f32) -> [std::ops::RangeInclusive<f32>; 3] {
+        let wide = len.max(30.0);
+        [20.0..=wide, 15.0..=wide, 15.0..=(1.2 * height).max(60.0)]
+    }
+
+    /// 作るときの値。決めていないものは自動、範囲の外は範囲の中へ。
+    pub fn resolve(&self, len: f32, height: f32) -> [f32; 3] {
+        let auto = HandleSize::auto(len, height);
+        let ranges = HandleSize::ranges(len, height);
+        let chosen = [self.bottom, self.top, self.height];
+        std::array::from_fn(|i| chosen[i].filter(|v| v.is_finite()).unwrap_or(auto[i]).clamp(*ranges[i].start(), *ranges[i].end()))
+    }
+}
+
 impl Template {
     /// 差し込み式の箱（キャラメル箱）。寸法は内寸（mm）。
     ///
@@ -469,7 +501,7 @@ impl Template {
 
     /// 持ち手つきピロー型（上下が対称なもの）。[`Template::pillow_with`] の、持ち手あり・首なし。
     pub fn pillow(len: f32, height: f32, t: f32, bulge: f32) -> Template {
-        Template::pillow_with(len, height, t, bulge, true, false)
+        Template::pillow_with(len, height, t, bulge, Some(HandleSize::default()), false)
     }
 
     /// ピロー型。2 枚の面が下の折り線でつながり、丸くふくらんで上で合わさる。
@@ -477,12 +509,14 @@ impl Template {
     ///
     /// `len` は横の長さ、`height` は 1 枚の面の高さ（丸みに沿って測る。mm）。
     /// `bulge` はふくらみで、1 枚の面のふくらんだ部分が、下から上までに向きを変える角度（ラジアン）。
-    /// `handle` が真なら、上で合わさった縁を立てて貼り、その先を持ち手にする。偽なら、背面の上の縁ののりしろを正面の裏に貼る。
+    /// `handle` があれば、上で合わさった縁を立てて貼り、その先を持ち手にする（持ち手の幅と高さ）。
+    /// なければ、背面の上の縁ののりしろを正面の裏に貼る。
     /// `neck` が真なら、上の口の近くで面が逆向きに反って、まっすぐ立ち上がる（鳩サブレーの箱のような、下が広く上がすぼまる形）。
     ///
     /// 曲線の折り線の形は、ふくらみから自動で決まる。面を丸めたときに、折り線が 45 度に傾いた平面に乗る形にしてあり、
     /// フラップはその平面で映した位置（奥行き方向へまっすぐ倒れ込んだ形）に来る。
-    pub fn pillow_with(len: f32, height: f32, t: f32, bulge: f32, handle: bool, neck: bool) -> Template {
+    pub fn pillow_with(len: f32, height: f32, t: f32, bulge: f32, handle_size: Option<HandleSize>, neck: bool) -> Template {
+        let handle = handle_size.is_some();
         const MAIN: (f32, f32) = (0.0, 1.0);
         const SLICES: usize = 24;
         let psi = bulge.clamp(0.2, 1.6);
@@ -541,9 +575,10 @@ impl Template {
         // 貼りしろと持ち手。上で合わさった 2 枚の縁を、端から端まで山折りでまっすぐ上に立てて、背中合わせに貼る。
         // これで上の口が閉じて、筒になる。持ち手は、貼りしろの中央から上へ続く。
         let fin = (0.08 * height).clamp(6.0, 10.0);
-        let handle_height = (0.35 * height).clamp(25.0, 50.0);
-        let (h0, h1) = (len * 0.27, len * 0.73);
-        let inset = (h1 - h0) * 0.09;
+        let [handle_bottom, handle_top, handle_height] = handle_size.unwrap_or_default().resolve(len, height);
+        let (h0, h1) = (0.5 * (len - handle_bottom), 0.5 * (len + handle_bottom));
+        // 上の辺は、下の辺の中央に合わせる（下より広ければ、逆さの台形）。
+        let inset = 0.5 * (handle_bottom - handle_top);
         if handle {
             for (fin_name, name, parent, sign, shift) in [("正面の貼りしろ", "正面の持ち手", 0usize, 1.0f32, 0.0f32), ("背面の貼りしろ", "背面の持ち手", 1usize, -1.0f32, under)] {
                 let edge = sign * height;
@@ -591,7 +626,8 @@ impl Template {
         let (min, max) = bounds(&panels);
         let r = len.min(height) * 0.26;
         let marks = vec![([len * 0.5, height * 0.5], r), ([deepest, v_deepest], r * 0.55)];
-        let hole = |sign: f32| [len * 0.5, sign * (height + fin + handle_height * 0.5), (h1 - h0) * 0.3, handle_height * 0.22];
+        // 手を入れる穴。持ち手の高さの中ほど（台形のその高さでの幅）と、高さに合わせる。
+        let hole = |sign: f32| [len * 0.5, sign * (height + fin + handle_height * 0.5), 0.33 * 0.5 * (handle_bottom + handle_top), (handle_height * 0.22).min(12.0)];
         let holes = if handle { vec![hole(1.0), hole(-1.0)] } else { Vec::new() };
         // 端のフラップは、紙の張りで閉じた状態を保つ。
         let openings = openings(&panels, &[("正面のフラップ", None, Hold::Tension)]);

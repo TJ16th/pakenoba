@@ -34,7 +34,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::material::{Coat, DEFAULT_EMBOSS_EDGE, DEFAULT_EMBOSS_HEIGHT, DEFAULT_WAVE, EMBOSS_EDGE, EMBOSS_HEIGHT, Finish, FinishKind, Foil, Material, Paper};
 use crate::surface::Decal;
-use crate::template::{P2, Template, TuckFlaps};
+use crate::template::{HandleSize, P2, Template, TuckFlaps};
 
 /// 案件のファイルの拡張子（点は含まない）。
 pub const EXTENSION: &str = "pknb";
@@ -95,6 +95,8 @@ pub struct Shape {
     pub roof: f32,
     /// 差し込み箱のフラップの長さ（決めていないものは自動）。
     pub flaps: TuckFlaps,
+    /// 持ち手つきピロー型の、持ち手の下の幅、上の幅、高さ（決めていないものは寸法から自動）。
+    pub handle: HandleSize,
 }
 
 impl Shape {
@@ -103,8 +105,8 @@ impl Shape {
         match self.kind {
             Kind::TuckBox => Template::tuck_box_with(self.w, self.d, self.h, self.t, self.flaps),
             Kind::Gable => Template::gable(self.w, self.d, self.h, self.roof, self.t),
-            Kind::Pillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), true, true),
-            Kind::PlainPillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), false, false),
+            Kind::Pillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), Some(self.handle), true),
+            Kind::PlainPillow => Template::pillow_with(self.w, self.h, self.t, self.bulge.to_radians(), None, false),
             Kind::Prism(n) => Template::prism(n, self.w, self.h, self.t),
             Kind::Imported(key) => crate::dieline::source(key)
                 .and_then(|src| Template::imported(&src.drawing, &src.settings, self.t).ok())
@@ -1039,6 +1041,13 @@ struct ShapeEntry {
     dust_flap: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tuck_flap: Option<f64>,
+    /// 持ち手つきピロー型の、持ち手の下の幅、上の幅、高さ（mm）。書いていなければ自動。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handle_bottom: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handle_top: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handle_height: Option<f64>,
     /// ECMA の型の番号（「A20.20.03.01」）。型が `ecma` のときだけ。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     code: Option<String>,
@@ -1583,7 +1592,7 @@ impl Project {
             format: FORMAT.to_owned(),
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
-            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy), code: match s.kind {
+            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy), handle_bottom: s.handle.bottom.map(tidy), handle_top: s.handle.top.map(tidy), handle_height: s.handle.height.map(tidy), code: match s.kind {
                 Kind::Ecma(n) => crate::ecma::Code::from_u32(n).map(|c| c.name()),
                 _ => None,
             } },
@@ -1882,7 +1891,7 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
         },
         (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
     };
-    let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32, flaps: TuckFlaps::default() };
+    let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32, flaps: TuckFlaps::default(), handle: HandleSize::default() };
     for (label, value, range) in shape.values() {
         if !value.is_finite() {
             return Err(Error::Broken(t!("Dimension \"{label}\" is not a number")));
@@ -1912,6 +1921,26 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             values[i] = Some(fixed);
         }
         shape.flaps = TuckFlaps { glue: values[0], dust: values[1], tuck: values[2] };
+    }
+    // 持ち手つきピロー型の持ち手。数でないものは自動に戻し、範囲の外は範囲の中へ寄せる。
+    if shape.kind == Kind::Pillow {
+        let ranges = HandleSize::ranges(shape.w, shape.h);
+        let entries = [(t!("Handle width at the bottom"), entry.handle_bottom), (t!("Handle width at the top"), entry.handle_top), (t!("Handle height"), entry.handle_height)];
+        let mut values = [None; 3];
+        for (i, (label, value)) in entries.into_iter().enumerate() {
+            let Some(value) = value else { continue };
+            let value = value as f32;
+            if !value.is_finite() {
+                problems.push(t!("Dimension \"{label}\" is not a number, so it was set automatically"));
+                continue;
+            }
+            let fixed = value.clamp(*ranges[i].start(), *ranges[i].end());
+            if fixed != value {
+                problems.push(t!("Dimension \"{label}\" was out of range ({value}), so it was set to {fixed}"));
+            }
+            values[i] = Some(fixed);
+        }
+        shape.handle = HandleSize { bottom: values[0], top: values[1], height: values[2] };
     }
     let tpl = shape.template();
 
@@ -2236,7 +2265,7 @@ mod tests {
             Kind::Prism(_) | Kind::Imported(_) => (70.0, 60.0, 160.0),
             Kind::Ecma(_) => (100.0, 60.0, 150.0),
         };
-        Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() } }
+        Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() }, handle: if kind == Kind::Pillow { HandleSize { bottom: Some(90.0), top: Some(110.0), height: None } } else { HandleSize::default() } }
     }
 
     /// 中身の決まった、にせの画像ファイル。
@@ -2866,7 +2895,7 @@ mod tests {
 
     /// 版 1 の見本（`tests/data/v1-sample.pknb`）の中身。見本は、版 1 のパケノバが書いたファイルを、そのまま残してある。
     fn v1_sample() -> Project {
-        let shape = Shape { kind: Kind::Prism(6), w: 70.0, d: 60.0, h: 160.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps::default() };
+        let shape = Shape { kind: Kind::Prism(6), w: 70.0, d: 60.0, h: 160.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps::default(), handle: HandleSize::default() };
         let tpl = shape.template();
         let panel = |name: &str, nth: usize| panel_index(&tpl, name, nth).unwrap();
         Project {

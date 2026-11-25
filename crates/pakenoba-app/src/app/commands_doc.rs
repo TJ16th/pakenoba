@@ -303,7 +303,7 @@ impl App {
                 set(&mut d.t, "thickness", 0.3..=6.0)?;
                 set(&mut d.bulge, "bulge", 15.0..=90.0)?;
                 set(&mut d.roof, "roof", 10.0..=150.0)?;
-                for (key, flap) in [("glue_flap", &mut d.flaps.glue), ("dust_flap", &mut d.flaps.dust), ("tuck_flap", &mut d.flaps.tuck)] {
+                for (key, flap) in [("glue_flap", &mut d.flaps.glue), ("dust_flap", &mut d.flaps.dust), ("tuck_flap", &mut d.flaps.tuck), ("handle_bottom", &mut d.handle.bottom), ("handle_top", &mut d.handle.top), ("handle_height", &mut d.handle.height)] {
                     match args.get(key) {
                         None => {}
                         Some(Value::String(s)) if s == "auto" => *flap = None,

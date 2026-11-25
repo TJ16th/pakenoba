@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn ピロー型の上の縁は合わせ目で_柄が背面へ続く() {
-        let pillow = |t: f32| Template::pillow_with(160.0, 80.0, t, 70f32.to_radians(), false, false);
+        let pillow = |t: f32| Template::pillow_with(160.0, 80.0, t, 70f32.to_radians(), None, false);
         let tpl = pillow(0.5);
         let surface = Surface::new(&tpl, &pillow(0.02));
         assert!(has_seam(&tpl, &surface, "正面", "背面"), "{:?}", surface.seams);
@@ -1316,7 +1316,7 @@ mod pillow_picture {
     #[test]
     #[ignore]
     fn pillow_svg() {
-        for (name, tpl) in [("plain", Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), false, false)), ("handle", Template::pillow_with(180.0, 110.0, 0.5, 100f32.to_radians(), true, true))] {
+        for (name, tpl) in [("plain", Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), None, false)), ("handle", Template::pillow_with(180.0, 110.0, 0.5, 100f32.to_radians(), Some(Default::default()), true))] {
             let (lo, hi) = (tpl.min, tpl.max);
             let mut svg = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='{} {} {} {}' width='{}' height='{}'><rect x='{}' y='{}' width='100%' height='100%' fill='white'/>", lo[0] - 5.0, -hi[1] - 5.0, hi[0] - lo[0] + 10.0, hi[1] - lo[1] + 10.0, (hi[0] - lo[0] + 10.0) * 4.0, (hi[1] - lo[1] + 10.0) * 4.0, lo[0] - 5.0, -hi[1] - 5.0);
             for p in &tpl.panels {
@@ -1348,7 +1348,7 @@ mod pillow_reach {
     #[ignore]
     fn pillow_flap_reach() {
         for (handle, neck) in [(false, false), (true, true)] {
-            let tpl = Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), handle, neck);
+            let tpl = Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), handle.then(Default::default), neck);
             let places = tpl.transforms(1.0, 1.0);
             let world = |i: usize, p: P2| places[i].point([p[0], p[1], 0.0]);
             let flap = tpl.panels.iter().position(|p| p.name == "正面のフラップ").unwrap();

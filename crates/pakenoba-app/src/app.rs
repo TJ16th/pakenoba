@@ -207,6 +207,8 @@ struct Dims {
     roof: f32,
     /// 差し込み箱のフラップの長さ（決めていないものは寸法から自動）。
     flaps: TuckFlaps,
+    /// 持ち手つきピロー型の持ち手の大きさ（決めていないものは寸法から自動）。
+    handle: pakenoba_core::template::HandleSize,
     /// 読み込んだ型（`IMPORTED`）の、`dieline::register` の番号。ほかの型では 0。
     dieline: u64,
     /// ECMA の型（`ECMA`）の番号（数字 8 けた。`pakenoba_core::ecma::Code::from_u32`）。ほかの型では 0。
@@ -225,7 +227,7 @@ impl Dims {
             _ => (200.0, 160.0, 85.0),
         };
         let ecma = if sides == ECMA { pakenoba_core::ecma::COMMON[0] } else { 0 };
-        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default(), dieline: 0, ecma }
+        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default(), handle: Default::default(), dieline: 0, ecma }
     }
 
     /// 案件のファイルに書く形の、型と寸法。
@@ -239,7 +241,7 @@ impl Dims {
             n if n >= 3 => project::Kind::Prism(n),
             _ => project::Kind::TuckBox,
         };
-        project::Shape { kind, w: self.w, d: self.d, h: self.h, t: self.t, bulge: self.bulge, roof: self.roof, flaps: self.flaps }
+        project::Shape { kind, w: self.w, d: self.d, h: self.h, t: self.t, bulge: self.bulge, roof: self.roof, flaps: self.flaps, handle: self.handle }
     }
 
     fn from_shape(shape: &project::Shape) -> Dims {
@@ -252,7 +254,7 @@ impl Dims {
             project::Kind::Imported(key) => (IMPORTED, key, 0),
             project::Kind::Ecma(code) => (ECMA, 0, code),
         };
-        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps, dieline, ecma }
+        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps, handle: shape.handle, dieline, ecma }
     }
 
     /// 同じパネルの並びか（型が同じで、読み込んだ型なら同じファイルと読み方。寸法や折る角度は違ってよい）。
