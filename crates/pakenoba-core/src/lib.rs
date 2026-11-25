@@ -12,6 +12,7 @@
 
 pub mod check;
 pub mod dieline;
+pub mod ecma;
 pub mod material;
 pub mod math;
 pub mod project;

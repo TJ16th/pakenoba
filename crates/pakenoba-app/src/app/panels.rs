@@ -644,6 +644,10 @@ impl App {
                         }
                     }
                 }
+                // ECMA の番号から作る型（番号は右の欄で選ぶ）。
+                if ui.selectable_label(self.dims.sides == super::ECMA, t!("ECMA styles")).on_hover_text(t!("Make a folding carton from its ECMA number (the standard names for carton styles) and the inside dimensions")).clicked() && self.dims.sides != super::ECMA {
+                    self.choose_ecma();
+                }
                 if self.dims.sides == super::IMPORTED {
                     let name = pakenoba_core::dieline::source(self.dims.dieline).map(|s| s.name.clone()).unwrap_or_default();
                     let _ = ui.selectable_label(true, name).on_hover_text(t!("Imported from a dieline file"));
@@ -666,7 +670,11 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let gable = self.dims.sides == 2;
                 let pillow = super::is_pillow(self.dims.sides);
-                let prism = self.dims.sides >= 3 && !pillow;
+                let ecma = self.dims.sides == super::ECMA;
+                let prism = self.dims.sides >= 3 && !pillow && !ecma;
+                if ecma {
+                    boxed(ui, t!("ECMA number"), false, |ui| self.ecma_settings(ui));
+                }
                 if self.dims.sides == super::IMPORTED {
                     boxed(ui, t!("Dieline file"), false, |ui| self.dieline_settings(ui));
                     boxed(ui, t!("Folds"), false, |ui| self.fold_settings(ui));
@@ -806,6 +814,7 @@ impl App {
         let Some(sides) = self.pending_shape else { return };
         let name = match (sides, &self.pending_dims) {
             (super::IMPORTED, Some((dims, _))) => pakenoba_core::dieline::source(dims.dieline).map(|s| s.name.clone()).unwrap_or_default(),
+            (super::ECMA, Some((dims, _))) => pakenoba_core::ecma::Code::from_u32(dims.ecma).map(|c| format!("ECMA {}", c.name())).unwrap_or_default(),
             _ => SHAPES.iter().find(|(s, _)| *s == sides).map_or(t!("another box type"), |(_, name)| pakenoba_i18n::tr(name)).to_owned(),
         };
         let count = self.decals.len();

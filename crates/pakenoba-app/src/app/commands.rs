@@ -218,7 +218,7 @@ impl App {
         let d = &self.dims;
         json!({
             "file": self.file.path.as_ref().map(|p| p.display().to_string()),
-            "shape": { "summary": self.shape_summary(), "sides": d.sides, "w": d.w, "d": d.d, "h": d.h, "paper_mm": d.t },
+            "shape": { "summary": self.shape_summary(), "sides": d.sides, "ecma": pakenoba_core::ecma::Code::from_u32(d.ecma).map(|c| c.name()), "w": d.w, "d": d.d, "h": d.h, "paper_mm": d.t },
             "material": { "paper": self.material.paper.key(), "coat": self.material.coat.key() },
             "finishes": self.finishes_json(),
             "panels": self.template.panels.iter().map(|p| p.name).collect::<Vec<_>>(),

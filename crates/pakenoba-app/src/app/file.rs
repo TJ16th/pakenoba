@@ -185,7 +185,7 @@ impl App {
     pub(super) fn fingerprint(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         let d = &self.dims;
-        (d.sides, [d.w, d.d, d.h, d.t, d.bulge, d.roof].map(f32::to_bits)).hash(&mut hasher);
+        (d.sides, d.ecma, [d.w, d.d, d.h, d.t, d.bulge, d.roof].map(f32::to_bits)).hash(&mut hasher);
         (self.material.paper.key(), self.material.coat.key()).hash(&mut hasher);
         for f in &self.finishes {
             (f.id, f.kind, f.foil, f.link, &f.name, f.hidden, f.wave, f.deboss, f.height.to_bits(), f.edge.to_bits()).hash(&mut hasher);

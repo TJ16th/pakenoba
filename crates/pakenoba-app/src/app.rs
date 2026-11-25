@@ -26,6 +26,7 @@ mod typing;
 mod shapes;
 mod my_shapes;
 mod dieline;
+mod ecma;
 mod local_ai;
 pub(crate) mod adjust;
 mod vectorize;
@@ -78,6 +79,8 @@ pub struct Initial {
     pub psd: Option<PathBuf>,
     /// 箱の型。0 は差し込み箱、2 はゲーブル型、100 はピロー型、それ以外の 3 以上は正多角柱の角の数。
     pub sides: usize,
+    /// ECMA の型の番号（指定すれば、型を ECMA にする）。
+    pub ecma: Option<u32>,
     /// 起動時に開くワークスペース（0: 型、1: デザイン、2: 出力）。
     pub workspace: usize,
     /// お客さんが開けた度合い（0 が閉じた状態、1 が開いた状態）。
@@ -135,7 +138,7 @@ pub struct Initial {
 
 impl Default for Initial {
     fn default() -> Self {
-        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: Vec::new(), answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, quiet: false, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
+        Initial { fold: 1.0, yaw: 0.6, pitch: 0.35, thickness: 0.5, guides: false, psd: None, sides: 0, ecma: None, workspace: 0, open: 0.0, open_bottom: 0.0, bulge: None, width: None, height: None, png: None, logo: None, band: None, select: None, views: None, back: Vec::new(), assets: None, debug: false, project: Vec::new(), answer_open: None, answer_save: None, answer_replace: None, answer_export: None, recovery_dir: None, backup_seconds: 30.0, quiet: false, settings: None, library: false, answer_folder: None, peek: None, splash: true, home: false }
     }
 }
 
@@ -206,6 +209,8 @@ struct Dims {
     flaps: TuckFlaps,
     /// 読み込んだ型（`IMPORTED`）の、`dieline::register` の番号。ほかの型では 0。
     dieline: u64,
+    /// ECMA の型（`ECMA`）の番号（数字 8 けた。`pakenoba_core::ecma::Code::from_u32`）。ほかの型では 0。
+    ecma: u32,
 }
 
 impl Dims {
@@ -215,10 +220,12 @@ impl Dims {
             2 => (160.0, 100.0, 110.0),
             PILLOW => (180.0, 60.0, 110.0),
             PLAIN_PILLOW => (160.0, 60.0, 80.0),
+            ECMA => (100.0, 60.0, 150.0),
             n if n >= 3 => (70.0, 60.0, 160.0),
             _ => (200.0, 160.0, 85.0),
         };
-        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default(), dieline: 0 }
+        let ecma = if sides == ECMA { pakenoba_core::ecma::COMMON[0] } else { 0 };
+        Dims { sides, w, d, h, t, bulge: match sides { PILLOW => 100.0, PLAIN_PILLOW => 70.0, _ => 40.0 }, roof: 45.0, flaps: TuckFlaps::default(), dieline: 0, ecma }
     }
 
     /// 案件のファイルに書く形の、型と寸法。
@@ -228,6 +235,7 @@ impl Dims {
             PILLOW => project::Kind::Pillow,
             PLAIN_PILLOW => project::Kind::PlainPillow,
             IMPORTED => project::Kind::Imported(self.dieline),
+            ECMA => project::Kind::Ecma(self.ecma),
             n if n >= 3 => project::Kind::Prism(n),
             _ => project::Kind::TuckBox,
         };
@@ -235,20 +243,21 @@ impl Dims {
     }
 
     fn from_shape(shape: &project::Shape) -> Dims {
-        let (sides, dieline) = match shape.kind {
-            project::Kind::TuckBox => (0, 0),
-            project::Kind::Gable => (2, 0),
-            project::Kind::Pillow => (PILLOW, 0),
-            project::Kind::PlainPillow => (PLAIN_PILLOW, 0),
-            project::Kind::Prism(n) => (n, 0),
-            project::Kind::Imported(key) => (IMPORTED, key),
+        let (sides, dieline, ecma) = match shape.kind {
+            project::Kind::TuckBox => (0, 0, 0),
+            project::Kind::Gable => (2, 0, 0),
+            project::Kind::Pillow => (PILLOW, 0, 0),
+            project::Kind::PlainPillow => (PLAIN_PILLOW, 0, 0),
+            project::Kind::Prism(n) => (n, 0, 0),
+            project::Kind::Imported(key) => (IMPORTED, key, 0),
+            project::Kind::Ecma(code) => (ECMA, 0, code),
         };
-        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps, dieline }
+        Dims { sides, w: shape.w, d: shape.d, h: shape.h, t: shape.t, bulge: shape.bulge, roof: shape.roof, flaps: shape.flaps, dieline, ecma }
     }
 
     /// 同じパネルの並びか（型が同じで、読み込んだ型なら同じファイルと読み方。寸法や折る角度は違ってよい）。
     fn same_layout(&self, other: &Dims) -> bool {
-        self.sides == other.sides && (self.sides != IMPORTED || pakenoba_core::dieline::same_layout(self.dieline, other.dieline))
+        self.sides == other.sides && self.ecma == other.ecma && (self.sides != IMPORTED || pakenoba_core::dieline::same_layout(self.dieline, other.dieline))
     }
 
     /// 型紙。案件のファイルを開いたときと同じ作り方にする（パネルの並びがずれないように）。
@@ -272,7 +281,7 @@ impl Dims {
     fn front_and_around(&self, tpl: &Template) -> (usize, f32) {
         let front = tpl.panels.iter().position(|p| p.name == "正面").unwrap_or(0);
         let around = match self.sides {
-            0 => 2.0 * (self.w + self.d),
+            0 | ECMA => 2.0 * (self.w + self.d),
             2 => 2.0 * (self.w + self.d.min(self.w)),
             PILLOW | PLAIN_PILLOW => self.w,
             IMPORTED => tpl.max[0] - tpl.min[0],
@@ -356,6 +365,8 @@ fn decode_png(bytes: &[u8]) -> Result<Picture, String> {
 /// 選べる型。検査を通ったものだけを並べる。
 /// 読み込んだ型の線のファイル（DXF）の型の番号。
 const IMPORTED: usize = 300;
+/// ECMA の型（番号は `Dims::ecma`）。
+const ECMA: usize = 400;
 
 const SHAPES: [(usize, &str); 8] = [(0, "Tuck-end box"), (2, "Gable box"), (PILLOW, "Pillow box with handle"), (PLAIN_PILLOW, "Pillow box"), (3, "Triangular prism"), (5, "Pentagonal prism"), (6, "Hexagonal prism"), (8, "Octagonal prism")];
 
@@ -716,8 +727,11 @@ struct App {
 
 impl App {
     fn new(initial: &Initial) -> Self {
-        let sides = initial.sides;
-        let base = Dims::for_shape(sides, initial.thickness);
+        let sides = if initial.ecma.is_some() { ECMA } else { initial.sides };
+        let mut base = Dims::for_shape(sides, initial.thickness);
+        if let Some(code) = initial.ecma {
+            base.ecma = code;
+        }
         let dims = Dims { w: initial.width.unwrap_or(base.w), h: initial.height.unwrap_or(base.h), bulge: initial.bulge.unwrap_or(base.bulge), ..base };
         let (template, surface, problems) = dims.build();
         let sheet = make_sheet_art(&template);
@@ -1285,6 +1299,10 @@ impl App {
                 format!("{file}　{:.0} × {:.0} mm", size[0], size[1])
             }
             PILLOW | PLAIN_PILLOW => format!("{name}　{:.0} × {:.0} mm", d.w, d.h),
+            ECMA => {
+                let code = pakenoba_core::ecma::Code::from_u32(d.ecma).map(|c| c.name()).unwrap_or_default();
+                format!("ECMA {code}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h)
+            }
             n if n >= 3 => t!("{name}  side {:.0} × height {:.0} mm", d.w, d.h),
             _ => format!("{name}　{:.0} × {:.0} × {:.0} mm", d.w, d.d, d.h),
         }

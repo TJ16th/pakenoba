@@ -61,6 +61,8 @@ fn main() -> ExitCode {
             ("--recovery-dir", _) if i + 1 < args.len() => initial.recovery_dir = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--backup-seconds", Some(v)) => initial.backup_seconds = v as f64,
             ("--answer-export", _) if i + 1 < args.len() => initial.answer_export = Some(std::path::PathBuf::from(&args[i + 1])),
+            // ECMA の型（「A20.20.03.01」）。型を ECMA にする。
+            ("--ecma", _) if i + 1 < args.len() => initial.ecma = pakenoba_core::ecma::Code::parse(&args[i + 1]).map(|c| c.to_u32()),
             ("--settings", _) if i + 1 < args.len() => initial.settings = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--answer-folder", _) if i + 1 < args.len() => initial.answer_folder = Some(std::path::PathBuf::from(&args[i + 1])),
             ("--library", _) => {

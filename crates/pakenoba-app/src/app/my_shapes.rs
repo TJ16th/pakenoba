@@ -8,7 +8,7 @@ use eframe::egui;
 use pakenoba_i18n::t;
 
 use super::settings::{DielinePreset, ShapePreset};
-use super::{App, Dims, IMPORTED, SHAPES};
+use super::{App, Dims, ECMA, IMPORTED, SHAPES};
 use pakenoba_core::dieline;
 
 /// いまの型・寸法・紙を、自分の型の形にする。
@@ -28,6 +28,7 @@ fn preset_of(name: &str, dims: &Dims, material: &Material) -> ShapePreset {
         paper: material.paper.key().to_owned(),
         coat: material.coat.key().to_owned(),
         dieline: (dims.sides == IMPORTED).then(|| dieline_preset(dims.dieline)).flatten(),
+        ecma: (dims.sides == ECMA).then(|| pakenoba_core::ecma::Code::from_u32(dims.ecma).map(|c| c.name())).flatten(),
     }
 }
 
@@ -67,8 +68,12 @@ fn load_dieline(preset: &DielinePreset, folder: &std::path::Path) -> Result<u64,
 fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Dims, Material)> {
     let dieline = match (&preset.dieline, folder) {
         (Some(d), Some(folder)) if preset.sides == IMPORTED => load_dieline(d, folder).ok()?,
-        (None, _) if SHAPES.iter().any(|(s, _)| *s == preset.sides) => 0,
+        (None, _) if SHAPES.iter().any(|(s, _)| *s == preset.sides) || preset.sides == ECMA => 0,
         _ => return None,
+    };
+    let ecma = match preset.sides {
+        ECMA => pakenoba_core::ecma::Code::parse(preset.ecma.as_deref()?)?.to_u32(),
+        _ => 0,
     };
     let dims = Dims {
         sides: preset.sides,
@@ -80,6 +85,7 @@ fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Di
         roof: preset.roof,
         flaps: TuckFlaps { glue: preset.glue_flap, dust: preset.dust_flap, tuck: preset.tuck_flap },
         dieline,
+        ecma,
     };
     let material = Material { paper: Paper::from_key(&preset.paper).unwrap_or_default(), coat: Coat::from_key(&preset.coat).unwrap_or_default() };
     Some((dims, material))
@@ -89,6 +95,9 @@ fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Di
 fn summary(preset: &ShapePreset) -> String {
     if let Some(d) = &preset.dieline {
         return format!("{} (DXF)", d.name);
+    }
+    if let Some(code) = &preset.ecma {
+        return format!("ECMA {code}  {:.0} × {:.0} × {:.0} mm", preset.width, preset.depth, preset.height);
     }
     let kind = SHAPES.iter().find(|(s, _)| *s == preset.sides).map_or("?", |(_, name)| pakenoba_i18n::tr(name));
     let size = match preset.sides {
@@ -216,7 +225,7 @@ mod tests {
 
     #[test]
     fn preset_round_trips_dims_and_paper() {
-        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) }, dieline: 0 };
+        let dims = Dims { sides: 0, w: 120.0, d: 40.0, h: 150.0, t: 0.5, bulge: 40.0, roof: 45.0, flaps: TuckFlaps { glue: Some(14.0), dust: None, tuck: Some(16.0) }, dieline: 0, ecma: 0 };
         let material = Material { paper: Paper::Kraft, coat: Coat::MattePp };
         let preset = preset_of("小箱", &dims, &material);
         let text = toml::to_string(&preset).unwrap();
@@ -225,6 +234,17 @@ mod tests {
         assert_eq!(dims_of(&back, None), Some((dims, material)));
         // 知らない型は使わない。
         assert_eq!(dims_of(&ShapePreset { sides: 999, ..back }, None), None);
+    }
+
+    #[test]
+    fn ecma_preset_keeps_its_number() {
+        let dims = Dims { ecma: 55200301, w: 90.0, ..Dims::for_shape(ECMA, 0.4) };
+        let preset = preset_of("組み底", &dims, &Material::default());
+        assert_eq!(preset.ecma.as_deref(), Some("A55.20.03.01"));
+        let back: ShapePreset = toml::from_str(&toml::to_string(&preset).unwrap()).unwrap();
+        assert_eq!(dims_of(&back, None).map(|(d, _)| d), Some(dims));
+        // 番号が読めなければ使わない。
+        assert_eq!(dims_of(&ShapePreset { ecma: Some("X".into()), ..back }, None), None);
     }
 
     fn sample_dxf() -> std::sync::Arc<Vec<u8>> {

@@ -72,6 +72,9 @@ pub enum Kind {
     Prism(usize),
     /// 読み込んだ型の線のファイル（DXF）。値は `dieline::register` の番号。寸法は紙の厚みだけを使う。
     Imported(u64),
+    /// ECMA の型。値は番号の数字 8 けた（A20.20.03.01 なら 20200301。`ecma::Code::from_u32`）。
+    /// 幅は正面の幅、奥行きは側面の幅。
+    Ecma(u32),
 }
 
 /// 型と寸法。
@@ -107,6 +110,9 @@ impl Shape {
                 .and_then(|src| Template::imported(&src.drawing, &src.settings, self.t).ok())
                 .map(|(tpl, _)| tpl)
                 // 読めない（覚えていない）ときは、差し込み箱にしておく（画面が空にならないように）。
+                .unwrap_or_else(|| Template::tuck_box(self.w, self.d, self.h, self.t)),
+            Kind::Ecma(n) => crate::ecma::Code::from_u32(n)
+                .and_then(|code| Template::ecma(code, self.w, self.d, self.h, self.t).ok())
                 .unwrap_or_else(|| Template::tuck_box(self.w, self.d, self.h, self.t)),
         }
     }
@@ -1033,6 +1039,9 @@ struct ShapeEntry {
     dust_flap: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tuck_flap: Option<f64>,
+    /// ECMA の型の番号（「A20.20.03.01」）。型が `ecma` のときだけ。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1563,6 +1572,7 @@ impl Project {
             Kind::PlainPillow => ("plain_pillow", None),
             Kind::Prism(n) => ("prism", Some(n)),
             Kind::Imported(_) => ("imported", None),
+            Kind::Ecma(_) => ("ecma", None),
         };
         let dieline = match s.kind {
             Kind::Imported(key) => crate::dieline::source(key).map(|src| DielineEntry::of(&src)),
@@ -1573,7 +1583,10 @@ impl Project {
             format: FORMAT.to_owned(),
             version: VERSION,
             written_by: format!("pakenoba {}", env!("CARGO_PKG_VERSION")),
-            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy) },
+            shape: ShapeEntry { kind: kind.to_owned(), sides, width: tidy(s.w), depth: tidy(s.d), height: tidy(s.h), thickness: tidy(s.t), bulge: tidy(s.bulge), roof: tidy(s.roof), glue_flap: s.flaps.glue.map(tidy), dust_flap: s.flaps.dust.map(tidy), tuck_flap: s.flaps.tuck.map(tidy), code: match s.kind {
+                Kind::Ecma(n) => crate::ecma::Code::from_u32(n).map(|c| c.name()),
+                _ => None,
+            } },
             material: (self.material != Material::default()).then(|| MaterialEntry { paper: self.material.paper.key().to_owned(), coat: self.material.coat.key().to_owned() }),
             base: self.base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
             back_base: self.back_base.as_ref().map(|a| BaseEntry { name: a.name.clone(), file: a.file(), imported: a.imported.clone() }),
@@ -1863,6 +1876,10 @@ fn from_v1<R: Read + Seek>(table: toml::Table, zip: &mut ZipArchive<R>) -> Resul
             settings.folds = d.folds.iter().filter(|f| f.angle.is_finite()).map(|f| (f.panel, (f.angle as f32).clamp(-180.0, 180.0))).collect();
             Kind::Imported(crate::dieline::register(&d.name, bytes, Some(settings)).map_err(Error::Broken)?)
         }
+        ("ecma", _) => match entry.code.as_deref().and_then(crate::ecma::Code::parse) {
+            Some(code) => Kind::Ecma(code.to_u32()),
+            None => return Err(Error::Broken(t!("The ECMA number of this box type is not valid").to_owned())),
+        },
         (other, _) => return Err(Error::Broken(t!("This version of PAKENOBA does not know the shape \"{other}\""))),
     };
     let mut shape = Shape { kind, w: entry.width as f32, d: entry.depth as f32, h: entry.height as f32, t: entry.thickness as f32, bulge: entry.bulge as f32, roof: entry.roof as f32, flaps: TuckFlaps::default() };
@@ -2217,6 +2234,7 @@ mod tests {
             Kind::Pillow => (180.0, 60.0, 110.0),
             Kind::PlainPillow => (160.0, 60.0, 80.0),
             Kind::Prism(_) | Kind::Imported(_) => (70.0, 60.0, 160.0),
+            Kind::Ecma(_) => (100.0, 60.0, 150.0),
         };
         Shape { kind, w, d, h, t: 0.5, bulge: 70.0, roof: 45.0, flaps: if kind == Kind::TuckBox { TuckFlaps { glue: Some(9.5), dust: None, tuck: Some(22.25) } } else { TuckFlaps::default() } }
     }
@@ -2368,7 +2386,7 @@ mod tests {
         out.finish().unwrap().into_inner()
     }
 
-    const KINDS: [Kind; 7] = [Kind::TuckBox, Kind::Gable, Kind::Pillow, Kind::PlainPillow, Kind::Prism(3), Kind::Prism(6), Kind::Prism(8)];
+    const KINDS: [Kind; 9] = [Kind::TuckBox, Kind::Gable, Kind::Pillow, Kind::PlainPillow, Kind::Prism(3), Kind::Prism(6), Kind::Prism(8), Kind::Ecma(20200301), Kind::Ecma(55210103)];
 
     #[test]
     fn 読み込んだ型は_ファイルごと保存して開ける() {

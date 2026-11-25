@@ -376,6 +376,12 @@ struct Join {
 impl Template {
     /// 型の線のファイルから、型紙を作る。`t` は紙の厚み（mm）。
     pub fn imported(drawing: &Drawing, settings: &ImportSettings, t: f32) -> Result<(Template, ImportReport), String> {
+        Template::imported_rooted(drawing, settings, t, None)
+    }
+
+    /// 型の線から、型紙を作る。`root` を決めれば、その点（線と同じ座標）を含むパネルを根（正面）にする。
+    /// 決めなければ、いちばん大きなパネル。
+    pub fn imported_rooted(drawing: &Drawing, settings: &ImportSettings, t: f32, root: Option<P2>) -> Result<(Template, ImportReport), String> {
         let unit = if settings.unit_mm.is_finite() && settings.unit_mm > 0.0 { settings.unit_mm } else { 1.0 };
         let (bmin, bmax) = drawing.bounds();
         // 紙の座標: mm にし、左下を原点に寄せる（裏返すときは左右を入れ替える）。
@@ -450,7 +456,8 @@ impl Template {
         }
 
         // 根は、いちばん大きなパネル。長い折り線から順に、木を広げる。
-        let root = (0..outlines.len()).max_by(|&a, &b| areas[a].total_cmp(&areas[b])).unwrap();
+        let largest = (0..outlines.len()).max_by(|&a, &b| areas[a].total_cmp(&areas[b])).unwrap();
+        let root = root.map(place).and_then(|p| (0..outlines.len()).find(|&i| super::inside(&outlines[i], p))).unwrap_or(largest);
         let mut parent: Vec<Option<(usize, usize)>> = vec![None; outlines.len()];
         let mut reached = vec![false; outlines.len()];
         reached[root] = true;

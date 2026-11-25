@@ -1423,3 +1423,29 @@ blend	Color	カラー
 	Distribute vertically (three or more pieces)	上下に等しく並べる（3 つ以上のとき）
 	Drag left or right to change the value	左右に引いても、値を変えられます
 	Align and distribute	整列
+	"{}" is not an ECMA number that PAKENOBA can make (class A: A20.20.03.01 and so on).	「{}」は、パケノバで作れる ECMA の番号ではありません（A 類: A20.20.03.01 など）。
+	1-2-3 snap lock bottom	1-2-3 底（組み底）
+	Common styles	よく使う型
+	Crash lock bottom	ワンタッチ底
+	ECMA number	ECMA の番号
+	ECMA styles	ECMA の型
+	Four flaps (full overlap)	4 枚フラップ（全面で重ねる）
+	Four flaps (reduced)	4 枚フラップ（短いフラップ）
+	Lid on	フタの面
+	Make a folding carton from its ECMA number (the standard names for carton styles) and the inside dimensions	ECMA の番号（紙箱の型の決まった呼び名）と内寸から、紙箱を作ります
+	Side tuck lid	サイド差し込みのフタ
+	The ECMA number is not valid.	ECMA の番号が正しくありません。
+	The ECMA number of this box type is not valid	この型の ECMA の番号が正しくありません
+	The bottom is drawn in a simplified form (the interlocking cuts and the glued corners are not drawn yet).	底は簡略な形です（かみ合わせの切り込みと、斜めの貼りは、まだ描いていません）。
+	This combination is not in the public list of ECMA styles, but it can still be made.	公開されている ECMA の型の一覧にない組み合わせですが、作ることはできます。
+	Top: {} / Bottom: {}	上: {}／底: {}
+	Tuck lid	差し込みのフタ
+	Tuck lid with hanger	差し込みのフタ＋吊り下げ
+	Use this number	この番号にする
+	Front panel	正面
+	Back panel	背面
+	Top of the box	上
+	Bottom of the box	底
+	Hanger on	吊り下げの面
+	Outer flap on	外のフラップ
+	Locking flap on	舌の付く面

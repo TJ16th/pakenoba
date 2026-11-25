@@ -107,6 +107,9 @@ pub(crate) struct ShapePreset {
     /// 読み込んだ型（DXF）なら、そのファイルと読み方。ファイルは設定のフォルダの `dielines/` に写しを置く。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dieline: Option<DielinePreset>,
+    /// ECMA の型なら、その番号（「A20.20.03.01」）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ecma: Option<String>,
 }
 
 /// 自分の型に残した、型の線のファイルと読み方。
