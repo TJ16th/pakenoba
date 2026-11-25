@@ -72,3 +72,6 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-avf
 [dev-dependencies]
 # シェーダーの文法と型を、GPU なしで試験する（wgpu と同じ版）。
 naga = { version = "30.0.2", features = ["wgsl-in"] }
+
+[build-dependencies]
+winresource = "0.1.34"
