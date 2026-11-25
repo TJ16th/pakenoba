@@ -28,6 +28,7 @@ fn preset_of(name: &str, dims: &Dims, material: &Material) -> ShapePreset {
         handle_bottom: dims.handle.bottom,
         handle_top: dims.handle.top,
         handle_height: dims.handle.height,
+        top_length: dims.handle.top_edge,
         paper: material.paper.key().to_owned(),
         coat: material.coat.key().to_owned(),
         dieline: (dims.sides == IMPORTED).then(|| dieline_preset(dims.dieline)).flatten(),
@@ -87,7 +88,7 @@ fn dims_of(preset: &ShapePreset, folder: Option<&std::path::Path>) -> Option<(Di
         bulge: preset.bulge,
         roof: preset.roof,
         flaps: TuckFlaps { glue: preset.glue_flap, dust: preset.dust_flap, tuck: preset.tuck_flap },
-        handle: pakenoba_core::template::HandleSize { bottom: preset.handle_bottom, top: preset.handle_top, height: preset.handle_height },
+        handle: pakenoba_core::template::PillowSize { bottom: preset.handle_bottom, top: preset.handle_top, height: preset.handle_height, top_edge: preset.top_length },
         dieline,
         ecma,
     };

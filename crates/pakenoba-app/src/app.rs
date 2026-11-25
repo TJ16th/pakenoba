@@ -208,7 +208,7 @@ struct Dims {
     /// 差し込み箱のフラップの長さ（決めていないものは寸法から自動）。
     flaps: TuckFlaps,
     /// 持ち手つきピロー型の持ち手の大きさ（決めていないものは寸法から自動）。
-    handle: pakenoba_core::template::HandleSize,
+    handle: pakenoba_core::template::PillowSize,
     /// 読み込んだ型（`IMPORTED`）の、`dieline::register` の番号。ほかの型では 0。
     dieline: u64,
     /// ECMA の型（`ECMA`）の番号（数字 8 けた。`pakenoba_core::ecma::Code::from_u32`）。ほかの型では 0。

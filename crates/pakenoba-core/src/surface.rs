@@ -851,6 +851,20 @@ mod tests {
     }
 
     #[test]
+    fn 上がすぼまったピロー型も_検査を通り_上の縁で柄がつながる() {
+        for (handle, top) in [(true, 110.0f32), (false, 230.0)] {
+            let make = |t: f32| Template::pillow_shaped(180.0, 110.0, t, 90f32.to_radians(), handle, crate::template::PillowSize { top_edge: Some(top), ..Default::default() }, handle);
+            let (tpl, thin) = (make(0.5), make(0.02));
+            let problems: Vec<String> = crate::check::check(&tpl, &thin).iter().filter(|p| p.is_blocking()).map(|p| p.describe(&tpl)).collect();
+            assert!(problems.is_empty(), "{handle} {top}: {problems:?}");
+            if !handle {
+                let surface = Surface::new(&tpl, &thin);
+                assert!(has_seam(&tpl, &surface, "正面", "背面"));
+            }
+        }
+    }
+
+    #[test]
     fn 組み立て向きに開くと_外側の面が十字に並ぶ() {
         let (tpl, surface) = tuck(0.5);
         let front = index(&tpl, "正面");
@@ -1347,23 +1361,30 @@ mod pillow_reach {
     #[test]
     #[ignore]
     fn pillow_flap_reach() {
-        for (handle, neck) in [(false, false), (true, true)] {
-            let tpl = Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), handle.then(Default::default), neck);
+        for (handle, neck, top) in [(false, false, None), (true, true, None), (true, true, Some(100.0)), (false, false, Some(220.0))] {
+            let tpl = Template::pillow_shaped(160.0, 80.0, 0.5, 70f32.to_radians(), handle, crate::template::PillowSize { top_edge: top, ..Default::default() }, neck);
             let places = tpl.transforms(1.0, 1.0);
             let world = |i: usize, p: P2| places[i].point([p[0], p[1], 0.0]);
             let flap = tpl.panels.iter().position(|p| p.name == "正面のフラップ").unwrap();
             let back = tpl.panels.iter().position(|p| p.name == "背面").unwrap();
             // フラップの先の縁（折り線から遠い側）のうち、いちばん外の点。
             let crease = &tpl.panels[flap].curved.as_ref().unwrap().line;
+            // 折り線が、立体の中で 1 枚の平面に乗っているか（親の正面の上で測る）。
+            let front = tpl.panels.iter().position(|p| p.name == "正面").unwrap();
+            let q: Vec<V3> = crease.iter().map(|&c| world(front, c)).collect();
+            let n = crate::math::normalize(crate::math::cross(sub(q[12], q[0]), sub(q[24], q[0])));
+            let off = q.iter().map(|p| dot(sub(*p, q[0]), n).abs()).fold(0.0f32, f32::max);
+            println!("handle {handle} top {top:?}: crease off its plane by {off:.3} mm");
             for k in [6usize, 12, 18] {
                 let c = crease[k];
                 let tip = tpl.panels[flap].outline.iter().copied().filter(|q| (q[1] - c[1]).abs() < 0.01).min_by(|a, b| a[0].total_cmp(&b[0])).unwrap();
                 let tip3 = world(flap, tip);
-                // 背面の輪郭のうち、同じ高さで端の点。
-                let edge = tpl.panels[back].outline.iter().copied().filter(|q| (q[1] + c[1]).abs() < 0.01).min_by(|a, b| a[0].total_cmp(&b[0])).unwrap();
-                let edge3 = world(back, edge);
-                let d = length(sub(tip3, edge3));
-                println!("handle {handle} v {:.1}: flap tip {:?} back edge {:?} distance {d:.2}", c[1], tip3, edge3);
+                // 背面の左の端（折り線）のうち、いちばん近い点。
+                let back_flap = tpl.panels.iter().position(|p| p.name == "背面のフラップ").unwrap();
+                let back_line = &tpl.panels[back_flap].curved.as_ref().unwrap().line;
+                let _ = back;
+                let (edge3, d) = back_line.iter().map(|&q| world(back_flap, q)).map(|q| (q, length(sub(tip3, q)))).min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+                println!("handle {handle} top {top:?} v {:.1}: flap tip {:?} back edge {:?} distance {d:.2}", c[1], tip3, edge3);
             }
         }
     }

@@ -52,17 +52,21 @@ impl TuckFlaps {
     }
 }
 
-/// 持ち手つきピロー型の持ち手（正面から見て等脚台形）の、下の幅、上の幅、高さ（mm）。`None` は、寸法から自動で決める。
+/// ピロー型の形の調整（mm）。`None` は、寸法から自動で決める。
 ///
-/// 範囲の外の値は、作るときに範囲の中へ寄せる（[`HandleSize::ranges`]）。
+/// - `bottom`、`top`、`height`: 持ち手（正面から見て等脚台形）の、下の幅、上の幅、高さ。持ち手つきだけ。
+/// - `top_edge`: 本体の上の辺の長さ。自動では、下の辺（横の長さ）と同じ。短くすると、正面から見て上がすぼまる。
+///
+/// 範囲の外の値は、作るときに範囲の中へ寄せる（[`PillowSize::ranges`]、[`PillowSize::top_edge_range`]）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct HandleSize {
+pub struct PillowSize {
     pub bottom: Option<f32>,
     pub top: Option<f32>,
     pub height: Option<f32>,
+    pub top_edge: Option<f32>,
 }
 
-impl HandleSize {
+impl PillowSize {
     /// 自動のときの、下の幅、上の幅、高さ（`len` は横の長さ、`height` は 1 枚の面の高さ）。
     pub fn auto(len: f32, height: f32) -> [f32; 3] {
         let bottom = 0.46 * len;
@@ -75,10 +79,21 @@ impl HandleSize {
         [20.0..=wide, 15.0..=wide, 15.0..=(1.2 * height).max(60.0)]
     }
 
-    /// 作るときの値。決めていないものは自動、範囲の外は範囲の中へ。
+    /// 本体の上の辺の長さの範囲（下の辺の 3 割から 1.7 倍まで）。
+    pub fn top_edge_range(len: f32) -> std::ops::RangeInclusive<f32> {
+        (0.3 * len)..=(1.7 * len)
+    }
+
+    /// 作るときの、本体の上の辺の長さ。
+    pub fn resolve_top_edge(&self, len: f32) -> f32 {
+        let range = PillowSize::top_edge_range(len);
+        self.top_edge.filter(|v| v.is_finite()).unwrap_or(len).clamp(*range.start(), *range.end())
+    }
+
+    /// 作るときの値（持ち手の下の幅、上の幅、高さ）。決めていないものは自動、範囲の外は範囲の中へ。
     pub fn resolve(&self, len: f32, height: f32) -> [f32; 3] {
-        let auto = HandleSize::auto(len, height);
-        let ranges = HandleSize::ranges(len, height);
+        let auto = PillowSize::auto(len, height);
+        let ranges = PillowSize::ranges(len, height);
         let chosen = [self.bottom, self.top, self.height];
         std::array::from_fn(|i| chosen[i].filter(|v| v.is_finite()).unwrap_or(auto[i]).clamp(*ranges[i].start(), *ranges[i].end()))
     }
@@ -501,7 +516,7 @@ impl Template {
 
     /// 持ち手つきピロー型（上下が対称なもの）。[`Template::pillow_with`] の、持ち手あり・首なし。
     pub fn pillow(len: f32, height: f32, t: f32, bulge: f32) -> Template {
-        Template::pillow_with(len, height, t, bulge, Some(HandleSize::default()), false)
+        Template::pillow_with(len, height, t, bulge, Some(PillowSize::default()), false)
     }
 
     /// ピロー型。2 枚の面が下の折り線でつながり、丸くふくらんで上で合わさる。
@@ -515,8 +530,12 @@ impl Template {
     ///
     /// 曲線の折り線の形は、ふくらみから自動で決まる。面を丸めたときに、折り線が 45 度に傾いた平面に乗る形にしてあり、
     /// フラップはその平面で映した位置（奥行き方向へまっすぐ倒れ込んだ形）に来る。
-    pub fn pillow_with(len: f32, height: f32, t: f32, bulge: f32, handle_size: Option<HandleSize>, neck: bool) -> Template {
-        let handle = handle_size.is_some();
+    pub fn pillow_with(len: f32, height: f32, t: f32, bulge: f32, handle_size: Option<PillowSize>, neck: bool) -> Template {
+        Template::pillow_shaped(len, height, t, bulge, handle_size.is_some(), handle_size.unwrap_or_default(), neck)
+    }
+
+    /// ピロー型。`shape` で、本体の上の辺の長さと、持ち手（`handle` のとき）の大きさを決める。
+    pub fn pillow_shaped(len: f32, height: f32, t: f32, bulge: f32, handle: bool, shape: PillowSize, neck: bool) -> Template {
         const MAIN: (f32, f32) = (0.0, 1.0);
         const SLICES: usize = 24;
         let psi = bulge.clamp(0.2, 1.6);
@@ -528,23 +547,69 @@ impl Template {
         let neck_bend = profile.neck;
         // 下の折り線での、1 枚の面の立ち上がりの傾き（2 枚が合わさる平面から外へ）と、上の端での傾き。
         let (start_tilt, end_tilt) = (profile.start, profile.end());
-        // フラップの長さ（折り線から先）。閉じると、フラップは奥行きの向きへまっすぐ倒れ込むので、
-        // 深さの 2 倍で向かいの面の縁に届く。紙の半分ほど手前で止めて、向かいの面を突き抜けないようにする。
-        let reach = |v: f32| (2.0 * depth(v) - 0.5 * t).max(0.0);
         // 背面のフラップは、正面のフラップの下に入る。そのぶん折り線を少し内側へずらす。
         let under = 1.5 * t;
         let v_at = |k: usize| height * k as f32 / SLICES as f32;
+        // 本体の上の辺の長さ。下の辺（横の長さ）より短ければ、正面から見て上がすぼまる。
+        // 左右の端は、丸めたときの「まっすぐ測った高さ」に比例して内へ寄せる。こうすると、端の折り線が立体の中で
+        // 1 枚の平面に乗ったまま（端のフラップを、その平面で映して閉じられる）。
+        let top_len = shape.resolve_top_edge(len);
+        let rise = {
+            const STEPS: usize = 256;
+            let mut table = vec![0.0f32; STEPS + 1];
+            for k in 1..=STEPS {
+                let (v0, v1) = (height * (k - 1) as f32 / STEPS as f32, height * k as f32 / STEPS as f32);
+                let (ds, dz) = (v1 - v0, depth(v1) - depth(v0));
+                table[k] = table[k - 1] + (ds * ds - dz * dz).max(0.0).sqrt();
+            }
+            move |v: f32| {
+                let x = (v / height).clamp(0.0, 1.0) * STEPS as f32;
+                let (i, f) = ((x.floor() as usize).min(STEPS - 1), x - x.floor());
+                table[i] + (table[i + 1] - table[i]) * f
+            }
+        };
+        let full_rise = rise(height).max(1e-3);
+        let slope = 0.5 * (len - top_len) / full_rise;
+        let taper = |v: f32| slope * rise(v);
+        // まっすぐ測った高さから、丸みに沿った高さへ（二分法）。
+        let unrise = |y: f32| {
+            let (mut lo, mut hi) = (0.0f32, height);
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if rise(mid) < y { lo = mid } else { hi = mid }
+            }
+            0.5 * (lo + hi)
+        };
+        // フラップの長さ（折り線から先）。閉じると、フラップは端の折り線が乗る平面で映した向きへ倒れ込む。
+        // 端が縦なら（上の辺と下の辺が同じ長さ）奥行きの向きへまっすぐで、深さの 2 倍で向かいの面の縁に届く。
+        // すぼまっているときは、倒れ込む向きが少し下へ傾くので、向かいの面の縁に届く長さを、高さごとに解いて決める:
+        //   向き（奥行き、高さ）= (2, 2·slope) / (2 + slope²)。長さ d で、向かいの面の縁（深さが逆）に届く d を探す。
+        // 紙の半分ほど手前で止めて、向かいの面を突き抜けないようにする。
+        let reach = |v: f32| {
+            let c = 2.0 / (2.0 + slope * slope);
+            let gap = |d: f32| {
+                let y = rise(v) - slope * c * d;
+                let far = if (0.0..=full_rise).contains(&y) { depth(unrise(y)) } else { 0.0 };
+                depth(v) - c * d + far
+            };
+            let (mut lo, mut hi) = (0.0f32, (2.0 * depth(v) + 1.0) / c);
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if gap(mid) > 0.0 { lo = mid } else { hi = mid }
+            }
+            (0.5 * (lo + hi) - 0.5 * t).max(0.0)
+        };
 
         // 面の輪郭。左右の端が、折り線の形にへこんでいる。sign = 1 が正面（上側）、-1 が背面（下側）。
         let face = |sign: f32, shift: f32| -> Vec<P2> {
-            let mut outline: Vec<P2> = (0..=SLICES).map(|k| [shift + depth(v_at(k)), sign * v_at(k)]).collect();
-            outline.extend((0..=SLICES).rev().map(|k| [len - shift - depth(v_at(k)), sign * v_at(k)]));
+            let mut outline: Vec<P2> = (0..=SLICES).map(|k| [shift + taper(v_at(k)) + depth(v_at(k)), sign * v_at(k)]).collect();
+            outline.extend((0..=SLICES).rev().map(|k| [len - shift - taper(v_at(k)) - depth(v_at(k)), sign * v_at(k)]));
             ccw(outline)
         };
         // フラップの輪郭。折り線と、その先の縁に挟まれたレンズ形。side = -1 が左端、1 が右端。
         let flap = |sign: f32, shift: f32, side: f32| -> (Vec<P2>, [P2; 3], Vec<P2>) {
-            let edge = if side < 0.0 { shift } else { len - shift };
-            let crease = |v: f32| edge - side * depth(v);
+            let edge = |v: f32| if side < 0.0 { shift + taper(v) } else { len - shift - taper(v) };
+            let crease = |v: f32| edge(v) - side * depth(v);
             let line: Vec<P2> = (0..=SLICES).map(|k| [crease(v_at(k)), sign * v_at(k)]).collect();
             let mut outline = line.clone();
             outline.extend((0..=SLICES).rev().map(|k| [crease(v_at(k)) + side * reach(v_at(k)), sign * v_at(k)]));
@@ -575,7 +640,7 @@ impl Template {
         // 貼りしろと持ち手。上で合わさった 2 枚の縁を、端から端まで山折りでまっすぐ上に立てて、背中合わせに貼る。
         // これで上の口が閉じて、筒になる。持ち手は、貼りしろの中央から上へ続く。
         let fin = (0.08 * height).clamp(6.0, 10.0);
-        let [handle_bottom, handle_top, handle_height] = handle_size.unwrap_or_default().resolve(len, height);
+        let [handle_bottom, handle_top, handle_height] = shape.resolve(top_len, height);
         let (h0, h1) = (0.5 * (len - handle_bottom), 0.5 * (len + handle_bottom));
         // 上の辺は、下の辺の中央に合わせる（下より広ければ、逆さの台形）。
         let inset = 0.5 * (handle_bottom - handle_top);
@@ -586,8 +651,8 @@ impl Template {
                 let fin_index = panels.len();
                 panels.push(Panel::flat(
                     fin_name,
-                    ccw(vec![[shift, edge], [len - shift, edge], [len - shift, base], [shift, base]]),
-                    Some(Hinge { parent, a: [shift, edge], b: [len - shift, edge], angle: end_tilt, window: MAIN, motion: Motion::Fixed }),
+                    ccw(vec![[shift + taper(height), edge], [len - shift - taper(height), edge], [len - shift - taper(height), base], [shift + taper(height), base]]),
+                    Some(Hinge { parent, a: [shift + taper(height), edge], b: [len - shift - taper(height), edge], angle: end_tilt, window: MAIN, motion: Motion::Fixed }),
                     Role::Fin,
                 ));
                 panels.push(Panel::flat(
@@ -606,8 +671,8 @@ impl Template {
             const TUCKED_IN: f32 = 0.2;
             panels.push(Panel::flat(
                 "のりしろ",
-                ccw(vec![[under, edge], [len - under, edge], [len - under - slant, base], [under + slant, base]]),
-                Some(Hinge { parent: 1, a: [under, edge], b: [len - under, edge], angle: std::f32::consts::PI + 2.0 * end_tilt + TUCKED_IN, window: MAIN, motion: Motion::Fixed }),
+                ccw(vec![[under + taper(height), edge], [len - under - taper(height), edge], [len - under - taper(height) - slant, base], [under + taper(height) + slant, base]]),
+                Some(Hinge { parent: 1, a: [under + taper(height), edge], b: [len - under - taper(height), edge], angle: std::f32::consts::PI + 2.0 * end_tilt + TUCKED_IN, window: MAIN, motion: Motion::Fixed }),
                 // 内側へ折り返して正面の裏に貼るので、外からは見えない（柄も置かない）。
                 // 背面の上の辺は、のりしろへの折り線ではなく、正面の上の辺との合わせ目として扱われる（柄が上の縁を越えて続く）。
                 Role::GlueTab,
@@ -649,6 +714,19 @@ impl Template {
             drawn: None,
         }
     }
+}
+
+/// ピロー型の面を、丸めたときにまっすぐ測った高さ（下の折り線から上の端まで。`height` は丸みに沿った高さ）。
+pub fn pillow_straight_height(height: f32, bulge: f32, neck: bool) -> f32 {
+    let profile = PillowProfile::new(height, bulge.clamp(0.2, 1.6), neck);
+    const STEPS: usize = 256;
+    (1..=STEPS)
+        .map(|k| {
+            let (v0, v1) = (height * (k - 1) as f32 / STEPS as f32, height * k as f32 / STEPS as f32);
+            let (ds, dz) = (v1 - v0, profile.depth(v1) - profile.depth(v0));
+            (ds * ds - dz * dz).max(0.0).sqrt()
+        })
+        .sum()
 }
 
 /// ピロー型の 1 枚の面の、横から見た形。下の折り線から上の端まで、丸みに沿った距離 v で表す。

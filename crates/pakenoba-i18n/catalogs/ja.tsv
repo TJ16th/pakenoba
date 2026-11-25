@@ -1459,3 +1459,9 @@ blend	Color	カラー
 	The top can also be wider than the bottom. The hole follows the width at the middle of the handle.	上の幅は、下より広くもできます。手を入れる穴は、持ち手の中ほどの幅に合わせます。
 	Width at the bottom	下の幅
 	Width at the top	上の幅
+	Back to the same length as the width	横の長さと同じに戻します
+	Height of the body (measured straight): about {:.0} mm	本体の高さ（まっすぐ測る）: 約 {:.0} mm
+	Length of the top edge	上の辺の長さ
+	Length of the top edge of the body. Shorter than the width, the box narrows toward the top when seen from the front	本体の上の辺の長さ。横の長さより短くすると、正面から見て上がすぼまります
+	The same length as the width. Move the slider to choose your own length.	横の長さと同じです。つまみを動かすと、自分で決めた長さになります。
+	Top edge	上の辺

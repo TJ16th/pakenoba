@@ -701,6 +701,26 @@ impl App {
                         }
                         if pillow {
                             row(ui, t!("Bulge"), &mut dims.bulge, 15.0..=90.0, t!("°"));
+                            // 本体の上の辺の長さ（自動では、下の辺と同じ）。つまみか数を動かすと決まる。右の「自動」で戻る。
+                            let range = pakenoba_core::template::PillowSize::top_edge_range(dims.w);
+                            let mut value = dims.handle.resolve_top_edge(dims.w);
+                            ui.label(egui::RichText::new(t!("Top edge")).color(super::theme::MUTED)).on_hover_text(t!("Length of the top edge of the body. Shorter than the width, the box narrows toward the top when seen from the front"));
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().slider_width = 90.0;
+                                let slid = ui.add(egui::Slider::new(&mut value, range.clone()).show_value(false)).changed();
+                                let typed = number(ui, &mut value, range, "mm").changed();
+                                if slid || typed {
+                                    dims.handle.top_edge = Some(value);
+                                }
+                                if dims.handle.top_edge.is_some() {
+                                    if ui.small_button(t!("Auto")).on_hover_text(t!("Back to the same length as the width")).clicked() {
+                                        dims.handle.top_edge = None;
+                                    }
+                                } else {
+                                    ui.weak(t!("Auto")).on_hover_text(t!("The same length as the width. Move the slider to choose your own length."));
+                                }
+                            });
+                            ui.end_row();
                         }
                         row(ui, t!("Paper thickness"), &mut dims.t, 0.3..=6.0, "mm");
                     });
@@ -713,6 +733,9 @@ impl App {
                         let psi = d.bulge.clamp(15.0, 90.0).to_radians();
                         let deepest = d.h * (1.0 - (psi * 0.5).cos()) / psi;
                         ui.small(t!("Thickest point: about {:.0} mm", deepest * 2.0));
+                        // 面の高さは丸みに沿って測るので、組み上がった本体の高さは、それより低い。
+                        let straight = pakenoba_core::template::pillow_straight_height(d.h, d.bulge.to_radians(), d.sides == super::PILLOW);
+                        ui.small(t!("Height of the body (measured straight): about {:.0} mm", straight));
                     }
                     if !prism && !gable && !pillow {
                         ui.small(t!("Outside: {:.1} × {:.1} × {:.1} mm", d.w + 2.0 * d.t, d.d + 2.0 * d.t, d.h + 4.0 * d.t));
@@ -800,12 +823,13 @@ impl App {
 
     /// 持ち手つきピロー型の持ち手（正面から見て等脚台形）の、下の幅、上の幅、高さ。差し込み箱のフラップと同じ形の欄。
     fn handle_settings(&mut self, ui: &mut egui::Ui) {
-        use pakenoba_core::template::HandleSize;
+        use pakenoba_core::template::PillowSize;
         let d = &mut self.dims;
-        let auto = HandleSize::auto(d.w, d.h);
-        let ranges = HandleSize::ranges(d.w, d.h);
+        let top_len = d.handle.resolve_top_edge(d.w);
+        let auto = PillowSize::auto(top_len, d.h);
+        let ranges = PillowSize::ranges(top_len, d.h);
         let labels = [t!("Width at the bottom"), t!("Width at the top"), t!("Height")];
-        let HandleSize { bottom, top, height } = &mut d.handle;
+        let PillowSize { bottom, top, height, .. } = &mut d.handle;
         egui::Grid::new("handle").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             for (i, chosen) in [bottom, top, height].into_iter().enumerate() {
                 let range = ranges[i].clone();

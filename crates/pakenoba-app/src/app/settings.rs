@@ -106,6 +106,9 @@ pub(crate) struct ShapePreset {
     pub handle_top: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle_height: Option<f32>,
+    /// ピロー型の、本体の上の辺の長さ（決めていなければ書かない）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_length: Option<f32>,
     /// 紙とコート（`Paper::key`、`Coat::key`）。
     #[serde(default)]
     pub paper: String,

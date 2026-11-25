@@ -15,7 +15,7 @@ use crate::math::{Affine, V3, add, cross, dot, normalize, rotate, scale, sub};
 mod imported;
 mod library;
 pub use imported::{FoldInfo, ImportReport, ImportSettings};
-pub use library::{HandleSize, TuckFlaps};
+pub use library::{PillowSize, TuckFlaps, pillow_straight_height};
 
 pub type P2 = [f32; 2];
 
@@ -1337,7 +1337,7 @@ mod tests {
         let (len, height, t) = (180.0f32, 110.0f32, 0.5f32);
         for (handle, neck) in [(true, true), (false, false), (false, true)] {
             for bulge in [0.6f32, 1.2, 1.5] {
-                let tpl = Template::pillow_with(len, height, t, bulge, handle.then(HandleSize::default), neck);
+                let tpl = Template::pillow_with(len, height, t, bulge, handle.then(PillowSize::default), neck);
                 for p in &tpl.panels {
                     assert!(signed_area(&p.outline) > 0.0, "{} が時計回り", p.name);
                 }
