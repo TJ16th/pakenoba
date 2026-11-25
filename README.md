@@ -5,6 +5,7 @@
 PAKENOBA is an app made for package design. Choose a box style, place artwork on the 3D box, and export presentation images and print-ready PDFs, all in one app. It is free, and the source code is open.
 
 <!-- Promo video (English, with translated lyrics): edit this file on GitHub and drag pakenoba_promo_en_lyrics_readme.mp4 below this line -->
+https://github.com/user-attachments/assets/1aebb7a9-3cfd-47fd-b07c-0a35292e75ee
 
 ![The Design step](docs/images/app-design.jpg)
 
