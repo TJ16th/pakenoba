@@ -181,9 +181,16 @@ struct End<'a> {
     top: bool,
     /// 面の端の高さ（上なら面の高さ、底なら 0）。
     y0: f32,
+    /// 面ごとの、端を内へ下げる量（下に入るフラップの面ほど、紙の厚みぶん低くする）。
+    drop: [f32; 4],
 }
 
-impl End<'_> {
+impl<'a> End<'a> {
+    /// 面 `i` に付くものを描くための端（その面の端の高さから）。
+    fn wall(&self, i: usize) -> End<'a> {
+        let y0 = if self.top { self.y0 - self.drop[i] } else { self.y0 + self.drop[i] };
+        End { body: self.body, top: self.top, y0, drop: [0.0; 4] }
+    }
     fn p(&self, x: f32, s: f32) -> P2 {
         if self.top { [x, self.y0 + s] } else { [x, self.y0 - s] }
     }
@@ -229,6 +236,7 @@ fn dust_flaps(sketch: &mut Sketch, e: &End) {
     let b = e.body;
     let names = e.names();
     for (i, name) in [(1, names.left), (3, names.right)] {
+        let e = &e.wall(i);
         let (x0, x1) = span(b, i);
         let (x0, x1) = (x0 + 1.0, x1 - 1.0);
         let d = (0.4 * b.l).min(0.5 * b.l - 1.0).max(3.0);
@@ -240,6 +248,7 @@ fn dust_flaps(sketch: &mut Sketch, e: &End) {
 
 /// フタ（面 `k` に付く）。`tuck` なら先に差し込みを付ける。返り値はフタの左右の端。
 fn lid(sketch: &mut Sketch, e: &End, k: usize, tuck: bool) -> (f32, f32) {
+    let e = &e.wall(k);
     let b = e.body;
     let names = e.names();
     let (x0, x1) = span(b, k);
@@ -273,6 +282,7 @@ fn draw_end(sketch: &mut Sketch, e: &End, closure: Closure, front: bool) {
             lid(sketch, e, far, true);
             dust_flaps(sketch, e);
             // 面を上へ伸ばす（折らない）。穴は、横長の角の丸い穴。
+            let e = &e.wall(k);
             let (x0, x1) = span(b, k);
             let hh = (0.25 * b.h).clamp(30.0, 50.0);
             sketch.panel(vec![e.p(x0, 0.0), e.p(x1, 0.0), e.p(x1, hh), e.p(x0, hh)], if k == 0 { "背面" } else { "正面" });
@@ -290,6 +300,7 @@ fn draw_end(sketch: &mut Sketch, e: &End, closure: Closure, front: bool) {
         }
         Closure::SideTuck => {
             let (x0, x1) = lid(sketch, e, k, false);
+            let (ek, ef) = (e.wall(k), e.wall(far));
             // フタの左右の翼。根の両端を少しあけ、先の角を落とす。
             let clear = (1.5 * b.t).max(1.0);
             let root = (clear, b.w - clear);
@@ -297,21 +308,22 @@ fn draw_end(sketch: &mut Sketch, e: &End, closure: Closure, front: bool) {
             let dw = (0.5 * b.h).min(0.45 * (root.1 - root.0)).clamp(3.0, 30.0);
             let cut = (0.3 * dw).min(0.25 * (root.1 - root.0));
             for (edge, dir, name) in [(x1, 1.0f32, names.right), (x0, -1.0, names.left)] {
-                let pts = vec![e.p(edge, root.0), e.p(edge + dir * dw, root.0 + cut), e.p(edge + dir * dw, root.1 - cut), e.p(edge, root.1)];
+                let pts = vec![ek.p(edge, root.0), ek.p(edge + dir * dw, root.0 + cut), ek.p(edge + dir * dw, root.1 - cut), ek.p(edge, root.1)];
                 sketch.panel(pts, name);
-                sketch.creases.push((e.p(edge, root.0), e.p(edge, root.1)));
+                sketch.creases.push((ek.p(edge, root.0), ek.p(edge, root.1)));
             }
             // 向かいの面の内フラップ（両側を 10 度ずつ細く）。
             let (f0, f1) = span(b, far);
             let (f0, f1) = (f0 + 1.0, f1 - 1.0);
             let d = (b.w - clear).max(3.0);
             let sl = (d * 10f32.to_radians().tan()).min(0.3 * (f1 - f0));
-            sketch.panel(flap(e, f0, f1, d, [sl, sl]), names.flap);
-            crease(sketch, e, f0, f1, 0.0);
+            sketch.panel(flap(&ef, f0, f1, d, [sl, sl]), names.flap);
+            crease(sketch, &ef, f0, f1, 0.0);
         }
         Closure::Flaps | Closure::Reduced => {
             let slot = (2.0 * b.t).max(1.0);
             for i in 0..4 {
+                let e = &e.wall(i);
                 let (x0, x1) = span(b, i);
                 let (x0, x1) = (x0 + 0.5 * slot, x1 - 0.5 * slot);
                 let long = i % 2 == 0;
@@ -374,6 +386,32 @@ fn draw_end(sketch: &mut Sketch, e: &End, closure: Closure, front: bool) {
     }
 }
 
+/// 端で、面ごとに縁を内へ下げる量。閉じたとき、下に入るフラップの面ほど、紙の厚みぶん低くする
+/// （同じ高さのままだと、重なったフラップどうしが同じ平面に来て、下のものが上のフタを突き抜けて見える）。
+/// 組み込みの差し込み箱と同じく、型の線では、面の端に紙の厚みぶんの小さな段ができる。
+fn drops(closure: Closure, front: bool, t: f32) -> [f32; 4] {
+    let k = if front { 2 } else { 0 };
+    let far = 2 - k;
+    let mut d = [0.0; 4];
+    match closure {
+        // 左右のフラップが、フタの下に入る。
+        Closure::Tuck | Closure::Hanger => {
+            d[1] = t;
+            d[3] = t;
+        }
+        // 向かいの面の内フラップが、フタの下に入る。
+        Closure::SideTuck => d[far] = t,
+        // 左右のフラップがいちばん下、その上に向かいの面のフラップ、いちばん上に外のフラップ。
+        Closure::Flaps | Closure::Reduced => {
+            d[1] = 2.0 * t;
+            d[3] = 2.0 * t;
+            d[far] = t;
+        }
+        Closure::Open | Closure::Snap | Closure::Auto => {}
+    }
+    d
+}
+
 /// 番号と内寸（l 正面の幅、w 奥行き、h 高さ、t 紙の厚み。mm）から、型の線を描く。
 /// 返り値は、線と、正面の中の点と、パネルの名前の手がかりと、穴（中心と半分の幅・高さ）。
 fn sketch(code: Code, l: f32, w: f32, h: f32, t: f32) -> (Sketch, Body) {
@@ -381,24 +419,29 @@ fn sketch(code: Code, l: f32, w: f32, h: f32, t: f32) -> (Sketch, Body) {
     let closed = |c: Closure| if c == Closure::Open { 0.0 } else { 1.0 };
     let hw = h + t * (closed(code.top) + closed(code.bottom));
     let mut x = [glue; 5];
-    for (i, width) in [l, w, l, w].into_iter().enumerate() {
+    // のりしろの付く背面は、紙 1 枚ぶん狭くする。筒を閉じたとき、のりしろが右側面の内側（紙 1 枚ぶん内）に来る
+    // （同じ幅のままだと、のりしろが右側面と同じ平面に来て、外へ突き抜けて見える。組み込みの差し込み箱と同じ）。
+    for (i, width) in [l - t, w, l, w].into_iter().enumerate() {
         x[i + 1] = x[i] + width;
     }
     let body = Body { x, l, w, h: hw, t };
+    let (top, bottom) = (drops(code.top, code.top_front, t), drops(code.bottom, code.bottom_front, t));
     let mut sk = Sketch::default();
     for (i, name) in ["背面", "左側面", "正面", "右側面"].into_iter().enumerate() {
         let (x0, x1) = span(&body, i);
-        sk.panel(vec![[x0, 0.0], [x1, 0.0], [x1, hw], [x0, hw]], name);
+        let (y0, y1) = (bottom[i], hw - top[i]);
+        sk.panel(vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]], name);
         if i > 0 {
             sk.creases.push(([x0, 0.0], [x0, hw]));
         }
     }
     // のりしろ（背面の左。角を落とす）。
     let bev = (5.0f32).min(hw / 4.0);
-    sk.panel(vec![[0.0, bev], [glue, 0.0], [glue, hw], [0.0, hw - bev]], "のりしろ");
+    let (g0, g1) = (bottom[0], hw - top[0]);
+    sk.panel(vec![[0.0, g0 + bev], [glue, g0], [glue, g1], [0.0, g1 - bev]], "のりしろ");
     sk.creases.push(([glue, 0.0], [glue, hw]));
-    draw_end(&mut sk, &End { body: &body, top: true, y0: hw }, code.top, code.top_front);
-    draw_end(&mut sk, &End { body: &body, top: false, y0: 0.0 }, code.bottom, code.bottom_front);
+    draw_end(&mut sk, &End { body: &body, top: true, y0: hw, drop: top }, code.top, code.top_front);
+    draw_end(&mut sk, &End { body: &body, top: false, y0: 0.0, drop: bottom }, code.bottom, code.bottom_front);
     (sk, body)
 }
 
