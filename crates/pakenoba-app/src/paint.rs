@@ -721,10 +721,11 @@ pub fn paint(surface: &Surface, tpl: &Template, decals: &[Placed], marks: Marks,
 /// 閉じると隠れるフラップの、曲線の折り線から先の帯の幅（mm）。
 const HIDDEN_FOLD_BAND: f32 = 3.0;
 
-/// 曲線の折り線で親の面につながる、閉じると隠れるフラップ（ピロー型の端の内側のフラップ）の、折り線に沿った帯のうち、
-/// まだ何も描かれていない所に、親の面の柄を折り線で映して描く。
-/// 閉じた箱では、この帯は外側のフラップの先と、親の面の縁の間に見える。柄が合わせ目を越えて親の面に来たときは、
-/// フラップへは続かないので、ここで埋めないと白い筋になる。
+/// 曲線の折り線で親の面につながる、閉じると隠れるフラップ（ピロー型の端の内側のフラップ）の、折り線に沿った帯に、
+/// 親の面の柄（重ねたあとの絵）を折り線で映して描く。
+/// 閉じた箱では、この帯は外側のフラップの先と、親の面の縁の間に見える。柄が合わせ目を越えて親の面に来たときは
+/// フラップへは続かないし、フラップにだけかかる下のレイヤー（全体のタイルなど）もあるので、
+/// 帯は、いつも親の面の見た目で上書きする（そうしないと、親の面と違う絵が、折り目の筋として出る）。
 fn fold_into_hidden_flaps(tpl: &Template, frame: Frame, rgba: &mut [u8]) {
     let w = frame.w;
     for panel in tpl.panels.iter().filter(|p| p.role == Role::Flap) {
@@ -738,9 +739,6 @@ fn fold_into_hidden_flaps(tpl: &Template, frame: Frame, rgba: &mut [u8]) {
         for y in y0..y1 {
             for x in x0..x1 {
                 let to = (y * w + x) * 4;
-                if rgba[to + 3] != 0 {
-                    continue;
-                }
                 let p = frame.at(x, y);
                 // いちばん近い折り線の区間と、そこまでの距離。
                 let Some((dist, foot)) = curved
