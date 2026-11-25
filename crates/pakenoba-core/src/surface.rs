@@ -295,11 +295,14 @@ impl Surface {
         }
         // 閉じると隠れるパネル（差し込み、内側のフラップなど）への折り線。紙は続いているので、柄も続く。
         // 合わせ目の計算（上の `joined`）には入れない。側面の上の辺は、フラップへ折り線で続き、フタとは合わせ目で接する。
+        // 曲線の折り線（ピロー型の端の内側のフラップ）も同じ。つながないと、面からフラップへまたいだ柄が、折り目で切れる。
         for (i, panel) in tpl.panels.iter().enumerate() {
-            let Some(hinge) = &panel.hinge else { continue };
-            let parent = hinge.parent;
+            let (parent, gate): (usize, Vec<[P2; 2]>) = match (&panel.hinge, &panel.curved) {
+                (Some(hinge), _) => (hinge.parent, vec![[hinge.a, hinge.b]]),
+                (None, Some(curved)) => (curved.parent, curved.line.windows(2).map(|w| [w[0], w[1]]).collect()),
+                (None, None) => continue,
+            };
             if panel.takes_art() && tpl.panels[parent].takes_art() && !(visible(i) && visible(parent)) {
-                let gate = vec![[hinge.a, hinge.b]];
                 links[i].push(Link { to: parent, map: Aff2::IDENTITY, gate: gate.clone(), seam: false });
                 links[parent].push(Link { to: i, map: Aff2::IDENTITY, gate, seam: false });
             }
@@ -790,6 +793,21 @@ fn polygons_overlap(a: &[P2], b: &[P2]) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ピロー型の面から内側のフラップへまたいだ柄は_折り目で切れずに続く() {
+        let tpl = Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), None, false);
+        let thin = Template::pillow_with(160.0, 80.0, 0.001, 70f32.to_radians(), None, false);
+        let surface = Surface::new(&tpl, &thin);
+        for (i, flap) in tpl.panels.iter().enumerate().filter(|(_, p)| p.role == crate::template::Role::Flap && p.curved.is_some()) {
+            let curved = flap.curved.as_ref().unwrap();
+            let mid = curved.line[curved.line.len() / 2];
+            let mut decal = Decal { panel: curved.parent, at: [0.5, 0.5], size: [30.0, 30.0], angle: 0.0 };
+            decal.set_center(&tpl, mid);
+            let pieces = surface.layout(&tpl, &decal);
+            assert!(pieces.iter().any(|p| p.panel == i), "{} へ続かない: {:?}", flap.name, pieces.iter().map(|p| tpl.panels[p.panel].name).collect::<Vec<_>>());
+        }
+    }
 
     #[test]
     fn 柄はパネルの中央と端に吸い付く() {
