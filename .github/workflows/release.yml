@@ -17,11 +17,13 @@ jobs:
     name: Windows x64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # make_release.ps1 がコミットの数を数えるので、履歴をすべて取る。
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.0"
       - uses: Swatinem/rust-cache@v2
       - name: Check that the tag matches the version
         shell: pwsh

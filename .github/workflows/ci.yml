@@ -14,9 +14,11 @@ jobs:
     name: Test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
+      # 新しい Rust が出るたびに clippy の決まりが増えて落ちないよう、確かめた版に固定する（上げるときは、ここと release.yml を一緒に）。
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.97.0"
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
