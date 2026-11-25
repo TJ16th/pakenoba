@@ -726,6 +726,19 @@ impl Template {
                     }
                 }
             }
+            // 曲線の折り目のすき間は、親の面の外側の縁と、この面の外側の縁を結ぶ帯で埋める（まっすぐな折り目の円弧の代わり）。
+            // 帯がないと、両方の面の断面がのこぎりの歯のように並んで見える。
+            if let Some(curved) = &panel.curved {
+                let parent = &placements[curved.parent];
+                for w in curved.line.windows(2) {
+                    let (a, b) = (w[0], w[1]);
+                    let quad = [(parent.at(a), a), (parent.at(b), b), (place.at(b), b), (place.at(a), a)];
+                    for idx in [0usize, 1, 2, 0, 2, 3] {
+                        let (frame, q) = &quad[idx];
+                        emit(frame, [q[0], q[1], 0.0], [0.0, 0.0, -1.0], self.uv(*q), 0.0);
+                    }
+                }
+            }
         }
         out
     }
