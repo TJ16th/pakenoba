@@ -660,6 +660,8 @@
 	Parallel projection	平行投影
 	Home	ホーム
 	Start with a box type	型を選んで始める
+	ECMA styles…	ECMA の型…
+	Starts with an ECMA carton style. A list opens where you can compare the styles by their pictures	ECMA の型で始めます。型を絵で見比べて選べる一覧が開きます
 	Projects you open or save appear here.	開いたり保存したりした案件が、ここに並びます。
 	Not found: {folder}	見つかりません: {folder}
 	If you close this tab without saving, the changes will be lost.	保存しないでタブを閉じると、変更は失われます。

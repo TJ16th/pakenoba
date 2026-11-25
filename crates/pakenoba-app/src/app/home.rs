@@ -46,6 +46,10 @@ impl App {
                                 new_shape = Some(sides);
                             }
                         }
+                        // ECMA の番号から作る型。始めると、絵で見比べて選ぶ一覧が開く。
+                        if ui.add_sized([260.0, 26.0], egui::Button::new(t!("ECMA styles…"))).on_hover_text(t!("Starts with an ECMA carton style. A list opens where you can compare the styles by their pictures")).clicked() {
+                            new_shape = Some(super::ECMA);
+                        }
                         ui.add_space(18.0);
                         ui.strong(t!("Open a sample"));
                         ui.add_space(4.0);

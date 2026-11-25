@@ -244,7 +244,13 @@ impl App {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
             icons::draw_image(ui.painter(), rect.center(), egui::Stroke::new(1.1, super::theme::TEXT));
-            ui.label(egui::RichText::new(title).strong());
+            // 長い名前（画像のファイル名など）は、欄の幅で切って「…」にする（そのままだと欄が広がり、右の欄が画面の外へ押し出される）。
+            let kind_w = ui.fonts_mut(|f| f.layout_no_wrap(kind.to_owned(), egui::TextStyle::Body.resolve(ui.style()), egui::Color32::WHITE).size().x);
+            let room = (ui.available_width() - kind_w - 2.0 * ui.spacing().item_spacing.x).max(20.0);
+            ui.scope(|ui| {
+                ui.set_max_width(room);
+                ui.add(egui::Label::new(egui::RichText::new(&title).strong()).truncate()).on_hover_text(&title);
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(kind));
         });
         let others = self.selection().len() - 1;

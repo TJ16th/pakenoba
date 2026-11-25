@@ -538,9 +538,18 @@ impl App {
         self.workspace = Workspace::Shape;
         self.library.open = false;
         self.home = false;
-        if let Some(sides) = self.home_shape.take().filter(|&s| s != 0) {
-            self.set_shape(sides);
-            self.mark_saved();
+        match self.home_shape.take() {
+            // ECMA は、番号を絵で選ぶ一覧も開く。
+            Some(super::ECMA) => {
+                self.choose_ecma();
+                self.open_ecma_gallery();
+                self.mark_saved();
+            }
+            Some(sides) if sides != 0 => {
+                self.set_shape(sides);
+                self.mark_saved();
+            }
+            _ => {}
         }
         self.say(t!("Started a new project"));
     }
