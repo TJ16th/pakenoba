@@ -494,8 +494,9 @@ impl Template {
         let neck_bend = profile.neck;
         // 下の折り線での、1 枚の面の立ち上がりの傾き（2 枚が合わさる平面から外へ）と、上の端での傾き。
         let (start_tilt, end_tilt) = (profile.start, profile.end());
-        // フラップの長さ（折り線から先）。深さの 1.8 倍にして、向かいの面の近くまで届かせる。
-        const REACH: f32 = 1.8;
+        // フラップの長さ（折り線から先）。閉じると、フラップは奥行きの向きへまっすぐ倒れ込むので、
+        // 深さの 2 倍で向かいの面の縁に届く。紙の半分ほど手前で止めて、向かいの面を突き抜けないようにする。
+        let reach = |v: f32| (2.0 * depth(v) - 0.5 * t).max(0.0);
         // 背面のフラップは、正面のフラップの下に入る。そのぶん折り線を少し内側へずらす。
         let under = 1.5 * t;
         let v_at = |k: usize| height * k as f32 / SLICES as f32;
@@ -512,7 +513,7 @@ impl Template {
             let crease = |v: f32| edge - side * depth(v);
             let line: Vec<P2> = (0..=SLICES).map(|k| [crease(v_at(k)), sign * v_at(k)]).collect();
             let mut outline = line.clone();
-            outline.extend((0..=SLICES).rev().map(|k| [crease(v_at(k)) + side * REACH * depth(v_at(k)), sign * v_at(k)]));
+            outline.extend((0..=SLICES).rev().map(|k| [crease(v_at(k)) + side * reach(v_at(k)), sign * v_at(k)]));
             (ccw(outline), [[crease(0.0), 0.0], [crease(v_deepest), sign * v_deepest], [crease(height), sign * height]], line)
         };
 

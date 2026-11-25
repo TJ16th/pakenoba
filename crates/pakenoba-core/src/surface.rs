@@ -1307,3 +1307,64 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod pillow_picture {
+    use super::*;
+
+    /// ピロー型の型紙を SVG に（目で確かめる用）。
+    #[test]
+    #[ignore]
+    fn pillow_svg() {
+        for (name, tpl) in [("plain", Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), false, false)), ("handle", Template::pillow_with(180.0, 110.0, 0.5, 100f32.to_radians(), true, true))] {
+            let (lo, hi) = (tpl.min, tpl.max);
+            let mut svg = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='{} {} {} {}' width='{}' height='{}'><rect x='{}' y='{}' width='100%' height='100%' fill='white'/>", lo[0] - 5.0, -hi[1] - 5.0, hi[0] - lo[0] + 10.0, hi[1] - lo[1] + 10.0, (hi[0] - lo[0] + 10.0) * 4.0, (hi[1] - lo[1] + 10.0) * 4.0, lo[0] - 5.0, -hi[1] - 5.0);
+            for p in &tpl.panels {
+                let pts: Vec<String> = p.outline.iter().map(|q| format!("{},{}", q[0], -q[1])).collect();
+                svg += &format!("<polygon points='{}' fill='rgba(0,0,255,0.05)' stroke='black' stroke-width='0.2'/>", pts.join(" "));
+                let c = p.outline.iter().fold([0.0, 0.0], |a, q| [a[0] + q[0], a[1] + q[1]]);
+                let n = p.outline.len() as f32;
+                svg += &format!("<text x='{}' y='{}' font-size='4'>{}</text>", c[0] / n, -c[1] / n, p.name);
+                if let Some(h) = &p.hinge {
+                    svg += &format!("<line x1='{}' y1='{}' x2='{}' y2='{}' stroke='red' stroke-width='0.4'/>", h.a[0], -h.a[1], h.b[0], -h.b[1]);
+                }
+                if let Some(c) = &p.curved {
+                    let pts: Vec<String> = c.line.iter().map(|q| format!("{},{}", q[0], -q[1])).collect();
+                    svg += &format!("<polyline points='{}' fill='none' stroke='red' stroke-width='0.4'/>", pts.join(" "));
+                }
+            }
+            svg += "</svg>";
+            std::fs::write(format!("/tmp/pillow-{name}.svg"), svg).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod pillow_reach {
+    use super::*;
+
+    /// 閉じたピロー型で、正面のフラップの先が、背面の縁のどこまで来るか（目で確かめる用）。
+    #[test]
+    #[ignore]
+    fn pillow_flap_reach() {
+        for (handle, neck) in [(false, false), (true, true)] {
+            let tpl = Template::pillow_with(160.0, 80.0, 0.5, 70f32.to_radians(), handle, neck);
+            let places = tpl.transforms(1.0, 1.0);
+            let world = |i: usize, p: P2| places[i].point([p[0], p[1], 0.0]);
+            let flap = tpl.panels.iter().position(|p| p.name == "正面のフラップ").unwrap();
+            let back = tpl.panels.iter().position(|p| p.name == "背面").unwrap();
+            // フラップの先の縁（折り線から遠い側）のうち、いちばん外の点。
+            let crease = &tpl.panels[flap].curved.as_ref().unwrap().line;
+            for k in [6usize, 12, 18] {
+                let c = crease[k];
+                let tip = tpl.panels[flap].outline.iter().copied().filter(|q| (q[1] - c[1]).abs() < 0.01).min_by(|a, b| a[0].total_cmp(&b[0])).unwrap();
+                let tip3 = world(flap, tip);
+                // 背面の輪郭のうち、同じ高さで端の点。
+                let edge = tpl.panels[back].outline.iter().copied().filter(|q| (q[1] + c[1]).abs() < 0.01).min_by(|a, b| a[0].total_cmp(&b[0])).unwrap();
+                let edge3 = world(back, edge);
+                let d = length(sub(tip3, edge3));
+                println!("handle {handle} v {:.1}: flap tip {:?} back edge {:?} distance {d:.2}", c[1], tip3, edge3);
+            }
+        }
+    }
+}
